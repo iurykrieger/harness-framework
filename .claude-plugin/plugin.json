@@ -1,0 +1,14 @@
+{
+  "name": "harness-framework",
+  "version": "0.1.0",
+  "description": "Empty Claude Code plugin scaffold",
+  "author": {
+    "name": "Iury Krieger",
+    "email": "iury.krieger@stone.com.br",
+    "url": "https://github.com/iurykrieger"
+  },
+  "homepage": "https://github.com/iurykrieger/harness-framework",
+  "repository": "https://github.com/iurykrieger/harness-framework",
+  "license": "MIT",
+  "keywords": ["claude-code", "plugin"]
+}
