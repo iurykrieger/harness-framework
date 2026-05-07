@@ -167,11 +167,11 @@
       "description": "Discriminated by sensor.type via the top-level allOf/if-then-else. Computational fields and inferential fields are mutually exclusive.",
       "additionalProperties": false,
       "properties": {
-        "command":        { "type": "string", "description": "Computational only. Hermetic, idempotent shell invocation (incl. args)." },
-        "env":            { "type": "object", "additionalProperties": { "type": "string" }, "description": "Computational only. Environment variables set during execution." },
+        "command":        { "type": "string", "description": "Required for both sensor types. Shell invocation (passed to sh -c by the runner) — pipes, redirects, globs and quoted args all work. Should be hermetic and idempotent." },
+        "env":            { "type": "object", "additionalProperties": { "type": "string" }, "description": "Environment variables set during subprocess execution. Inferential runner additionally injects HARNESS_PROMPT with the rendered user_prompt_template." },
         "exit_code_map": {
           "type": "array",
-          "description": "Computational only. Maps process exit codes to verdict/severity. Use exit_code='*' as wildcard fallback.",
+          "description": "Maps process exit codes to verdict/severity. Required for computational sensors; optional for inferential (when omitted, the inferential runner defaults to exit 0 → pass/info, anything else → error/high). Use exit_code='*' as wildcard fallback.",
           "minItems": 1,
           "items": {
             "type": "object",

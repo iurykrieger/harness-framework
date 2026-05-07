@@ -56,3 +56,19 @@ func TestValidator_RejectsBadVerdictInPattern(t *testing.T) {
 		t.Fatalf("expected Verdict ref violation, got %v", err)
 	}
 }
+
+func TestValidator_AcceptsOutputParsingOnInferential(t *testing.T) {
+	v, err := NewValidator(repoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := validSensorInferential()
+	s["execution"].(map[string]interface{})["output_parsing"] = map[string]interface{}{
+		"patterns": []interface{}{
+			map[string]interface{}{"regex": "^PASS", "verdict": "pass", "severity": "info"},
+		},
+	}
+	if err := v.Validate(TargetSensor, s); err != nil {
+		t.Fatalf("expected valid, got %v", err)
+	}
+}

@@ -49,30 +49,30 @@ When adding fields to either branch, update the `allOf` so the mutual exclusion 
 
 Each `skills/<name>/SKILL.md` has YAML frontmatter (`name`, `description`) read by Claude Code's skill loader. The body is procedural prose addressed to whichever agent invokes the skill.
 
-`skills/run-sensor/` is the canonical sensor runner. Contract: takes a sensor JSON path, validates it against `schemas/sensor.json`, executes per `sensor.type`, applies cost guardrails, and emits a Signal. **The Signal must be the last content in the response** — calling agents parse responses bottom-up.
+`skills/run-sensor/` is the canonical sensor runner. Both runners (computational and inferential) follow the same model: spawn `sh -c <execution.command>`, scan stdout+stderr line-by-line against `execution.output_parsing.patterns` (when declared), emit one Signal per match as JSONL on stdout, then end with one aggregate Signal as the LAST JSONL line. The aggregate's verdict is the worse of `exit_code_map[exitCode]` and the highest-rank verdict observed in the stream. The inferential runner additionally exposes the rendered `user_prompt_template` to the subprocess via the `HARNESS_PROMPT` env var and applies the calibration `fail → warn` downgrade when the subprocess emits a `HARNESS_AGGREGATE_CONFIDENCE=<float>` line on its stdout below `calibration.confidence_threshold`. Both runners are thin CLI wrappers; the deterministic pipeline (path resolution, schema validation, envelope construction, pattern matching, subprocess streaming, aggregation, signal validation) lives in the top-level `lib/` package.
 
 ## Build, validate, test
 
 Single Go module at the repo root: `module github.com/iurykrieger/harness-framework` (Go 1.25). Per-skill modules only if a skill needs an isolated dependency graph.
 
 ```bash
-go test ./skills/run-sensor/scripts/lib/...           # untagged: the shared library
-go test -tags=run_computational ./skills/...          # the computational runner + lib
-go test -tags=run_inferential   ./skills/...          # the inferential runner + lib
+go test ./lib/...                                     # the shared library
+go test -tags=run_computational ./skills/...          # the computational runner
+go test -tags=run_inferential   ./skills/...          # the inferential runner
 go vet -tags=run_computational  ./...
 go vet -tags=run_inferential    ./...
 
 # Run a sensor end-to-end:
 go run -tags=run_computational ./skills/run-sensor/scripts <sensor>.json
-ANTHROPIC_API_KEY=… go run -tags=run_inferential ./skills/run-sensor/scripts [--slot k=v]... <sensor>.json
+go run -tags=run_inferential ./skills/run-sensor/scripts [--slot k=v]... <sensor>.json
 ```
 
 The `run-sensor` skill ships two scripts under `skills/run-sensor/scripts/`, each gated by a build tag so they coexist:
 
-- **`run-computational.go`** (`//go:build run_computational`) — full computational runner: resolves path, validates against `schemas/sensor.json`, runs `execution.command` with timeout via `exec.CommandContext`, maps exit codes, builds and validates a Signal, prints it.
-- **`run-inferential.go`** (`//go:build run_inferential`) — full inferential runner: validates the sensor, renders prompts, calls the Anthropic Messages API once, parses the response, applies the calibration downgrade, builds and validates a Signal, prints it. Requires `ANTHROPIC_API_KEY`. Only `anthropic/*` models are supported.
+- **`run-computational.go`** (`//go:build run_computational`) — thin CLI wrapper over `lib.StreamSubprocess`. Resolves the sensor path, validates against `schemas/sensor.json`, compiles `execution.output_parsing.patterns` (when present), spawns `sh -c <command>`, streams JSONL individual Signals, computes the aggregate via `MapExitCode` × `MaxStreamVerdict` × `Aggregate`, validates and prints.
+- **`run-inferential.go`** (`//go:build run_inferential`) — thin CLI wrapper that uses the same streaming pipeline. The sensor's `command` is an LLM CLI; the runner exposes the rendered `user_prompt_template` as `HARNESS_PROMPT` and post-processes a `HARNESS_AGGREGATE_CONFIDENCE=<float>` line (if present on the subprocess stdout) to drive the calibration `fail → warn` downgrade. No HTTP and no Anthropic-specific knowledge — any LLM CLI that respects the env-var prompt protocol works.
 
-Shared logic lives in `skills/run-sensor/scripts/lib/` (untagged, importable by both scripts). Both scripts auto-discover `schemas/` by walking up from `cwd`; pass `--schemas-dir=<path>` to override. Exit codes: `0` Signal printed, `1` schema/slot/parse failure, `2` usage or I/O error. Dependency: `github.com/santhosh-tekuri/jsonschema/v5` (Draft 2020-12 with cross-file `$ref`).
+Shared logic lives in the top-level `lib/` package (`schema.go`, `envelope.go`, `path.go`, `exitcode.go`, `template.go`, `patterns.go`, `aggregate.go`, `stream.go`), importable as `github.com/iurykrieger/harness-framework/lib`. Both runner scripts auto-discover `schemas/` by walking up from `cwd`; pass `--schemas-dir=<path>` to override. Exit codes: `0` Signal printed, `1` schema/pattern/slot failure, `2` usage or I/O error. Dependency: `github.com/santhosh-tekuri/jsonschema/v5` (Draft 2020-12 with cross-file `$ref`).
 
 ## References
 

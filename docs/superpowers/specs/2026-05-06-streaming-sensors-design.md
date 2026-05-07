@@ -54,7 +54,7 @@ Two runners coexist via build tags (unchanged from today):
 - `run-computational` — process is whatever the project provides (`go test ./...`, `eslint .`, `tail -f /var/log/app.log`).
 - `run-inferential` — process is an LLM CLI (e.g. `claude -p "<prompt>"`). The runner reads the same JSONL contract from its stdout. Calibration logic only kicks in at aggregation time.
 
-Shared pipeline lives in `skills/run-sensor/scripts/lib/`.
+Shared pipeline lives in the top-level `lib/` package (see Module layout below).
 
 ## Schema changes
 
