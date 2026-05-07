@@ -170,6 +170,40 @@ func TestRunInferential_RejectsComputational(t *testing.T) {
 	}
 }
 
+func TestRunInferential_HonoursExitCodeMap(t *testing.T) {
+	schemasDir := repoSchemasDir(t)
+	// Use writeInferentialSensor as base, then add exit_code_map.
+	path := writeInferentialSensor(t, `printf 'PASS judgment\n'; exit 7`)
+	// Patch the sensor on disk to add an exit_code_map that maps 7 -> warn/medium.
+	b, _ := os.ReadFile(path)
+	var s map[string]interface{}
+	_ = json.Unmarshal(b, &s)
+	s["execution"].(map[string]interface{})["exit_code_map"] = []interface{}{
+		map[string]interface{}{"exit_code": 7, "verdict": "warn", "severity": "medium"},
+	}
+	nb, _ := json.Marshal(s)
+	_ = os.WriteFile(path, nb, 0o644)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"--schemas-dir", schemasDir,
+		"--slot", "a=x", "--slot", "b=y",
+		path,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	lines := parseJSONL(t, stdout.String())
+	agg := lines[len(lines)-1]
+	// Worst-of-two between exit warn (from exit_code_map) and stream pass: warn wins.
+	if agg["verdict"] != "warn" {
+		t.Fatalf("expected warn (from declared exit_code_map for code 7), got %v", agg["verdict"])
+	}
+	if agg["severity"] != "medium" {
+		t.Fatalf("expected severity=medium, got %v", agg["severity"])
+	}
+}
+
 func TestRunInferential_UnboundSlot(t *testing.T) {
 	schemasDir := repoSchemasDir(t)
 	path := writeInferentialSensor(t, `true`)

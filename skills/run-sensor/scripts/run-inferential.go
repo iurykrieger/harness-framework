@@ -102,11 +102,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	confidence, individuals := extractConfidenceAndFilter(res.Individuals, 1.0)
 
-	// Inferential sensors do not declare exit_code_map (forbidden by schema).
-	// Treat exit 0 as pass/info and any non-zero exit as error/high so the
-	// worst-of-two rule still works: the stream's own verdicts drive the
-	// aggregate unless the subprocess crashed outright.
-	exitVerd, exitSev := defaultInferentialExit(res.ExitCode)
+	// Honour a user-declared execution.exit_code_map when present; otherwise
+	// fall back to the default inferential mapping (exit 0 -> pass/info,
+	// non-zero -> error/high). The schema currently does not forbid
+	// exit_code_map on inferential sensors, so a sensor author can override
+	// this fallback when their LLM CLI uses non-trivial exit semantics.
+	ecMap, _ := execMap["exit_code_map"].([]interface{})
+	var exitVerd, exitSev string
+	if len(ecMap) > 0 {
+		exitVerd, exitSev = lib.MapExitCode(res.ExitCode, ecMap)
+	} else {
+		exitVerd, exitSev = defaultInferentialExit(res.ExitCode)
+	}
 	streamVerd, streamSev := lib.MaxStreamVerdict(individuals)
 	agg := lib.Aggregate(lib.AggregateInput{
 		ExitVerdict:    exitVerd,
@@ -224,10 +231,12 @@ func buildAggregateSignal(env lib.Envelope, res lib.StreamResult, filteredIndivi
 	}
 }
 
-// defaultInferentialExit maps a subprocess exit code to verdict/severity in
-// the absence of exit_code_map (which inferential sensors are forbidden from
-// declaring). Exit 0 is treated as pass/info; anything else is error/high.
-func defaultInferentialExit(code int) (string, string) {
+// defaultInferentialExit is the fallback exit-code mapping used when the
+// sensor does not declare an explicit execution.exit_code_map. LLM CLIs
+// typically exit 0 for every emitted judgment regardless of verdict; only a
+// crash or a CLI-internal error should surface a non-zero exit. When a sensor
+// declares its own exit_code_map, that takes precedence.
+func defaultInferentialExit(code int) (verdict, severity string) {
 	if code == 0 {
 		return "pass", "info"
 	}
