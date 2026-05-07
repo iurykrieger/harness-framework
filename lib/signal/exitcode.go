@@ -1,4 +1,4 @@
-package lib
+package signal
 
 // MapExitCode resolves an exit code via sensor.execution.exit_code_map.
 // "*" is the wildcard fallback. Returns ("error", "high") if no entry matches

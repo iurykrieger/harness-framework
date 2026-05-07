@@ -1,10 +1,10 @@
-// Package lib — stream.go spawns a subprocess via `sh -c <command>`, drains
-// its stdout and stderr concurrently, scans each line against the compiled
-// output_parsing patterns, and emits one JSONL Signal per matching line.
-// The returned StreamResult carries the bookkeeping the caller needs to
-// build the aggregate Signal: exit code, timeout flag, elapsed time, the
-// emitted individuals, and the original command string.
-package lib
+// Package subprocess spawns a sensor's execution.command via `sh -c`,
+// drains stdout and stderr concurrently, scans each line against the
+// compiled output_parsing patterns, and emits one JSONL Signal per
+// matching line. The returned StreamResult carries the bookkeeping the
+// caller needs to build the aggregate Signal: exit code, timeout flag,
+// elapsed time, the emitted individuals, and the original command string.
+package subprocess
 
 import (
 	"bufio"
@@ -16,6 +16,10 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/sensor"
+	"github.com/iurykrieger/harness-framework/lib/signal"
 )
 
 // StreamConfig is the input to StreamSubprocess.
@@ -23,9 +27,9 @@ type StreamConfig struct {
 	Command   string            // raw shell command, executed via sh -c
 	Env       map[string]string // additional env vars
 	TimeoutMS int               // hard cap; 0 means no timeout
-	Patterns  []Pattern         // compiled output_parsing.patterns
-	Envelope  Envelope          // sensor_id, version, run_id, started_at, sensor_type
-	Validator *Validator        // for per-individual signal validation; may be nil to skip
+	Patterns  []signal.Pattern  // compiled output_parsing.patterns
+	Envelope  sensor.Envelope   // sensor_id, version, run_id, started_at, sensor_type
+	Validator *schema.Validator // for per-individual signal validation; may be nil to skip
 	Stdout    io.Writer         // JSONL goes here
 	Stderr    io.Writer         // diagnostic messages (validation warnings, etc.)
 }
@@ -94,7 +98,7 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 		sc.Buffer(make([]byte, 64*1024), 1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
-			m, ok := MatchLine(line, cfg.Patterns)
+			m, ok := signal.MatchLine(line, cfg.Patterns)
 			if !ok {
 				continue
 			}
@@ -108,7 +112,7 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 
 	for e := range emits {
 		if cfg.Validator != nil {
-			if err := cfg.Validator.Validate(TargetSignal, e.sig); err != nil {
+			if err := cfg.Validator.Validate(schema.TargetSignal, e.sig); err != nil {
 				fmt.Fprintf(cfg.Stderr, "warning: skipping invalid individual signal: %v\n", err)
 				continue
 			}
@@ -130,7 +134,7 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 // buildIndividualSignal assembles a Signal-shaped map for one matched line.
 // Fields with zero values are omitted (file/line_start/line_end/excerpt) so
 // the Signal stays minimal when captures don't apply.
-func buildIndividualSignal(env Envelope, m PatternMatch) map[string]interface{} {
+func buildIndividualSignal(env sensor.Envelope, m signal.PatternMatch) map[string]interface{} {
 	ev := map[string]interface{}{"rationale": m.Rationale}
 	if m.File != "" {
 		ev["file"] = m.File
@@ -149,7 +153,7 @@ func buildIndividualSignal(env Envelope, m PatternMatch) map[string]interface{} 
 		"version":     env.Version,
 		"run_id":      env.RunID,
 		"started_at":  env.StartedAt,
-		"finished_at": NowFn().Format("2006-01-02T15:04:05Z"),
+		"finished_at": sensor.NowFn().Format("2006-01-02T15:04:05Z"),
 		"verdict":     m.Verdict,
 		"severity":    m.Severity,
 		"confidence":  1.0,

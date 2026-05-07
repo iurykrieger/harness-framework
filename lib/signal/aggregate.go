@@ -1,9 +1,8 @@
-// Package lib — aggregate.go computes the aggregate verdict for a sensor run
-// from two independent sources (the exit-code mapping and the stream of
-// individual Signals) and provides deterministic helpers to summarise the
-// stream into the aggregate Signal: top-N evidence selection and a
-// verdict-count histogram.
-package lib
+// Package signal implements the deterministic helpers that turn a
+// sensor's run-time observations into Signal-shaped data: aggregate
+// verdict computation (worst-of-two), per-line pattern matching, and
+// exit-code mapping.
+package signal
 
 import "sort"
 

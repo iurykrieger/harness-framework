@@ -1,6 +1,10 @@
-package lib
+package template_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/iurykrieger/harness-framework/lib/template"
+)
 
 func TestRenderTemplate(t *testing.T) {
 	cases := []struct {
@@ -18,7 +22,7 @@ func TestRenderTemplate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, missing := RenderTemplate(tc.tmpl, tc.bindings)
+			got, missing := template.RenderTemplate(tc.tmpl, tc.bindings)
 			if got != tc.want {
 				t.Errorf("got %q want %q", got, tc.want)
 			}

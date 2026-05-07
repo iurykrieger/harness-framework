@@ -1,4 +1,7 @@
-package lib
+// Package template renders {{slot}} placeholders against a bindings map.
+// It is the deterministic substitution helper used to fill an inferential
+// sensor's user_prompt_template before the runner spawns the LLM CLI.
+package template
 
 import "regexp"
 

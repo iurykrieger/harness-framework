@@ -1,44 +1,17 @@
-package lib
+// Package testfixtures provides shared test data and helpers for the
+// harness library's subpackage tests. It is imported only by *_test.go
+// files; production code MUST NOT depend on it.
+package testfixtures
 
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
-	"time"
 )
 
-// repoSchemasDir returns the absolute path to schemas/ in the repo root,
-// resolved from this test file's own location (independent of cwd).
-func repoSchemasDir(t *testing.T) string {
-	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	// .../lib/testhelpers_test.go → 1 level up to repo root.
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), ".."))
-	dir := filepath.Join(repoRoot, "schemas")
-	if _, err := os.Stat(filepath.Join(dir, "sensor.json")); err != nil {
-		t.Fatalf("schemas dir not where expected (%s): %v", dir, err)
-	}
-	return dir
-}
-
-// freezeClock pins NowFn and NewRunIDFn for deterministic Signal output.
-// Returns a restore function; defer it.
-func freezeClock(t *testing.T) func() {
-	t.Helper()
-	origNow, origID := NowFn, NewRunIDFn
-	frozen := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
-	NowFn = func() time.Time { return frozen }
-	NewRunIDFn = func() string { return "00000000-0000-4000-8000-000000000000" }
-	return func() { NowFn, NewRunIDFn = origNow, origID }
-}
-
-// validSensorComputational returns a minimal sensor that passes the schema.
-func validSensorComputational() map[string]interface{} {
+// ValidSensorComputational returns a minimal computational sensor that passes the schema.
+func ValidSensorComputational() map[string]interface{} {
 	return map[string]interface{}{
 		"id": "smoke-comp", "version": "0.1.0",
 		"name": "smoke", "description": "fixture",
@@ -64,10 +37,8 @@ func validSensorComputational() map[string]interface{} {
 	}
 }
 
-// validSensorInferential returns a minimal inferential sensor that passes
-// the pre-Task-3 schema (no `command`, since the inferential branch still
-// forbids it). Task 3 adds `command` to both branches and to this fixture.
-func validSensorInferential() map[string]interface{} {
+// ValidSensorInferential returns a minimal inferential sensor that passes the schema.
+func ValidSensorInferential() map[string]interface{} {
 	return map[string]interface{}{
 		"id": "smoke-inf", "version": "0.1.0",
 		"name": "smoke inf", "description": "fixture",
@@ -99,8 +70,8 @@ func validSensorInferential() map[string]interface{} {
 	}
 }
 
-// writeTempJSON writes v as JSON to a temp file and returns its path.
-func writeTempJSON(t *testing.T, v interface{}) string {
+// WriteTempJSON writes v as JSON to a temp file and returns its path.
+func WriteTempJSON(t *testing.T, v interface{}) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "instance.json")

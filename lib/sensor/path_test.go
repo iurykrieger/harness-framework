@@ -1,9 +1,11 @@
-package lib
+package sensor_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/iurykrieger/harness-framework/lib/sensor"
 )
 
 func TestResolveSensorPath(t *testing.T) {
@@ -23,7 +25,7 @@ func TestResolveSensorPath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ResolveSensorPath(tc.arg, dir)
+			got, err := sensor.ResolveSensorPath(tc.arg, dir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -33,12 +35,12 @@ func TestResolveSensorPath(t *testing.T) {
 		})
 	}
 	t.Run("not found", func(t *testing.T) {
-		if _, err := ResolveSensorPath("@sensors/missing.json", dir); err == nil {
+		if _, err := sensor.ResolveSensorPath("@sensors/missing.json", dir); err == nil {
 			t.Fatal("expected error")
 		}
 	})
 	t.Run("empty after trimming", func(t *testing.T) {
-		if _, err := ResolveSensorPath("@", dir); err == nil {
+		if _, err := sensor.ResolveSensorPath("@", dir); err == nil {
 			t.Fatal("expected error")
 		}
 	})

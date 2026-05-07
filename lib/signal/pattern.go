@@ -1,7 +1,4 @@
-// Package lib — patterns.go compiles output_parsing.patterns[] into Go regex
-// objects and matches a single subprocess output line, extracting capture
-// groups into a structured PatternMatch.
-package lib
+package signal
 
 import (
 	"fmt"

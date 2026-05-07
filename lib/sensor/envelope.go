@@ -1,4 +1,8 @@
-package lib
+// Package sensor builds the run-scoped Envelope (sensor_id, version,
+// run_id, started_at, sensor_type) reused across individual and aggregate
+// Signals within a single sensor invocation, plus the helpers that
+// resolve and load a sensor JSON instance from disk.
+package sensor
 
 import (
 	"crypto/rand"

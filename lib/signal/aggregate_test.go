@@ -1,6 +1,10 @@
-package lib
+package signal_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/iurykrieger/harness-framework/lib/signal"
+)
 
 func TestAggregate_WorstOfTwo(t *testing.T) {
 	cases := []struct {
@@ -21,7 +25,7 @@ func TestAggregate_WorstOfTwo(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := Aggregate(AggregateInput{
+			r := signal.Aggregate(signal.AggregateInput{
 				ExitVerdict: c.exitVerd, ExitSeverity: c.exitSev,
 				StreamVerdict: c.streamVerd, StreamSeverity: c.streamSev,
 			})
@@ -33,7 +37,7 @@ func TestAggregate_WorstOfTwo(t *testing.T) {
 }
 
 func TestAggregate_TimeoutForcesError(t *testing.T) {
-	r := Aggregate(AggregateInput{
+	r := signal.Aggregate(signal.AggregateInput{
 		ExitVerdict: "pass", ExitSeverity: "info",
 		StreamVerdict: "pass", StreamSeverity: "info",
 		TimedOut: true,
@@ -44,7 +48,7 @@ func TestAggregate_TimeoutForcesError(t *testing.T) {
 }
 
 func TestMaxStreamVerdict_Empty(t *testing.T) {
-	v, s := MaxStreamVerdict(nil)
+	v, s := signal.MaxStreamVerdict(nil)
 	if v != "pass" || s != "info" {
 		t.Fatalf("got %s/%s", v, s)
 	}
@@ -57,7 +61,7 @@ func TestMaxStreamVerdict_Mixed(t *testing.T) {
 		{"verdict": "fail", "severity": "medium"},
 		{"verdict": "warn", "severity": "low"},
 	}
-	v, s := MaxStreamVerdict(individuals)
+	v, s := signal.MaxStreamVerdict(individuals)
 	if v != "fail" || s != "medium" {
 		t.Fatalf("got %s/%s", v, s)
 	}
@@ -75,7 +79,7 @@ func TestSelectTopEvidence_PrefersWorseVerdict(t *testing.T) {
 			map[string]interface{}{"rationale": "warn 1"},
 		}},
 	}
-	ev := SelectTopEvidence(individuals, 2)
+	ev := signal.SelectTopEvidence(individuals, 2)
 	if len(ev) != 2 {
 		t.Fatalf("len=%d", len(ev))
 	}
@@ -89,7 +93,7 @@ func TestCountVerdicts(t *testing.T) {
 	individuals := []map[string]interface{}{
 		{"verdict": "pass"}, {"verdict": "pass"}, {"verdict": "fail"}, {"verdict": "warn"},
 	}
-	got := CountVerdicts(individuals)
+	got := signal.CountVerdicts(individuals)
 	want := map[string]int{"pass": 2, "warn": 1, "fail": 1, "error": 0}
 	for k, v := range want {
 		if got[k] != v {

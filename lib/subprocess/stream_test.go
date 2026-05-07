@@ -1,4 +1,4 @@
-package lib
+package subprocess_test
 
 import (
 	"bytes"
@@ -6,20 +6,26 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/sensor"
+	"github.com/iurykrieger/harness-framework/lib/signal"
+	"github.com/iurykrieger/harness-framework/lib/subprocess"
+	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
-func mustCompilePatterns(t *testing.T, raw []interface{}) []Pattern {
+func mustCompilePatterns(t *testing.T, raw []interface{}) []signal.Pattern {
 	t.Helper()
-	pats, err := CompilePatterns(raw)
+	pats, err := signal.CompilePatterns(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return pats
 }
 
-func envelopeFor(t *testing.T) Envelope {
+func envelopeFor(t *testing.T) sensor.Envelope {
 	t.Helper()
-	return Envelope{
+	return sensor.Envelope{
 		SensorID: "smoke", Version: "0.1.0",
 		RunID:      "00000000-0000-4000-8000-000000000000",
 		StartedAt:  "2026-05-06T12:00:00Z",
@@ -44,8 +50,8 @@ func decodeJSONL(t *testing.T, s string) []map[string]interface{} {
 }
 
 func TestStreamSubprocess_EmitsJSONLPerMatch(t *testing.T) {
-	defer freezeClock(t)()
-	v, err := NewValidator(repoSchemasDir(t))
+	defer testfixtures.FreezeClock(t)()
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +61,7 @@ func TestStreamSubprocess_EmitsJSONLPerMatch(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	res, err := StreamSubprocess(context.Background(), StreamConfig{
+	res, err := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
 		Command:   `printf 'PASS a\nFAIL b\nignored line\n'; exit 1`,
 		Patterns:  patterns,
 		Envelope:  envelopeFor(t),
@@ -85,14 +91,14 @@ func TestStreamSubprocess_EmitsJSONLPerMatch(t *testing.T) {
 }
 
 func TestStreamSubprocess_ShellFeatures(t *testing.T) {
-	defer freezeClock(t)()
-	v, _ := NewValidator(repoSchemasDir(t))
+	defer testfixtures.FreezeClock(t)()
+	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
 	patterns := mustCompilePatterns(t, []interface{}{
 		map[string]interface{}{"regex": "^WARN", "verdict": "warn", "severity": "low"},
 	})
 	var stdout, stderr bytes.Buffer
 	// pipe + 2>&1 + glob: things strings.Fields would mangle
-	res, _ := StreamSubprocess(context.Background(), StreamConfig{
+	res, _ := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
 		Command:   `printf 'WARN x\nINFO y\n' | grep -E '^(WARN|INFO)'`,
 		Patterns:  patterns,
 		Envelope:  envelopeFor(t),
@@ -109,10 +115,10 @@ func TestStreamSubprocess_ShellFeatures(t *testing.T) {
 }
 
 func TestStreamSubprocess_Timeout(t *testing.T) {
-	defer freezeClock(t)()
-	v, _ := NewValidator(repoSchemasDir(t))
+	defer testfixtures.FreezeClock(t)()
+	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
 	var stdout, stderr bytes.Buffer
-	res, _ := StreamSubprocess(context.Background(), StreamConfig{
+	res, _ := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
 		Command:   `sleep 10`,
 		Patterns:  nil,
 		Envelope:  envelopeFor(t),
@@ -126,10 +132,10 @@ func TestStreamSubprocess_Timeout(t *testing.T) {
 }
 
 func TestStreamSubprocess_BinaryNotFound(t *testing.T) {
-	v, _ := NewValidator(repoSchemasDir(t))
+	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
 	var stdout, stderr bytes.Buffer
 	// sh exits non-zero with "command not found"; ExitCode is non-zero, no individuals.
-	res, err := StreamSubprocess(context.Background(), StreamConfig{
+	res, err := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
 		Command:   "this-binary-definitely-does-not-exist-zzz arg1 arg2",
 		Patterns:  nil,
 		Envelope:  envelopeFor(t),
@@ -145,9 +151,9 @@ func TestStreamSubprocess_BinaryNotFound(t *testing.T) {
 }
 
 func TestStreamSubprocess_NoPatternsNoIndividuals(t *testing.T) {
-	v, _ := NewValidator(repoSchemasDir(t))
+	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
 	var stdout, stderr bytes.Buffer
-	res, _ := StreamSubprocess(context.Background(), StreamConfig{
+	res, _ := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
 		Command:   `printf 'whatever\n'`,
 		Patterns:  nil,
 		Envelope:  envelopeFor(t),

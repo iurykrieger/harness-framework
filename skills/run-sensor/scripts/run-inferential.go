@@ -24,7 +24,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/iurykrieger/harness-framework/lib"
+	"github.com/iurykrieger/harness-framework/lib/cli"
+	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/sensor"
+	"github.com/iurykrieger/harness-framework/lib/signal"
+	"github.com/iurykrieger/harness-framework/lib/subprocess"
+	"github.com/iurykrieger/harness-framework/lib/template"
 )
 
 const harnessConfidencePrefix = "HARNESS_AGGREGATE_CONFIDENCE="
@@ -37,7 +42,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run-inferential", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var schemasDir string
-	var slots lib.MultiFlag
+	var slots cli.MultiFlag
 	fs.StringVar(&schemasDir, "schemas-dir", "", "schemas directory (default: walk up from cwd)")
 	fs.Var(&slots, "slot", "key=value slot binding for user_prompt_template (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -55,28 +60,28 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	sensor, _, code := lib.LoadAndValidateSensor(rest[0], schemasDir, stderr)
+	sensorJSON, _, code := sensor.LoadAndValidateSensor(rest[0], schemasDir, stderr)
 	if code != 0 {
 		return code
 	}
-	if t, _ := sensor["type"].(string); t != "inferential" {
+	if t, _ := sensorJSON["type"].(string); t != "inferential" {
 		fmt.Fprintf(stderr, "error: sensor.type=%q (run-inferential requires 'inferential')\n", t)
 		return 2
 	}
-	v, code := lib.LoadValidator(schemasDir, stderr)
+	v, code := schema.LoadValidator(schemasDir, stderr)
 	if code != 0 {
 		return code
 	}
-	envelope, err := lib.BuildEnvelope(sensor)
+	envelope, err := sensor.BuildEnvelope(sensorJSON)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: envelope:", err)
 		return 2
 	}
 
-	execMap := sensor["execution"].(map[string]interface{})
+	execMap := sensorJSON["execution"].(map[string]interface{})
 	command, _ := execMap["command"].(string)
 	userTemplate, _ := execMap["user_prompt_template"].(string)
-	rendered, missing := lib.RenderTemplate(userTemplate, bindings)
+	rendered, missing := template.RenderTemplate(userTemplate, bindings)
 	if len(missing) > 0 {
 		fmt.Fprintf(stderr, "error: unbound slots: %s (provide via --slot key=value)\n", strings.Join(missing, ", "))
 		return 1
@@ -87,9 +92,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 
-	timeoutMS := int(asNumber(sensor["cost"].(map[string]interface{})["latency"].(map[string]interface{})["timeout_ms"]))
+	timeoutMS := int(asNumber(sensorJSON["cost"].(map[string]interface{})["latency"].(map[string]interface{})["timeout_ms"]))
 
-	res, _ := lib.StreamSubprocess(context.Background(), lib.StreamConfig{
+	res, _ := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
 		Command:   command,
 		Env:       map[string]string{"HARNESS_PROMPT": rendered},
 		TimeoutMS: timeoutMS,
@@ -110,12 +115,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	ecMap, _ := execMap["exit_code_map"].([]interface{})
 	var exitVerd, exitSev string
 	if len(ecMap) > 0 {
-		exitVerd, exitSev = lib.MapExitCode(res.ExitCode, ecMap)
+		exitVerd, exitSev = signal.MapExitCode(res.ExitCode, ecMap)
 	} else {
 		exitVerd, exitSev = defaultInferentialExit(res.ExitCode)
 	}
-	streamVerd, streamSev := lib.MaxStreamVerdict(individuals)
-	agg := lib.Aggregate(lib.AggregateInput{
+	streamVerd, streamSev := signal.MaxStreamVerdict(individuals)
+	agg := signal.Aggregate(signal.AggregateInput{
 		ExitVerdict:    exitVerd,
 		ExitSeverity:   exitSev,
 		StreamVerdict:  streamVerd,
@@ -124,7 +129,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	})
 
 	downgrade := false
-	if cal, ok := sensor["calibration"].(map[string]interface{}); ok {
+	if cal, ok := sensorJSON["calibration"].(map[string]interface{}); ok {
 		thresh, _ := cal["confidence_threshold"].(float64)
 		if agg.Verdict == "fail" && confidence < thresh {
 			agg.Verdict = "warn"
@@ -133,31 +138,31 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	signal := buildAggregateSignal(envelope, res, individuals, agg, command, confidence, downgrade)
-	if err := v.Validate(lib.TargetSignal, signal); err != nil {
-		lib.PrintValidationOrPlain(err, stderr)
+	sig := buildAggregateSignal(envelope, res, individuals, agg, command, confidence, downgrade)
+	if err := v.Validate(schema.TargetSignal, sig); err != nil {
+		schema.PrintValidationOrPlain(err, stderr)
 		return 1
 	}
-	_ = json.NewEncoder(stdout).Encode(signal)
+	_ = json.NewEncoder(stdout).Encode(sig)
 	return 0
 }
 
 // compilePatternsForInferential compiles the user-declared patterns and
 // appends an internal "magic" pattern that catches HARNESS_AGGREGATE_CONFIDENCE
 // lines so the runner can extract them later. Returns ([]Pattern, exit-code).
-func compilePatternsForInferential(execMap map[string]interface{}, stderr io.Writer) ([]lib.Pattern, int) {
+func compilePatternsForInferential(execMap map[string]interface{}, stderr io.Writer) ([]signal.Pattern, int) {
 	var raw []interface{}
 	if op, ok := execMap["output_parsing"].(map[string]interface{}); ok {
 		raw, _ = op["patterns"].([]interface{})
 	}
-	patterns, err := lib.CompilePatterns(raw)
+	patterns, err := signal.CompilePatterns(raw)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return nil, 1
 	}
 	// Append the internal HARNESS_AGGREGATE_CONFIDENCE catcher LAST so user
 	// patterns take precedence; the unique prefix makes collisions unlikely.
-	magic, err := lib.CompilePatterns([]interface{}{
+	magic, err := signal.CompilePatterns([]interface{}{
 		map[string]interface{}{
 			"regex":    "^" + harnessConfidencePrefix,
 			"verdict":  "pass",
@@ -203,15 +208,15 @@ func parseSlots(raw []string) (map[string]string, error) {
 	return out, nil
 }
 
-func buildAggregateSignal(env lib.Envelope, res lib.StreamResult, filteredIndividuals []map[string]interface{}, agg lib.AggregateResult, command string, confidence float64, downgrade bool) map[string]interface{} {
-	finished := lib.NowFn().Format("2006-01-02T15:04:05Z")
-	evidence := lib.SelectTopEvidence(filteredIndividuals, 20)
+func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, filteredIndividuals []map[string]interface{}, agg signal.AggregateResult, command string, confidence float64, downgrade bool) map[string]interface{} {
+	finished := sensor.NowFn().Format("2006-01-02T15:04:05Z")
+	evidence := signal.SelectTopEvidence(filteredIndividuals, 20)
 	md := map[string]interface{}{
 		"kind":      "aggregate",
 		"command":   command,
 		"exit_code": res.ExitCode,
 		"timed_out": res.TimedOut,
-		"counts":    lib.CountVerdicts(filteredIndividuals),
+		"counts":    signal.CountVerdicts(filteredIndividuals),
 	}
 	if downgrade {
 		md["calibration_downgrade"] = true

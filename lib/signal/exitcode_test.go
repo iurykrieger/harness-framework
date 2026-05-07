@@ -1,6 +1,10 @@
-package lib
+package signal_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/iurykrieger/harness-framework/lib/signal"
+)
 
 func TestMapExitCode(t *testing.T) {
 	ecMap := []interface{}{
@@ -15,7 +19,7 @@ func TestMapExitCode(t *testing.T) {
 		{0, "pass"}, {1, "fail"}, {99, "error"},
 	}
 	for _, c := range cases {
-		v, _ := MapExitCode(c.code, ecMap)
+		v, _ := signal.MapExitCode(c.code, ecMap)
 		if v != c.verdict {
 			t.Errorf("MapExitCode(%d)=%q want %q", c.code, v, c.verdict)
 		}
@@ -25,7 +29,7 @@ func TestMapExitCode(t *testing.T) {
 	noWild := []interface{}{
 		map[string]interface{}{"exit_code": 0.0, "verdict": "pass", "severity": "info"},
 	}
-	v, s := MapExitCode(99, noWild)
+	v, s := signal.MapExitCode(99, noWild)
 	if v != "error" || s != "high" {
 		t.Errorf("expected error/high default, got %s/%s", v, s)
 	}

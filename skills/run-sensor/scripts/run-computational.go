@@ -19,7 +19,10 @@ import (
 	"io"
 	"os"
 
-	"github.com/iurykrieger/harness-framework/lib"
+	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/sensor"
+	"github.com/iurykrieger/harness-framework/lib/signal"
+	"github.com/iurykrieger/harness-framework/lib/subprocess"
 )
 
 func main() {
@@ -40,38 +43,38 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	sensor, _, code := lib.LoadAndValidateSensor(rest[0], schemasDir, stderr)
+	sensorJSON, _, code := sensor.LoadAndValidateSensor(rest[0], schemasDir, stderr)
 	if code != 0 {
 		return code
 	}
-	if t, _ := sensor["type"].(string); t != "computational" {
+	if t, _ := sensorJSON["type"].(string); t != "computational" {
 		fmt.Fprintf(stderr, "error: sensor.type=%q (run-computational requires 'computational')\n", t)
 		return 2
 	}
-	v, code := lib.LoadValidator(schemasDir, stderr)
+	v, code := schema.LoadValidator(schemasDir, stderr)
 	if code != 0 {
 		return code
 	}
-	envelope, err := lib.BuildEnvelope(sensor)
+	envelope, err := sensor.BuildEnvelope(sensorJSON)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: envelope:", err)
 		return 2
 	}
 
-	execMap := sensor["execution"].(map[string]interface{})
+	execMap := sensorJSON["execution"].(map[string]interface{})
 	command, _ := execMap["command"].(string)
 
-	var patterns []lib.Pattern
+	var patterns []signal.Pattern
 	if op, ok := execMap["output_parsing"].(map[string]interface{}); ok {
 		raw, _ := op["patterns"].([]interface{})
-		patterns, err = lib.CompilePatterns(raw)
+		patterns, err = signal.CompilePatterns(raw)
 		if err != nil {
 			fmt.Fprintln(stderr, "error:", err)
 			return 1
 		}
 	}
 
-	timeoutMS := int(asNumber(sensor["cost"].(map[string]interface{})["latency"].(map[string]interface{})["timeout_ms"]))
+	timeoutMS := int(asNumber(sensorJSON["cost"].(map[string]interface{})["latency"].(map[string]interface{})["timeout_ms"]))
 
 	envExtra := map[string]string{}
 	if envObj, ok := execMap["env"].(map[string]interface{}); ok {
@@ -80,7 +83,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	res, _ := lib.StreamSubprocess(context.Background(), lib.StreamConfig{
+	res, _ := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
 		Command:   command,
 		Env:       envExtra,
 		TimeoutMS: timeoutMS,
@@ -92,9 +95,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	})
 
 	ecMap, _ := execMap["exit_code_map"].([]interface{})
-	exitVerd, exitSev := lib.MapExitCode(res.ExitCode, ecMap)
-	streamVerd, streamSev := lib.MaxStreamVerdict(res.Individuals)
-	agg := lib.Aggregate(lib.AggregateInput{
+	exitVerd, exitSev := signal.MapExitCode(res.ExitCode, ecMap)
+	streamVerd, streamSev := signal.MaxStreamVerdict(res.Individuals)
+	agg := signal.Aggregate(signal.AggregateInput{
 		ExitVerdict:    exitVerd,
 		ExitSeverity:   exitSev,
 		StreamVerdict:  streamVerd,
@@ -102,18 +105,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		TimedOut:       res.TimedOut,
 	})
 
-	signal := buildAggregateSignal(envelope, res, agg, command)
-	if err := v.Validate(lib.TargetSignal, signal); err != nil {
-		lib.PrintValidationOrPlain(err, stderr)
+	sig := buildAggregateSignal(envelope, res, agg, command)
+	if err := v.Validate(schema.TargetSignal, sig); err != nil {
+		schema.PrintValidationOrPlain(err, stderr)
 		return 1
 	}
-	_ = json.NewEncoder(stdout).Encode(signal)
+	_ = json.NewEncoder(stdout).Encode(sig)
 	return 0
 }
 
-func buildAggregateSignal(env lib.Envelope, res lib.StreamResult, agg lib.AggregateResult, command string) map[string]interface{} {
-	finished := lib.NowFn().Format("2006-01-02T15:04:05Z")
-	evidence := lib.SelectTopEvidence(res.Individuals, 20)
+func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, agg signal.AggregateResult, command string) map[string]interface{} {
+	finished := sensor.NowFn().Format("2006-01-02T15:04:05Z")
+	evidence := signal.SelectTopEvidence(res.Individuals, 20)
 	return map[string]interface{}{
 		"sensor_id":   env.SensorID,
 		"version":     env.Version,
@@ -130,7 +133,7 @@ func buildAggregateSignal(env lib.Envelope, res lib.StreamResult, agg lib.Aggreg
 			"command":   command,
 			"exit_code": res.ExitCode,
 			"timed_out": res.TimedOut,
-			"counts":    lib.CountVerdicts(res.Individuals),
+			"counts":    signal.CountVerdicts(res.Individuals),
 		},
 	}
 }
