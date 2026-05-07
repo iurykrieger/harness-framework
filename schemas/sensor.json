@@ -1,0 +1,390 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness-framework/schemas/sensor.json",
+  "title": "Sensor",
+  "description": "Definition of a harness sensor (feedback control). A sensor observes the system AFTER the agent acts and produces a Signal optimized for self-correction. Every runtime invocation of a sensor matching this schema MUST emit an output that conforms to schemas/signal.json — referenced here as #/$defs/Signal so tooling can resolve the output contract via chained $ref. References: Boeckeler, 'Harness Engineering' (martinfowler.com); Lopopolo, 'Harness engineering: leveraging Codex…' (openai.com, 2026-02-11).",
+
+  "$defs": {
+    "Signal": {
+      "$ref": "signal.json"
+    }
+  },
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "version",
+    "name",
+    "description",
+    "type",
+    "regulation",
+    "phase",
+    "determinism",
+    "output",
+    "cost",
+    "triggers",
+    "execution",
+    "verification"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Stable kebab-case slug. Used verbatim as Signal.sensor_id."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[A-Za-z0-9.-]+)?(\\+[A-Za-z0-9.-]+)?$",
+      "description": "SemVer of the sensor definition. Bump on contract changes."
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable name."
+    },
+    "description": {
+      "type": "string",
+      "description": "One sentence: trigger condition + what is observed + regulation dimension."
+    },
+
+    "type": {
+      "type": "string",
+      "enum": ["computational", "inferential"],
+      "description": "Execution nature. computational = deterministic, CPU-bound, fast, cheap (linters, type checkers, structural tests, fixed-threshold log/metric queries). inferential = probabilistic, GPU/NPU-bound, slow, expensive (LLM-as-judge, semantic-duplicate detection, AI code review, anomaly classification)."
+    },
+    "regulation": {
+      "type": "string",
+      "enum": ["maintainability", "architecture-fitness", "behaviour"],
+      "description": "Which dimension of the codebase this sensor regulates (Boeckeler/Fowler taxonomy)."
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["pre-commit", "pre-merge", "post-integration", "continuous", "on-demand"],
+      "description": "Lifecycle stage at which the sensor is invoked."
+    },
+    "determinism": {
+      "type": "string",
+      "enum": ["high", "medium", "low"],
+      "description": "high = bit-identical reruns; medium = stable across reruns within tolerance; low = inferential without seed."
+    },
+    "output": {
+      "type": "string",
+      "enum": ["single", "stream"],
+      "description": "How many Signals one invocation emits. single = exactly one Signal carrying the final verdict (the runner ignores subprocess stdout/stderr lines beyond exit code). stream = one Signal per matched output line plus one final aggregate Signal (JSONL on stdout). single forbids execution.output_parsing; stream requires it."
+    },
+
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "latency"],
+      "properties": {
+        "class": {
+          "type": "string",
+          "enum": ["cheap", "medium", "expensive"],
+          "description": "cheap → safe to run on every change; expensive → gate behind upstream PASS or schedule."
+        },
+        "latency": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["p50_ms", "p95_ms", "timeout_ms"],
+          "properties": {
+            "p50_ms":     { "type": "integer", "minimum": 0 },
+            "p95_ms":     { "type": "integer", "minimum": 0 },
+            "timeout_ms": { "type": "integer", "minimum": 1, "description": "Hard cap. Sensor MUST abort and emit verdict=error past this." }
+          }
+        },
+        "tokens": {
+          "type": "object",
+          "description": "Required when sensor.type = inferential. MUST be omitted when sensor.type = computational.",
+          "additionalProperties": false,
+          "required": ["model", "input_avg", "output_avg", "max_output"],
+          "properties": {
+            "model":      { "type": "string", "description": "Provider/model id (e.g. 'anthropic/claude-sonnet-4-6')." },
+            "input_avg":  { "type": "integer", "minimum": 0 },
+            "output_avg": { "type": "integer", "minimum": 0 },
+            "max_output": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "compute": {
+          "type": "object",
+          "description": "Required when sensor.type = computational. MUST be omitted when sensor.type = inferential.",
+          "additionalProperties": false,
+          "required": ["cpu", "memory_mb"],
+          "properties": {
+            "cpu":       { "type": "string", "enum": ["low", "medium", "high"] },
+            "memory_mb": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "monetary_estimate_usd_per_run": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "guardrails": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What the harness does when cost budgets are exceeded.",
+          "properties": {
+            "on_timeout":        { "type": "string", "enum": ["abort", "downgrade", "escalate"] },
+            "on_token_overrun":  { "type": "string", "enum": ["truncate-and-retry", "downgrade", "escalate"] },
+            "on_phase_mismatch": { "type": "string", "enum": ["refuse", "warn", "allow"] },
+            "fallback_sensor":   { "type": ["string", "null"], "description": "id of a cheaper sensor to delegate to. null disables downgrade." }
+          }
+        }
+      }
+    },
+
+    "triggers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["on"],
+        "properties": {
+          "on": {
+            "type": "string",
+            "enum": ["pull-request", "file-change", "cron", "metric-anomaly", "manual", "agent-request"]
+          },
+          "when":    { "type": "string", "description": "Condition or glob (e.g. 'diff touches **/*.ts')." },
+          "cadence": { "type": "string", "description": "Cron expression. REQUIRED when on=cron." }
+        },
+        "allOf": [
+          {
+            "if":   { "properties": { "on": { "const": "cron" } }, "required": ["on"] },
+            "then": { "required": ["cadence"] }
+          }
+        ]
+      }
+    },
+
+    "requires": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tools":            { "type": "array", "items": { "type": "string" }, "default": [], "description": "Binaries, MCP servers, CLIs the sensor invokes." },
+        "permissions":      { "type": "array", "items": { "type": "string" }, "default": [], "description": "Least-privilege scopes." },
+        "context":          { "type": "array", "items": { "type": "string" }, "default": [], "description": "Repo paths the sensor reads (docs, configs, fixtures)." },
+        "upstream_sensors": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Sensor ids that must PASS first (chain cheap → expensive)." }
+      }
+    },
+
+    "execution": {
+      "type": "object",
+      "description": "Discriminated by sensor.type via the top-level allOf/if-then-else. Computational fields and inferential fields are mutually exclusive.",
+      "additionalProperties": false,
+      "properties": {
+        "command":        { "type": "string", "description": "Required for both sensor types. Shell invocation (passed to sh -c by the runner) — pipes, redirects, globs and quoted args all work. Should be hermetic and idempotent." },
+        "env":            { "type": "object", "additionalProperties": { "type": "string" }, "description": "Environment variables set during subprocess execution. Inferential runner additionally injects HARNESS_PROMPT with the rendered user_prompt_template." },
+        "exit_code_map": {
+          "type": "array",
+          "description": "Maps process exit codes to verdict/severity. Required for computational sensors; optional for inferential (when omitted, the inferential runner defaults to exit 0 → pass/info, anything else → error/high). Use exit_code='*' as wildcard fallback.",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["exit_code", "verdict", "severity"],
+            "properties": {
+              "exit_code": {
+                "oneOf": [
+                  { "type": "integer", "minimum": 0 },
+                  { "type": "string", "const": "*" }
+                ]
+              },
+              "verdict":  { "$ref": "signal.json#/$defs/Verdict" },
+              "severity": { "$ref": "signal.json#/$defs/Severity" }
+            }
+          }
+        },
+        "output_parsing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["patterns"],
+          "description": "Structured rules for turning subprocess output lines into individual Signals. Applies to both computational and inferential sensors. Optional — when absent, only the aggregate Signal is emitted.",
+          "properties": {
+            "patterns": {
+              "type": "array",
+              "minItems": 1,
+              "description": "Ordered match rules. First pattern that matches a line wins.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["regex", "verdict", "severity"],
+                "properties": {
+                  "regex":    { "type": "string", "description": "Go regexp (RE2)." },
+                  "verdict":  { "$ref": "signal.json#/$defs/Verdict" },
+                  "severity": { "$ref": "signal.json#/$defs/Severity" },
+                  "captures": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "description": "Map a Signal.evidence field to a 1-based capture-group index in regex.",
+                    "properties": {
+                      "file":       { "type": "integer", "minimum": 1 },
+                      "line_start": { "type": "integer", "minimum": 1 },
+                      "line_end":   { "type": "integer", "minimum": 1 },
+                      "excerpt":    { "type": "integer", "minimum": 1 },
+                      "rationale":  { "type": "integer", "minimum": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+
+        "model":         { "type": "string", "description": "Inferential only. MUST equal cost.tokens.model." },
+        "system_prompt": { "type": "string", "description": "Inferential only. Role-defining system message, no example contamination." },
+        "user_prompt_template": { "type": "string", "description": "Inferential only. Template with {{slots}}; demands a single JSON object conforming to the Signal schema." },
+        "decoding": {
+          "type": "object",
+          "description": "Inferential only.",
+          "additionalProperties": false,
+          "required": ["temperature", "max_tokens"],
+          "properties": {
+            "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
+            "top_p":       { "type": "number", "minimum": 0, "maximum": 1 },
+            "max_tokens":  { "type": "integer", "minimum": 1 },
+            "seed":        { "type": ["integer", "null"], "description": "Set when reproducibility matters and the model supports it." }
+          }
+        }
+      }
+    },
+
+    "self_correction": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How the harness consumes this sensor's Signal.",
+      "properties": {
+        "max_retries": { "type": "integer", "minimum": 0, "default": 0 },
+        "on_warn":     { "type": "string", "enum": ["surface", "ignore"], "default": "surface" },
+        "on_fail":     { "type": "string", "enum": ["retry", "block", "advise"], "default": "retry" },
+        "on_error":    { "type": "string", "enum": ["retry-once", "skip", "escalate"], "default": "retry-once" },
+        "escalation": {
+          "type": "string",
+          "description": "Free-form criteria for human escalation (e.g. 'confidence < 0.6 OR 3 consecutive fails without verdict change')."
+        }
+      }
+    },
+
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["golden_cases"],
+      "description": "Sensors are code; they need their own harness. Each sensor MUST declare at least one golden case.",
+      "properties": {
+        "golden_cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["fixture", "expected_verdict", "expected_severity"],
+            "properties": {
+              "fixture":           { "type": "string", "description": "Path to fixture or fixture id." },
+              "expected_verdict":  { "$ref": "signal.json#/$defs/Verdict" },
+              "expected_severity": { "$ref": "signal.json#/$defs/Severity" },
+              "notes":             { "type": "string" }
+            }
+          }
+        },
+        "self_test_command": {
+          "type": "string",
+          "description": "Command that runs all fixtures and validates each emitted Signal against signal.json."
+        }
+      }
+    },
+
+    "blind_spots": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Explicit limits — bug classes, inputs that produce unstable verdicts, sensor interactions that mask issues. Required honesty for inferential sensors."
+    },
+
+    "calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "REQUIRED when sensor.type=inferential. Captures the confidence threshold and drift policy.",
+      "required": ["confidence_threshold", "calibration_set", "calibration_size", "calibration_date"],
+      "properties": {
+        "confidence_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Below this threshold, the harness MUST downgrade fail → warn."
+        },
+        "drift_check_cadence": {
+          "type": "string",
+          "description": "Cron expression or human-readable cadence for re-running golden fixtures."
+        },
+        "calibration_set":  { "type": "string", "description": "Path or URI to labelled fixtures used to choose the threshold." },
+        "calibration_size": { "type": "integer", "minimum": 1 },
+        "calibration_date": { "type": "string", "format": "date" }
+      }
+    },
+
+    "references": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Source articles, ADRs, design docs justifying this sensor."
+    }
+  },
+
+  "allOf": [
+    {
+      "if":   { "properties": { "type": { "const": "computational" } }, "required": ["type"] },
+      "then": {
+        "properties": {
+          "cost": {
+            "required": ["compute"],
+            "not": { "required": ["tokens"] }
+          },
+          "execution": {
+            "required": ["command", "exit_code_map"],
+            "not": {
+              "anyOf": [
+                { "required": ["model"] },
+                { "required": ["system_prompt"] },
+                { "required": ["user_prompt_template"] },
+                { "required": ["decoding"] }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if":   { "properties": { "type": { "const": "inferential" } }, "required": ["type"] },
+      "then": {
+        "required": ["calibration"],
+        "properties": {
+          "cost": {
+            "required": ["tokens"],
+            "not": { "required": ["compute"] }
+          },
+          "execution": {
+            "required": ["command", "model", "system_prompt", "user_prompt_template", "decoding"]
+          }
+        }
+      }
+    },
+    {
+      "if":   { "properties": { "output": { "const": "single" } }, "required": ["output"] },
+      "then": {
+        "properties": {
+          "execution": {
+            "not": { "required": ["output_parsing"] }
+          }
+        }
+      }
+    },
+    {
+      "if":   { "properties": { "output": { "const": "stream" } }, "required": ["output"] },
+      "then": {
+        "properties": {
+          "execution": {
+            "required": ["output_parsing"]
+          }
+        }
+      }
+    }
+  ]
+}

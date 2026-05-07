@@ -1,0 +1,10 @@
+# Compiled Go binaries
+/scripts
+/run-computational
+/run-inferential
+
+# OS / editor noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
