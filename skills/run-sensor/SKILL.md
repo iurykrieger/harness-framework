@@ -1,13 +1,18 @@
 ---
 name: run-sensor
-description: Use when the user invokes /run-sensor or asks to run a harness sensor. Takes a path to a sensor JSON file (e.g. `@sensors/<id>.json`). Reads `sensor.type` and dispatches to either `run-computational.go` or `run-inferential.go`. Both runners spawn a subprocess (the project's lint/build/test/log/etc. command, or an LLM CLI for inferential), stream individual Signals as JSONL while it runs, and emit one final aggregate Signal as the LAST JSONL line.
+description: Use when the user invokes /run-sensor or asks to run a harness sensor. Takes a path to a sensor JSON file (e.g. `@sensors/<id>.json`). Reads `sensor.type` (computational|inferential) and `sensor.output` (single|stream). For both types, the runner spawns the sensor's `execution.command` as a subprocess. In `stream` mode it emits one Signal per matched output line plus a final aggregate Signal as the LAST JSONL line; in `single` mode it emits exactly one aggregate Signal.
 ---
 
 # run-sensor
 
 Execute a harness sensor and emit Signals back to the caller.
 
-There are exactly two scripts, one per sensor type. Both follow the same streaming model: a single `go run` produces JSONL on stdout — one Signal per matched output line during the run, then one aggregate Signal as the final line.
+There are exactly two scripts, one per sensor `type`. Both follow the same pipeline: spawn `sh -c <execution.command>` as a subprocess and emit Signals on stdout. How many Signals appear is governed by `sensor.output`:
+
+- **`single`** — exactly one aggregate Signal. The subprocess's stdout/stderr lines are not parsed; only the exit code informs the verdict (computational uses `exit_code_map`; inferential uses an exit-0=pass / non-zero=error fallback unless the sensor declares its own `exit_code_map`).
+- **`stream`** — one individual Signal per matched output line plus a final aggregate Signal as the LAST JSONL line. The aggregate's verdict is the worst of `exit_code_map[exitCode]` and the highest-rank verdict observed in the stream.
+
+`single` forbids `execution.output_parsing`. `stream` requires `execution.output_parsing.patterns` (≥1 pattern). The schema enforces both.
 
 ## Invocation
 
@@ -19,9 +24,9 @@ The argument may use `@`-prefix file syntax, a repo-relative path, or an absolut
 
 ## Procedure
 
-### 1. Read `sensor.type`
+### 1. Read `sensor.type` and `sensor.output`
 
-`sensor.type` is required by `schemas/sensor.json`, so it is present in every well-formed sensor file. Use the Read tool against the resolved path. Branch on the value.
+Both fields are required by `schemas/sensor.json`. Use the Read tool. Branch on `sensor.type` to choose the runner; the runner reads `sensor.output` itself and surfaces it as `metadata.output_mode` on the aggregate Signal — you don't have to pass it.
 
 ### 2a. `computational`
 
@@ -41,17 +46,17 @@ go run -tags=run_inferential ./skills/run-sensor/scripts \
   <SENSOR_PATH>
 ```
 
-Same streaming model. The sensor's `execution.command` is the LLM CLI (e.g. `claude -p ...`). The runner renders `execution.user_prompt_template` against `--slot` bindings and exposes the result to the subprocess as `HARNESS_PROMPT`. The subprocess prints judgment lines that get matched by `output_parsing.patterns` like any other sensor.
+Same pipeline, but the sensor's `execution.command` is an LLM CLI (e.g. `claude -p ...`). The runner renders `execution.user_prompt_template` against `--slot` bindings and exposes the result to the subprocess as the `HARNESS_PROMPT` env var. The subprocess prints judgment lines that are matched by `output_parsing.patterns` like any other sensor.
 
-Calibration: if the subprocess emits a single `HARNESS_AGGREGATE_CONFIDENCE=<float>` line on its stdout, that value becomes the aggregate Signal's `confidence` and feeds the `fail → warn` downgrade rule (`confidence < calibration.confidence_threshold`). If absent, `confidence` defaults to 1.0 and no downgrade ever triggers. The HARNESS_AGGREGATE_CONFIDENCE individual still appears in the JSONL stream (the runner does not suppress it from output) but is filtered out of the aggregate's `evidence` and `metadata.counts`.
+Calibration: if the subprocess emits a single `HARNESS_AGGREGATE_CONFIDENCE=<float>` line on its stdout, that value becomes the aggregate Signal's `confidence` and feeds the `fail → warn` downgrade rule (`confidence < calibration.confidence_threshold`). Otherwise `confidence` defaults to 1.0 and no downgrade triggers. The HARNESS_AGGREGATE_CONFIDENCE individual still appears in the JSONL stream but is filtered out of the aggregate's `evidence` and `metadata.counts`.
 
-When the sensor declares its own `execution.exit_code_map`, the runner uses it (worst-of-two against the stream); otherwise it falls back to a default mapping (exit 0 → pass/info, anything else → error/high) suited to typical LLM CLI behaviour.
+When the sensor declares its own `execution.exit_code_map`, the runner uses it (worst-of-two against the stream); otherwise it falls back to `exit 0 → pass/info`, anything else `→ error/high`.
 
 Exit codes: `0` Signals printed; `1` schema/pattern failure or unbound `{{slot}}`; `2` usage or I/O error (sensor unreadable, wrong type, slot not in `key=value` form).
 
 ### 3. Emit
 
-The runner prints JSONL on stdout. Surface it in your response with two fenced blocks:
+The runner prints JSONL on stdout. Surface it in your response with two fenced blocks (single-mode sensors will only have an aggregate, so the first block is empty and may be omitted):
 
 - A ```jsonl``` block with the individual Signals (omit when there were none).
 - A ```json``` block with the aggregate Signal as the **last** content of your response.
@@ -60,7 +65,7 @@ Calling agents parse bottom-up, so the aggregate stays unambiguously identifiabl
 
 ## Output contract
 
-The final ```json``` block is the aggregate. Its `metadata.kind` is always `"aggregate"`. Per-line Signals carry `metadata.kind: "individual"` and `metadata.line` with the raw matched text.
+The final ```json``` block is the aggregate. Its `metadata.kind` is always `"aggregate"`; its `metadata.output_mode` echoes the sensor's declared `output` (`"single"` or `"stream"`). Per-line Signals (only emitted in `stream` mode) carry `metadata.kind: "individual"` and `metadata.line` with the raw matched text.
 
 ```json
 { ...aggregate Signal conforming to schemas/signal.json... }

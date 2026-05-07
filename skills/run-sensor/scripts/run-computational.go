@@ -51,6 +51,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "error: sensor.type=%q (run-computational requires 'computational')\n", t)
 		return 2
 	}
+	output, _ := sensorJSON["output"].(string)
 	v, code := schema.LoadValidator(schemasDir, stderr)
 	if code != 0 {
 		return code
@@ -105,7 +106,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		TimedOut:       res.TimedOut,
 	})
 
-	sig := buildAggregateSignal(envelope, res, agg, command)
+	sig := buildAggregateSignal(envelope, res, agg, command, output)
 	if err := v.Validate(schema.TargetSignal, sig); err != nil {
 		schema.PrintValidationOrPlain(err, stderr)
 		return 1
@@ -114,7 +115,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, agg signal.AggregateResult, command string) map[string]interface{} {
+func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, agg signal.AggregateResult, command, outputMode string) map[string]interface{} {
 	finished := sensor.NowFn().Format("2006-01-02T15:04:05Z")
 	evidence := signal.SelectTopEvidence(res.Individuals, 20)
 	return map[string]interface{}{
@@ -129,11 +130,12 @@ func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, agg 
 		"evidence":    evidence,
 		"cost_actual": map[string]interface{}{"latency_ms": res.ElapsedMS},
 		"metadata": map[string]interface{}{
-			"kind":      "aggregate",
-			"command":   command,
-			"exit_code": res.ExitCode,
-			"timed_out": res.TimedOut,
-			"counts":    signal.CountVerdicts(res.Individuals),
+			"kind":        "aggregate",
+			"output_mode": outputMode,
+			"command":     command,
+			"exit_code":   res.ExitCode,
+			"timed_out":   res.TimedOut,
+			"counts":      signal.CountVerdicts(res.Individuals),
 		},
 	}
 }

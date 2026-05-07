@@ -101,6 +101,10 @@ func TestRunInferential_Pass(t *testing.T) {
 	if agg["verdict"] != "pass" {
 		t.Fatalf("aggregate verdict=%v", agg["verdict"])
 	}
+	md := agg["metadata"].(map[string]interface{})
+	if md["output_mode"] != "stream" {
+		t.Fatalf("aggregate metadata.output_mode=%v want stream", md["output_mode"])
+	}
 }
 
 func TestRunInferential_CalibrationDowngrade(t *testing.T) {

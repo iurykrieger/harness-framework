@@ -90,8 +90,12 @@ func TestRunComputational_AllPass(t *testing.T) {
 	if agg["verdict"] != "pass" {
 		t.Fatalf("aggregate verdict=%v", agg["verdict"])
 	}
-	if md := agg["metadata"].(map[string]interface{}); md["kind"] != "aggregate" {
+	md := agg["metadata"].(map[string]interface{})
+	if md["kind"] != "aggregate" {
 		t.Fatalf("aggregate metadata.kind=%v", md["kind"])
+	}
+	if md["output_mode"] != "stream" {
+		t.Fatalf("aggregate metadata.output_mode=%v want stream", md["output_mode"])
 	}
 }
 
@@ -139,6 +143,10 @@ func TestRunComputational_FatalNoStream(t *testing.T) {
 	}
 	if lines[0]["verdict"] != "fail" {
 		t.Fatalf("aggregate verdict=%v", lines[0]["verdict"])
+	}
+	md := lines[0]["metadata"].(map[string]interface{})
+	if md["output_mode"] != "single" {
+		t.Fatalf("aggregate metadata.output_mode=%v want single", md["output_mode"])
 	}
 }
 

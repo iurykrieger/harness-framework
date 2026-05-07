@@ -68,6 +68,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "error: sensor.type=%q (run-inferential requires 'inferential')\n", t)
 		return 2
 	}
+	output, _ := sensorJSON["output"].(string)
 	v, code := schema.LoadValidator(schemasDir, stderr)
 	if code != 0 {
 		return code
@@ -138,7 +139,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	sig := buildAggregateSignal(envelope, res, individuals, agg, command, confidence, downgrade)
+	sig := buildAggregateSignal(envelope, res, individuals, agg, command, output, confidence, downgrade)
 	if err := v.Validate(schema.TargetSignal, sig); err != nil {
 		schema.PrintValidationOrPlain(err, stderr)
 		return 1
@@ -208,15 +209,16 @@ func parseSlots(raw []string) (map[string]string, error) {
 	return out, nil
 }
 
-func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, filteredIndividuals []map[string]interface{}, agg signal.AggregateResult, command string, confidence float64, downgrade bool) map[string]interface{} {
+func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, filteredIndividuals []map[string]interface{}, agg signal.AggregateResult, command, outputMode string, confidence float64, downgrade bool) map[string]interface{} {
 	finished := sensor.NowFn().Format("2006-01-02T15:04:05Z")
 	evidence := signal.SelectTopEvidence(filteredIndividuals, 20)
 	md := map[string]interface{}{
-		"kind":      "aggregate",
-		"command":   command,
-		"exit_code": res.ExitCode,
-		"timed_out": res.TimedOut,
-		"counts":    signal.CountVerdicts(filteredIndividuals),
+		"kind":        "aggregate",
+		"output_mode": outputMode,
+		"command":     command,
+		"exit_code":   res.ExitCode,
+		"timed_out":   res.TimedOut,
+		"counts":      signal.CountVerdicts(filteredIndividuals),
 	}
 	if downgrade {
 		md["calibration_downgrade"] = true
