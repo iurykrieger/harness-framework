@@ -1,0 +1,52 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go test + vet
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Verify schemas parse as JSON
+        run: |
+          python3 -c 'import json; json.load(open("schemas/sensor.json"))'
+          python3 -c 'import json; json.load(open("schemas/signal.json"))'
+
+      - name: Vet (computational build tag)
+        run: go vet -tags=run_computational ./...
+
+      - name: Vet (inferential build tag)
+        run: go vet -tags=run_inferential ./...
+
+      - name: Test lib
+        run: go test -race -count=1 ./lib/...
+
+      - name: Test computational runner
+        run: go test -race -count=1 -tags=run_computational ./skills/...
+
+      - name: Test inferential runner
+        run: go test -race -count=1 -tags=run_inferential ./skills/...
+
+      - name: Build computational runner
+        run: go build -tags=run_computational -o /dev/null ./skills/run-sensor/scripts
+
+      - name: Build inferential runner
+        run: go build -tags=run_inferential -o /dev/null ./skills/run-sensor/scripts
