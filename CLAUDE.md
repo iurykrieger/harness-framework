@@ -6,11 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Claude Code plugin that implements a **sensor harness** for AI coding agents. Vocabulary follows Boeckeler/Fowler ("Harness Engineering", martinfowler.com) and Lopopolo ("Harness engineering: leveraging Codex in an agent-first world", openai.com, 2026-02-11):
 
-- **Sensor** — a feedback control. Observes the system *after* the agent acts and emits a Signal optimized for self-correction.
+- **Sensor** — a feedback control. Observes the system *after* the agent acts and emits Signals optimized for self-correction.
 - **Signal** — the standardized JSON output of a sensor invocation. Cross-sensor uniformity is the point: routing, retry, and chaining must work without knowing the sensor type.
-- Sensors come in two flavors:
-  - **computational** — deterministic, CPU-bound, fast, cheap (linters, type checkers, structural tests, fixed-threshold log/metric queries).
-  - **inferential** — probabilistic, LLM-based, slow, expensive (LLM-as-judge, semantic checks, AI code review).
+- Sensors are classified along two independent dimensions:
+  - **type** — what the runner spawns:
+    - **computational** — deterministic, CPU-bound, fast, cheap. Linters, type checkers, structural tests, fixed-threshold log/metric queries.
+    - **inferential** — probabilistic, LLM-based, slow, expensive. LLM-as-judge, semantic checks, AI code review.
+  - **output** — how many Signals per invocation:
+    - **single** — one Signal. The runner reports the final verdict only; the subprocess's lines on stdout are ignored. Suitable when the only useful observation is the exit status (e.g. `make build`, `go vet ./...`).
+    - **stream** — many individual Signals during the run plus one aggregate Signal at the end (JSONL on stdout, aggregate is the LAST line). Suitable when each observation is independently actionable: test cases, lint findings, log lines. Requires `execution.output_parsing.patterns` to declare how lines map to verdicts.
 
 ## Project rules
 
@@ -24,6 +28,7 @@ Durable conventions. Apply them to every change.
 6. **Deterministic logic belongs in Go, never in skill markdown.** Anything that produces the same output for the same input — path resolution, schema validation, envelope construction, exit-code mapping, slot substitution, calibration, audit persistence, file I/O, timestamps, IDs — MUST live in a Go script under `skills/<skill>/scripts/`. SKILL.md prose is reserved for (a) orchestration (deciding which subcommand to call, in what order, with what arguments) and (b) genuinely non-deterministic reasoning (the LLM's own judgment in inferential sensors, the choice of remediation phrasing for opaque tool output). If you catch yourself writing imperative steps with branching logic in a skill body, that's a sign the logic should be extracted to Go.
 7. **One script, one clear job.** Each script does a single thing. No subcommands, no `--mode` flags, no positional dispatch arguments. If the same Go file would be invoked as `tool foo` and `tool bar` for different operations, split it into `foo.go` and `bar.go`. Required positional inputs and one-shot toggles (e.g. `--schemas-dir`) are fine; mode/operation switches are not. Shared logic lives in a sibling `lib/` subpackage; build tags on each main file (e.g. `//go:build foo` on `foo.go`) let several `package main` scripts coexist in the same directory.
 8. **Every Go script ships with Go tests** in the same `scripts/` directory. Tests cover behavior, functional requirements, declared use cases, and acceptance criteria. Use the standard `testing` package; table-driven tests are the default.
+9. **`lib/` organizes by context, not by type.** Subdirectories under `lib/` are contexts — entities (`sensor/`, `signal/`) or runtime concerns (`schema/`, `subprocess/`, `template/`, `cli/`). Each file inside a context is named for the action or aspect it implements (`validate.go`, `load.go`, `aggregate.go`, `render.go`), not for the function or struct it contains. Two extremes to avoid: a single sprawling file per package, and one public function per file. Aim for 2–6 cohesive files per context, each with a sibling `_test.go`. Promote a context to its own subdirectory only when it has enough cohesive code to justify the boundary; until then, fold related actions together. Cross-package test fixtures live in `lib/testfixtures/` (regular Go package, not `_test.go`) so subpackage tests can import them.
 
 ## Architecture
 
@@ -36,14 +41,21 @@ Both are JSON Schema **Draft 2020-12**. Validators must support that draft and r
   - `#/$defs/Signal` is `{ "$ref": "signal.json" }`, so tooling can dereference a sensor's runtime output contract by chained `$ref`.
   - Enum sites inside `sensor.json` (`execution.exit_code_map[].{verdict,severity}`, `verification.golden_cases[].{expected_verdict,expected_severity}`) use `{ "$ref": "signal.json#/$defs/Verdict" }` and `…/Severity`. Adding a new verdict or severity value means editing `signal.json` only — `sensor.json` picks it up automatically.
 
-### Type discrimination
+### Discriminators
 
-`sensor.type ∈ {computational, inferential}` is enforced by `sensor.json`'s top-level `allOf` with `if/then/else`:
+`sensor.json`'s top-level `allOf` enforces both classification dimensions with `if/then/else` blocks.
+
+`sensor.type ∈ {computational, inferential}`:
 
 - **computational** → `cost.compute` and `execution.{command, exit_code_map}` required; `cost.tokens` and inferential `execution` fields forbidden.
-- **inferential** → `cost.tokens`, `execution.{model, system_prompt, user_prompt_template, decoding}`, and the top-level `calibration` block required; `cost.compute` and computational `execution` fields forbidden.
+- **inferential** → `cost.tokens`, `execution.{command, model, system_prompt, user_prompt_template, decoding}`, and the top-level `calibration` block required; `cost.compute` forbidden.
 
-When adding fields to either branch, update the `allOf` so the mutual exclusion stays watertight. The `if/then` blocks use `not: { required: [...] }` to forbid the wrong-branch fields — same idiom for new fields.
+`sensor.output ∈ {single, stream}`:
+
+- **single** → `execution.output_parsing` forbidden. The runner ignores subprocess stdout/stderr lines and emits exactly one Signal whose verdict comes from `exit_code_map` (computational) or the calibration-aware default (inferential).
+- **stream** → `execution.output_parsing.patterns` required (≥1 pattern). The runner streams one Signal per matched line plus a final aggregate Signal (JSONL on stdout, aggregate is the LAST line). Aggregate verdict is the worst of `exit_code_map[exitCode]` and the highest-rank verdict observed in the stream.
+
+When adding fields, update the `allOf` so each branch's mutual exclusion stays watertight. The `if/then` blocks use `not: { required: [...] }` to forbid the wrong-branch fields — same idiom for new fields.
 
 ### Skills
 
