@@ -11,6 +11,7 @@ func TestValidator_AcceptsOutputParsing(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := validSensorComputational()
+	s["output"] = "stream"
 	s["execution"].(map[string]interface{})["output_parsing"] = map[string]interface{}{
 		"patterns": []interface{}{
 			map[string]interface{}{
@@ -34,6 +35,7 @@ func TestValidator_AcceptsOutputParsing(t *testing.T) {
 func TestValidator_RejectsEmptyPatterns(t *testing.T) {
 	v, _ := NewValidator(repoSchemasDir(t))
 	s := validSensorComputational()
+	s["output"] = "stream"
 	s["execution"].(map[string]interface{})["output_parsing"] = map[string]interface{}{
 		"patterns": []interface{}{}, // empty — must be rejected
 	}
@@ -46,6 +48,7 @@ func TestValidator_RejectsEmptyPatterns(t *testing.T) {
 func TestValidator_RejectsBadVerdictInPattern(t *testing.T) {
 	v, _ := NewValidator(repoSchemasDir(t))
 	s := validSensorComputational()
+	s["output"] = "stream"
 	s["execution"].(map[string]interface{})["output_parsing"] = map[string]interface{}{
 		"patterns": []interface{}{
 			map[string]interface{}{"regex": "x", "verdict": "broken", "severity": "info"},
@@ -63,6 +66,7 @@ func TestValidator_AcceptsOutputParsingOnInferential(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := validSensorInferential()
+	s["output"] = "stream"
 	s["execution"].(map[string]interface{})["output_parsing"] = map[string]interface{}{
 		"patterns": []interface{}{
 			map[string]interface{}{"regex": "^PASS", "verdict": "pass", "severity": "info"},

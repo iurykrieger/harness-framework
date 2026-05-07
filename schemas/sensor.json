@@ -21,6 +21,7 @@
     "regulation",
     "phase",
     "determinism",
+    "output",
     "cost",
     "triggers",
     "execution",
@@ -65,6 +66,11 @@
       "type": "string",
       "enum": ["high", "medium", "low"],
       "description": "high = bit-identical reruns; medium = stable across reruns within tolerance; low = inferential without seed."
+    },
+    "output": {
+      "type": "string",
+      "enum": ["single", "stream"],
+      "description": "How many Signals one invocation emits. single = exactly one Signal carrying the final verdict (the runner ignores subprocess stdout/stderr lines beyond exit code). stream = one Signal per matched output line plus one final aggregate Signal (JSONL on stdout). single forbids execution.output_parsing; stream requires it."
     },
 
     "cost": {
@@ -356,6 +362,26 @@
           },
           "execution": {
             "required": ["command", "model", "system_prompt", "user_prompt_template", "decoding"]
+          }
+        }
+      }
+    },
+    {
+      "if":   { "properties": { "output": { "const": "single" } }, "required": ["output"] },
+      "then": {
+        "properties": {
+          "execution": {
+            "not": { "required": ["output_parsing"] }
+          }
+        }
+      }
+    },
+    {
+      "if":   { "properties": { "output": { "const": "stream" } }, "required": ["output"] },
+      "then": {
+        "properties": {
+          "execution": {
+            "required": ["output_parsing"]
           }
         }
       }

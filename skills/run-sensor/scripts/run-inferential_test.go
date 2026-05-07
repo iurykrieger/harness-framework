@@ -25,6 +25,7 @@ func writeInferentialSensor(t *testing.T, command string) string {
 		"name": "infr-test", "description": "fixture",
 		"type": "inferential", "regulation": "maintainability",
 		"phase": "post-integration", "determinism": "low",
+		"output": "stream",
 		"cost": map[string]interface{}{
 			"class":   "expensive",
 			"latency": map[string]interface{}{"p50_ms": 1000, "p95_ms": 5000, "timeout_ms": 30000},
@@ -146,6 +147,7 @@ func TestRunInferential_RejectsComputational(t *testing.T) {
 		"name": "x", "description": "x",
 		"type": "computational", "regulation": "maintainability",
 		"phase": "on-demand", "determinism": "high",
+		"output": "single",
 		"cost": map[string]interface{}{
 			"class":   "cheap",
 			"latency": map[string]interface{}{"p50_ms": 1, "p95_ms": 1, "timeout_ms": 1000},

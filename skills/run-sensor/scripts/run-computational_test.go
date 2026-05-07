@@ -19,13 +19,14 @@ func repoSchemasDir(t *testing.T) string {
 	return filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "schemas")
 }
 
-func writeSensor(t *testing.T, exec map[string]interface{}) string {
+func writeSensor(t *testing.T, output string, exec map[string]interface{}) string {
 	t.Helper()
 	sensor := map[string]interface{}{
 		"id": "comp-test", "version": "0.1.0",
 		"name": "comp-test", "description": "fixture",
 		"type": "computational", "regulation": "maintainability",
 		"phase": "on-demand", "determinism": "high",
+		"output": output,
 		"cost": map[string]interface{}{
 			"class":   "cheap",
 			"latency": map[string]interface{}{"p50_ms": 10, "p95_ms": 100, "timeout_ms": 5000},
@@ -64,7 +65,7 @@ func parseJSONL(t *testing.T, s string) []map[string]interface{} {
 
 func TestRunComputational_AllPass(t *testing.T) {
 	schemasDir := repoSchemasDir(t)
-	path := writeSensor(t, map[string]interface{}{
+	path := writeSensor(t, "stream", map[string]interface{}{
 		"command": `printf 'PASS a\nPASS b\n'`,
 		"exit_code_map": []interface{}{
 			map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
@@ -96,7 +97,7 @@ func TestRunComputational_AllPass(t *testing.T) {
 
 func TestRunComputational_LogStyle_StreamFailEclipsesPassExit(t *testing.T) {
 	schemasDir := repoSchemasDir(t)
-	path := writeSensor(t, map[string]interface{}{
+	path := writeSensor(t, "stream", map[string]interface{}{
 		"command": `printf 'INFO ok\nERROR something broke\nINFO ok\n'; exit 0`,
 		"exit_code_map": []interface{}{
 			map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
@@ -121,7 +122,7 @@ func TestRunComputational_LogStyle_StreamFailEclipsesPassExit(t *testing.T) {
 
 func TestRunComputational_FatalNoStream(t *testing.T) {
 	schemasDir := repoSchemasDir(t)
-	path := writeSensor(t, map[string]interface{}{
+	path := writeSensor(t, "single", map[string]interface{}{
 		"command": `false`,
 		"exit_code_map": []interface{}{
 			map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
@@ -143,7 +144,7 @@ func TestRunComputational_FatalNoStream(t *testing.T) {
 
 func TestRunComputational_Timeout(t *testing.T) {
 	schemasDir := repoSchemasDir(t)
-	path := writeSensor(t, map[string]interface{}{
+	path := writeSensor(t, "single", map[string]interface{}{
 		"command": `sleep 10`,
 		"exit_code_map": []interface{}{
 			map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
@@ -182,6 +183,7 @@ func TestRunComputational_RejectsInferential(t *testing.T) {
 		"name": "x", "description": "x",
 		"type": "inferential", "regulation": "maintainability",
 		"phase": "post-integration", "determinism": "low",
+		"output": "single",
 		"cost": map[string]interface{}{
 			"class":   "expensive",
 			"latency": map[string]interface{}{"p50_ms": 1, "p95_ms": 1, "timeout_ms": 1},

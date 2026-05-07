@@ -44,6 +44,7 @@ func validSensorComputational() map[string]interface{} {
 		"name": "smoke", "description": "fixture",
 		"type": "computational", "regulation": "maintainability",
 		"phase": "on-demand", "determinism": "high",
+		"output": "single",
 		"cost": map[string]interface{}{
 			"class":   "cheap",
 			"latency": map[string]interface{}{"p50_ms": 10, "p95_ms": 100, "timeout_ms": 5000},
@@ -72,6 +73,7 @@ func validSensorInferential() map[string]interface{} {
 		"name": "smoke inf", "description": "fixture",
 		"type": "inferential", "regulation": "maintainability",
 		"phase": "post-integration", "determinism": "low",
+		"output": "single",
 		"cost": map[string]interface{}{
 			"class":   "expensive",
 			"latency": map[string]interface{}{"p50_ms": 6000, "p95_ms": 15000, "timeout_ms": 60000},
