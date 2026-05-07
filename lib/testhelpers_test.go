@@ -79,6 +79,7 @@ func validSensorInferential() map[string]interface{} {
 		},
 		"triggers": []interface{}{map[string]interface{}{"on": "pull-request"}},
 		"execution": map[string]interface{}{
+			"command":              "claude -p {{prompt}}",
 			"model":                "anthropic/claude-sonnet-4-6",
 			"system_prompt":        "You are a similarity judge. Output JSON only.",
 			"user_prompt_template": "Compare {{a}} to {{b}}.",

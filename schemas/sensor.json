@@ -355,15 +355,7 @@
             "not": { "required": ["compute"] }
           },
           "execution": {
-            "required": ["model", "system_prompt", "user_prompt_template", "decoding"],
-            "not": {
-              "anyOf": [
-                { "required": ["command"] },
-                { "required": ["env"] },
-                { "required": ["exit_code_map"] },
-                { "required": ["output_parsing"] }
-              ]
-            }
+            "required": ["command", "model", "system_prompt", "user_prompt_template", "decoding"]
           }
         }
       }
