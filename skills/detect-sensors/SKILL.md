@@ -46,13 +46,24 @@ Pick the **lifecycle** deliberately too:
 
 Use Read, Glob, Bash to build a picture of the project. At minimum:
 
-- README, top-level layout (`ls -la`), `git log` for recency.
+- **Project documentation — read this FIRST**: `README.md`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `CONTRIBUTING.md`, plus any top-level guides under `docs/`. Maintainers document the commands they actually run — usually under headings like `## Build`, `## Test`, `## Run`, `## Development`, `## Quickstart`. Treat both fenced code blocks (```` ```bash ... ``` ````) AND inline prose mentions (e.g. "run `make build` to compile") as authoritative. These commands are the **canonical invocations** the project's humans rely on; everything else is secondary evidence.
+- Top-level layout (`ls -la`), `git log` for recency.
 - Manifest files: `package.json`, `go.mod`, `Cargo.toml`, `pyproject.toml`, `requirements.txt`, `Gemfile`, `composer.json`, `pom.xml`, `build.gradle`, `Chart.yaml`, `helmfile.yaml`, `Pulumi.yaml`, `*.tf`, `serverless.yml`, `wrangler.toml`, `Dockerfile`, `docker-compose.yml`.
 - CI definitions: `.github/workflows/`, `.gitlab-ci.yml`, `.circleci/`, `Jenkinsfile`, `azure-pipelines.yml`. These often reveal the *real* commands used in production.
 - Source layout signals: `pages/` or `app/` (Next.js), `cmd/` + `internal/` (Go service), `src/handlers/` (Lambda), `consumer.go`/`*Consumer.cs` (event consumer), `*Publisher.*` / `*Producer.*` (event producer), `infrastructure/` or `iac/` (IaC), `migrations/` (DB-bound service).
 - Observability hints: `Dockerfile`, `*.deployment.yaml`, `terraform/.../monitoring/`, `datadog.yaml`, `otel-collector-config.yaml`, `prometheus.yml`, `grafana/dashboards/`, `serverless.yml` events, log driver configs.
 
-You are looking for *both* the archetype and the concrete commands. A `package.json` script is the literal command; a CI workflow step is the literal command; a Dockerfile `CMD` is the literal command. When the literal command is unclear, propose a reasonable one and flag it in the sensor's `description`/`blind_spots`.
+You are looking for *both* the archetype and the concrete commands. A `package.json` script is a literal command; a CI workflow step is a literal command; a Dockerfile `CMD` is a literal command — but a command written down in `CLAUDE.md` / `README.md` / `AGENTS.md` is the **most authoritative** literal command, because the maintainers wrote it down on purpose. When the literal command is unclear, propose a reasonable one and flag it in the sensor's `description`/`blind_spots`.
+
+**Command-source precedence when sources disagree:**
+
+1. `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` — explicit agent guidance, highest signal.
+2. `README.md` / `CONTRIBUTING.md` / `docs/*` — human-facing canonical recipes.
+3. CI workflow steps (`.github/workflows/*`, `.gitlab-ci.yml`, etc.) — real production invocations, but tend to wrap things in matrices or composite actions that don't translate cleanly to a single shell command.
+4. `Dockerfile` `CMD`/`ENTRYPOINT` — production runtime for run-style sensors.
+5. `Makefile` targets / `Taskfile` aliases / `package.json` scripts — developer-facing wrappers; useful when nothing more authoritative exists.
+
+When a docs-sourced command and an inferred one disagree (e.g. README says `pnpm vitest run --coverage` but `package.json` has `"test": "vitest"`), the docs win — capture the documented form verbatim in `execution.command`. Note the source in `description` (e.g. *"Auto-detected via /detect-sensors from CLAUDE.md '## Build, validate, test' section"*) so the audit trail points at the exact heading the command came from.
 
 ### 3. Classify the project archetype(s)
 
@@ -95,7 +106,7 @@ Use these defaults unless the project tells you otherwise:
 - `execution.exit_code_map` defaults to `[{exit_code: 0, verdict: pass, severity: info}, {exit_code: "*", verdict: fail, severity: <medium|high>}]`. Override per capability.
 - `execution.output_parsing.patterns` (only when `output: "stream"`) — at least one regex per actionable verdict. For Go test, three patterns suffice: `^\s*--- PASS: (\S+)`, `^\s*--- FAIL: (\S+)`, `^\s*--- SKIP: (\S+)` with `captures.excerpt = 1`. For compilers/linters, one pattern: `^\s*(\S+\.go):(\d+):(\d+):\s+(.+)$` with `captures.{file:1,line_start:2,excerpt:4}`. RE2 syntax — escape backslashes once for JSON, once for regex (`\\\\s` → `\s` in the compiled regex).
 - `verification.golden_cases` MUST have at least one entry, and **every entry MUST point at a real fixture file** that exists at the path you write down. No `"TODO"` strings, no placeholder verdicts. See step 5 for how to author fixtures and step 6 for how to verify them.
-- `description` should be one sentence: trigger condition + what is observed + regulation dimension. Mention how you detected the capability (`Auto-detected via /detect-sensors from <evidence>`) and why you chose `output: <single|stream>`.
+- `description` should be one sentence: trigger condition + what is observed + regulation dimension. Mention how you detected the capability (`Auto-detected via /detect-sensors from <evidence>`) and why you chose `output: <single|stream>`. When the command came from project docs, name the file *and* the heading — e.g. *"Auto-detected from CLAUDE.md '## Build, validate, test'"* or *"Auto-detected from README.md '## Run locally'"* — so the source is one click away.
 - For inferential sensors, add `calibration` (`confidence_threshold`, `calibration_set`, `calibration_size`, `calibration_date: 2026-05-08`) and `blind_spots`.
 
 When the literal command is uncertain (common for `fetch-logs`, `fetch-metrics`, `trace-request`), still emit the sensor: put your best-guess command in `execution.command` and add a `blind_spots[]` entry stating what you assumed (auth profile, project id, region, log filter, etc.). The user reviews and tightens.
