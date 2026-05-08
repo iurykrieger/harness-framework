@@ -85,8 +85,8 @@ func TestBuildCascadeSignal_ValidatesAgainstSchema(t *testing.T) {
 	skipped := Sensor{
 		ID: "e2e-tests",
 		JSON: map[string]interface{}{
-			"id":      "e2e-tests",
-			"version": "0.1.0",
+			"id":        "e2e-tests",
+			"version":   "0.1.0",
 			"execution": map[string]interface{}{"command": "pnpm test"},
 		},
 	}

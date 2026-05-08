@@ -53,7 +53,6 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 	}
 
 	signals := map[string]map[string]interface{}{}
-	failed := map[string]map[string]interface{}{}
 
 	for _, s := range order {
 		if blocker := FirstFailedDep(s, signals); blocker != nil {
@@ -64,7 +63,6 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 			}
 			_ = json.NewEncoder(stdout).Encode(cascade)
 			signals[s.ID] = cascade
-			failed[s.ID] = cascade
 			continue
 		}
 		sig, sigCode := RunOne(ctx, s, schemasDir, v, stdout, stderr)
@@ -72,10 +70,6 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 			return sigCode
 		}
 		signals[s.ID] = sig
-		verdict, _ := sig["verdict"].(string)
-		if verdict == "fail" || verdict == "error" {
-			failed[s.ID] = sig
-		}
 	}
 	return 0
 }
