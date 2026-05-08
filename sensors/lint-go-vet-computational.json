@@ -43,6 +43,7 @@
     }
   },
   "id": "lint-go-vet-computational",
+  "kind": "assertion",
   "name": "go vet (run_computational)",
   "output": "stream",
   "phase": "pre-merge",

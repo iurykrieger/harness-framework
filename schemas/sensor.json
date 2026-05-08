@@ -7,6 +7,36 @@
   "$defs": {
     "Signal": {
       "$ref": "signal.json"
+    },
+    "ExitCodeMapEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exit_code", "verdict", "severity"],
+      "properties": {
+        "exit_code": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "string", "const": "*" }
+          ]
+        },
+        "verdict":  { "$ref": "signal.json#/$defs/Verdict" },
+        "severity": { "$ref": "signal.json#/$defs/Severity" }
+      }
+    },
+    "LifecycleStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command":       { "type": "string", "description": "Shell invocation (sh -c). MUST be idempotent." },
+        "timeout_ms":    { "type": "integer", "minimum": 1, "description": "Hard cap; falls back to cost.latency.timeout_ms when omitted." },
+        "exit_code_map": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Override only when tooling uses non-standard codes (e.g. 2 = 'already exists', treat as pass). When omitted, runner applies the default [{0:pass/info},{*:fail/high}].",
+          "items": { "$ref": "#/$defs/ExitCodeMapEntry" }
+        }
+      }
     }
   },
 
@@ -17,6 +47,7 @@
     "version",
     "name",
     "description",
+    "kind",
     "type",
     "regulation",
     "phase",
@@ -45,6 +76,11 @@
     "description": {
       "type": "string",
       "description": "One sentence: trigger condition + what is observed + regulation dimension."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["observation", "assertion", "setup"],
+      "description": "Sensor category. observation = observes behavior with no fixed expectation (run-project, fetch-logs, fetch-metrics, trace-request, watch-build); verdict describes the health of the observation. assertion = checks against an expectation (unit-test, integration-test, e2e-test, lint, type-check, build, schema-validate); verdict pass/fail is semantic. setup = idempotent auxiliary sensor that makes a precondition true (start-postgres, setup-env-from-example, install-deps-pnpm, login-gcloud); typically referenced via depends_on. Metadata only — the runner treats all three identically; tooling (detect-sensors, listings) uses it to classify and name."
     },
 
     "type": {
@@ -157,6 +193,17 @@
       }
     },
 
+    "depends_on": {
+      "type": "array",
+      "default": [],
+      "description": "IDs of sensors that must run (and PASS) before this one. The runner resolves the transitive closure in topological order and propagates failures. Use to chain setup sensors (start-postgres) or assertion sensors (unit-tests before e2e-tests). Cycles (including self-loops A → A) are detected and abort with exit 1.",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "uniqueItems": true
+    },
+
     "requires": {
       "type": "object",
       "additionalProperties": false,
@@ -164,7 +211,6 @@
         "tools":            { "type": "array", "items": { "type": "string" }, "default": [], "description": "Binaries, MCP servers, CLIs the sensor invokes." },
         "permissions":      { "type": "array", "items": { "type": "string" }, "default": [], "description": "Least-privilege scopes." },
         "context":          { "type": "array", "items": { "type": "string" }, "default": [], "description": "Repo paths the sensor reads (docs, configs, fixtures)." },
-        "upstream_sensors": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Sensor ids that must PASS first (chain cheap → expensive)." },
         "env": {
           "type": "array",
           "default": [],
@@ -195,25 +241,23 @@
           "default": false,
           "description": "When true, the command is expected to run continuously (dev servers, watchers, log tailers, replay loops). The runner spawns the process, streams individual Signals as patterns match, and terminates the process when cost.latency.timeout_ms elapses; deadline-driven termination is NOT treated as verdict=error — the aggregate verdict comes from worst-of-stream and defaults to pass when no pattern surfaced a problem. Use this for sensors whose value is observation while the process runs (e.g., `npm run dev`, `make watch`), pairing it with output: stream and patterns that capture both failure modes (errors, port collisions) and success markers (boot lines, ready probes)."
         },
+        "prepare": {
+          "type": "array",
+          "default": [],
+          "description": "Silent shell commands run before execution.command. Used to satisfy the sensor's preconditions (generate files, populate local .env from .env.example, intermediate builds). NOT observed via patterns; per-step verdict is folded into the sensor's aggregate metadata.lifecycle.prepare. Fail-fast: first non-pass step aborts prepare and skips the main command; teardown still runs.",
+          "items": { "$ref": "#/$defs/LifecycleStep" }
+        },
+        "teardown": {
+          "type": "array",
+          "default": [],
+          "description": "Silent shell commands run AFTER execution.command with finally semantics — they run on prepare failure, command failure, and command timeout. Per-step results are folded into metadata.lifecycle.teardown; teardown failures contribute warn evidence but do NOT downgrade the aggregate verdict.",
+          "items": { "$ref": "#/$defs/LifecycleStep" }
+        },
         "exit_code_map": {
           "type": "array",
           "description": "Maps process exit codes to verdict/severity. Required for computational sensors; optional for inferential (when omitted, the inferential runner defaults to exit 0 → pass/info, anything else → error/high). Use exit_code='*' as wildcard fallback.",
           "minItems": 1,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["exit_code", "verdict", "severity"],
-            "properties": {
-              "exit_code": {
-                "oneOf": [
-                  { "type": "integer", "minimum": 0 },
-                  { "type": "string", "const": "*" }
-                ]
-              },
-              "verdict":  { "$ref": "signal.json#/$defs/Verdict" },
-              "severity": { "$ref": "signal.json#/$defs/Severity" }
-            }
-          }
+          "items": { "$ref": "#/$defs/ExitCodeMapEntry" }
         },
         "output_parsing": {
           "type": "object",

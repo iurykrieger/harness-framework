@@ -46,6 +46,7 @@
     }
   },
   "id": "lint-gofmt",
+  "kind": "assertion",
   "name": "gofmt formatting",
   "output": "stream",
   "phase": "pre-commit",

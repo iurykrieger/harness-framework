@@ -43,6 +43,7 @@
     }
   },
   "id": "lint-go-vet-inferential",
+  "kind": "assertion",
   "name": "go vet (run_inferential)",
   "output": "stream",
   "phase": "pre-merge",

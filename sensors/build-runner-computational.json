@@ -43,6 +43,7 @@
     }
   },
   "id": "build-runner-computational",
+  "kind": "assertion",
   "name": "Build computational runner",
   "output": "stream",
   "phase": "pre-merge",
