@@ -37,6 +37,16 @@ Pick `output` deliberately:
 
 `inferential` is reserved for verdicts that genuinely require LLM judgment (AI code review, semantic-duplicate detection). Most CI-mirroring sensors are computational.
 
+### 1.5 Classify each sensor: kind = observation | assertion | setup
+
+Every sensor MUST declare `kind` (top-level, required). Pick by purpose:
+
+- **observation** — observes behavior with no fixed expectation. Verdict describes the *health of the observation*, not pass/fail of an assertion. Examples: `run-project-nest`, `fetch-logs-cloudrun`, `fetch-metrics-datadog`, `trace-request`, `watch-build`, `tail-logs-local`. Naming convention: `run-*`, `watch-*`, `fetch-*`, `trace-*`, `tail-*`.
+- **assertion** — checks against an expectation. Verdict pass/fail is semantic. Examples: `lint-eslint`, `unit-test-vitest`, `e2e-playwright`, `type-check-tsc`, `build-vite`, `schema-validate-json`, `validate-plugin-manifest`. Naming convention: `lint-*`, `build-*`, `unit-test-*`, `integration-test-*`, `e2e-*`, `validate-*`, `schema-*`.
+- **setup** — idempotent auxiliary sensor that makes a precondition true. Typically referenced by other sensors via `depends_on`. Examples: `start-postgres`, `setup-env-from-example`, `install-deps-pnpm`, `login-gcloud`, `seed-db`, `provision-tunnel`. Naming convention: `start-*`, `setup-*`, `install-*`, `seed-*`, `login-*`, `provision-*`. Setup sensors MUST be idempotent (re-running with the same input is a no-op when the world is already in the desired state); document the strategy in `description` (`"test -f .env || cp .env.example .env"`, `"docker compose up -d postgres"` is idempotent by default, etc.).
+
+Inferential setup sensors are technically allowed but **discouraged**: setup operations should be deterministic and idempotent; LLM-driven setup is neither. Do not emit `kind: "setup"` paired with `type: "inferential"`.
+
 Pick the **lifecycle** deliberately too:
 
 - **One-shot** (default, `execution.long_running` omitted or `false`) — the command runs to natural completion. `cost.latency.timeout_ms` is a hard cap; exceeding it forces `verdict=error`. Suits tests, builds, linters, parsers, dry-runs.
@@ -182,6 +192,40 @@ Things to copy from this template into other continuous sensors: `output: "strea
 ```
 
 Use `requires.env` for anything secret or per-developer; use `execution.env` only for static, non-secret literals (`LANG`, feature flags, deterministic seeds). Never put a token, key, or per-environment id directly into the sensor JSON — that file is committed to the repo.
+
+### 4.5 Authoring lifecycle phases (prepare / teardown)
+
+A sensor's `execution` ships three phases: `prepare[]`, `command` (the observed one), and `teardown[]`. Use them to keep the sensor self-contained when its setup is specific to it (vs reusable across many sensors → use a setup sensor + `depends_on`).
+
+- **prepare[]** — silent, fail-fast. Each item: `{ command, timeout_ms?, exit_code_map? }`. The first non-pass step aborts and skips the main command (but teardown still runs). Use for: generating intermediate artifacts (`pnpm prisma generate`, `make protos`), populating local config (`test -f .env || cp .env.example .env`), running pre-build steps that aren't worth a separate sensor.
+- **teardown[]** — silent, best-effort. Same item shape. Every step runs regardless of prepare/command outcome (finally semantics). Use for: dropping local DB after E2E (`pnpm prisma migrate reset --force --skip-seed`), stopping containers, removing temp files. Teardown failures contribute warn evidence but do NOT downgrade the sensor's aggregate verdict — the command is the source of truth.
+
+**When to use prepare vs a setup sensor with depends_on:**
+- Reusable across multiple sensors → setup sensor (`depends_on: ["start-postgres"]`)
+- Specific to this sensor only → `prepare[]`
+
+Example (E2E sensor with full lifecycle):
+
+```jsonc
+{
+  "id": "e2e-tests",
+  "kind": "assertion",
+  "depends_on": ["start-postgres", "setup-env-from-example"],
+  "execution": {
+    "prepare": [
+      { "command": "pnpm prisma migrate deploy", "timeout_ms": 30000 },
+      { "command": "pnpm prisma db seed",        "timeout_ms": 15000 }
+    ],
+    "command": "pnpm playwright test",
+    "exit_code_map": [...],
+    "output_parsing": { "patterns": [...] },
+    "teardown": [
+      { "command": "pnpm prisma migrate reset --force --skip-seed", "timeout_ms": 15000 },
+      { "command": "docker compose stop postgres",                  "timeout_ms": 10000 }
+    ]
+  }
+}
+```
 
 ### 5. Author fixtures BEFORE you persist
 

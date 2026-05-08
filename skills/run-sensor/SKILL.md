@@ -14,6 +14,33 @@ There are exactly two scripts, one per sensor `type`. Both follow the same pipel
 
 `single` forbids `execution.output_parsing`. `stream` requires `execution.output_parsing.patterns` (≥1 pattern). The schema enforces both.
 
+## Dependency resolution
+
+When a sensor declares `depends_on: ["setup-x", "setup-y"]`, the runner resolves the transitive closure, sorts topologically (deps first), and runs each sensor's full lifecycle (prepare → command → teardown) before the requested sensor starts. Cycles (including self-loops `A → A`) are detected and abort with exit 1. Missing deps (referenced id has no file under `sensors/`) also abort with exit 1.
+
+The JSONL stream on stdout for `/run-sensor X` (where X has deps D1, D2) looks like:
+
+```
+{aggregate Signal of D1}
+{aggregate Signal of D2}
+{individual Signal 1 of X}    ← only when X has output: stream
+{individual Signal 2 of X}
+...
+{aggregate Signal of X}        ← LAST line, contract preserved
+```
+
+Callers using `tail -n 1 | jq` continue to see exactly the requested sensor's aggregate. Callers persisting all lines see deps' Signals interleaved.
+
+## Cascade behavior
+
+When a dep produces verdict=fail or verdict=error, every transitively-dependent sensor is **skipped** and emits a "cascade" Signal (verdict=error, severity=high) pointing at the failed dep:
+
+- `metadata.kind = "cascade"`
+- `metadata.failed_dep_id`, `metadata.failed_dep_run_id`, `metadata.failed_dep_verdict`, `metadata.failed_dep_severity`
+- `evidence[0].rationale` describes which dep failed and where to find its Signal.
+
+The skipped sensor never runs its `command` or its prepare/teardown — only the cascade Signal is emitted.
+
 ## Invocation
 
 ```
