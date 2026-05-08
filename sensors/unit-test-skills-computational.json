@@ -57,6 +57,7 @@
     }
   },
   "id": "unit-test-skills-computational",
+  "kind": "assertion",
   "name": "Unit tests (skills/, run_computational)",
   "output": "stream",
   "phase": "pre-merge",

@@ -57,6 +57,7 @@
     }
   },
   "id": "unit-test-lib",
+  "kind": "assertion",
   "name": "Unit tests (lib/)",
   "output": "stream",
   "phase": "pre-merge",

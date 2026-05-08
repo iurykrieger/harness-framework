@@ -46,6 +46,7 @@
     }
   },
   "id": "lint-skill-frontmatter",
+  "kind": "assertion",
   "name": "Skill frontmatter integrity",
   "output": "stream",
   "phase": "pre-commit",

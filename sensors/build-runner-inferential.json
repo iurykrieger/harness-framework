@@ -43,6 +43,7 @@
     }
   },
   "id": "build-runner-inferential",
+  "kind": "assertion",
   "name": "Build inferential runner",
   "output": "stream",
   "phase": "pre-merge",

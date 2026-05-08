@@ -25,6 +25,7 @@ func writeInferentialSensor(t *testing.T, command string) string {
 	sensor := map[string]interface{}{
 		"id": "infr-test", "version": "0.1.0",
 		"name": "infr-test", "description": "fixture",
+		"kind": "assertion",
 		"type": "inferential", "regulation": "maintainability",
 		"phase": "post-integration", "determinism": "low",
 		"output": "stream",
@@ -151,6 +152,7 @@ func TestRunInferential_RejectsComputational(t *testing.T) {
 	sensor := map[string]interface{}{
 		"id": "wrong", "version": "0.1.0",
 		"name": "x", "description": "x",
+		"kind": "assertion",
 		"type": "computational", "regulation": "maintainability",
 		"phase": "on-demand", "determinism": "high",
 		"output": "single",

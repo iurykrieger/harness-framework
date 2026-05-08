@@ -302,3 +302,88 @@ func flattenValidationError(err error) string {
 	}
 	return err.Error()
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// kind / depends_on / lifecycle (prepare, teardown) tests
+// ──────────────────────────────────────────────────────────────────────
+
+func TestValidator_KindRequired(t *testing.T) {
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testfixtures.ValidSensorComputational()
+	delete(s, "kind")
+	if err := v.Validate(schema.TargetSensor, s); err == nil {
+		t.Fatal("expected validation to fail without kind")
+	}
+}
+
+func TestValidator_KindEnumRejectsUnknown(t *testing.T) {
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testfixtures.ValidSensorComputational()
+	s["kind"] = "diagnostic"
+	if err := v.Validate(schema.TargetSensor, s); err == nil {
+		t.Fatal("expected validation to fail for kind='diagnostic'")
+	}
+}
+
+func TestValidator_DependsOnAcceptsIDArray(t *testing.T) {
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testfixtures.ValidSensorComputational()
+	s["depends_on"] = []interface{}{"start-postgres", "setup-env"}
+	if err := v.Validate(schema.TargetSensor, s); err != nil {
+		t.Fatalf("expected valid depends_on to validate: %v", err)
+	}
+}
+
+func TestValidator_DependsOnRejectsBadID(t *testing.T) {
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testfixtures.ValidSensorComputational()
+	s["depends_on"] = []interface{}{"Bad-ID"} // uppercase rejected
+	if err := v.Validate(schema.TargetSensor, s); err == nil {
+		t.Fatal("expected validation to fail for uppercase id in depends_on")
+	}
+}
+
+func TestValidator_PrepareTeardownAccepted(t *testing.T) {
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testfixtures.ValidSensorComputational()
+	exec := s["execution"].(map[string]interface{})
+	exec["prepare"] = []interface{}{
+		map[string]interface{}{"command": "echo prep", "timeout_ms": 1000},
+	}
+	exec["teardown"] = []interface{}{
+		map[string]interface{}{"command": "echo down"},
+	}
+	if err := v.Validate(schema.TargetSensor, s); err != nil {
+		t.Fatalf("expected prepare+teardown to validate: %v", err)
+	}
+}
+
+func TestValidator_UpstreamSensorsRemoved(t *testing.T) {
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testfixtures.ValidSensorComputational()
+	requires := map[string]interface{}{
+		"upstream_sensors": []interface{}{"x"},
+	}
+	s["requires"] = requires
+	if err := v.Validate(schema.TargetSensor, s); err == nil {
+		t.Fatal("expected requires.upstream_sensors to be rejected (additionalProperties false)")
+	}
+}

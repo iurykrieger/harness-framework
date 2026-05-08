@@ -33,6 +33,7 @@
     ]
   },
   "id": "validate-plugin-manifest",
+  "kind": "assertion",
   "name": "Plugin manifest parses as JSON",
   "output": "single",
   "phase": "pre-commit",
