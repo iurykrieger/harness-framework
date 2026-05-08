@@ -21,6 +21,7 @@ type AggregateInput struct {
 	StreamVerdict  string // from MaxStreamVerdict over individuals
 	StreamSeverity string
 	TimedOut       bool
+	LongRunning    bool // true for execution.long_running=true sensors
 }
 
 // AggregateResult is what goes into the aggregate Signal.
@@ -29,21 +30,35 @@ type AggregateResult struct {
 	Severity string
 }
 
-// Aggregate applies the worst-of-two rule. Timeout always forces verdict=error
-// regardless of the inputs (the run is incomplete; trust nothing else).
+// Aggregate applies the worst-of-two rule.
+//
+// For one-shot sensors (LongRunning=false), timeout always forces
+// verdict=error regardless of the inputs: the run is incomplete and the
+// tool's own notion of success cannot be trusted.
+//
+// For long-running sensors (LongRunning=true), timeout is the *intended*
+// lifecycle — the runner deliberately terminates the process when its
+// observation window ends. In that case the exit side is treated as
+// pass/info and the aggregate is driven entirely by what the stream
+// observed: if any pattern surfaced a problem the worst-of-stream wins,
+// otherwise the verdict is pass.
 //
 // On rank ties the exit side wins: the run-level result (exit code mapping)
 // is the more authoritative summary because it reflects the tool's own
 // notion of success, while the stream verdict is reconstructed from
 // per-item parsing.
 func Aggregate(in AggregateInput) AggregateResult {
-	if in.TimedOut {
+	if in.TimedOut && !in.LongRunning {
 		return AggregateResult{Verdict: "error", Severity: "high"}
 	}
-	if VerdictRank[in.StreamVerdict] > VerdictRank[in.ExitVerdict] {
+	exitV, exitS := in.ExitVerdict, in.ExitSeverity
+	if in.TimedOut && in.LongRunning {
+		exitV, exitS = "pass", "info"
+	}
+	if VerdictRank[in.StreamVerdict] > VerdictRank[exitV] {
 		return AggregateResult{Verdict: in.StreamVerdict, Severity: in.StreamSeverity}
 	}
-	return AggregateResult{Verdict: in.ExitVerdict, Severity: in.ExitSeverity}
+	return AggregateResult{Verdict: exitV, Severity: exitS}
 }
 
 // MaxStreamVerdict scans individuals and returns the highest-rank verdict and

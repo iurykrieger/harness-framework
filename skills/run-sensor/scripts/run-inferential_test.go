@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/iurykrieger/harness-framework/lib/sensor"
 )
 
 func repoSchemasDir(t *testing.T) string {
@@ -207,6 +209,47 @@ func TestRunInferential_HonoursExitCodeMap(t *testing.T) {
 	}
 	if agg["severity"] != "medium" {
 		t.Fatalf("expected severity=medium, got %v", agg["severity"])
+	}
+}
+
+func TestRunInferential_MissingRequiredEnvAborts(t *testing.T) {
+	schemasDir := repoSchemasDir(t)
+	path := writeInferentialSensor(t, `printf "should not run\n"; exit 0`)
+	b, _ := os.ReadFile(path)
+	var s map[string]interface{}
+	_ = json.Unmarshal(b, &s)
+	s["requires"] = map[string]interface{}{
+		"env": []interface{}{
+			map[string]interface{}{"name": "DETECT_SENSORS_INF_GHOST", "description": "intentionally unset"},
+		},
+	}
+	nb, _ := json.Marshal(s)
+	_ = os.WriteFile(path, nb, 0o644)
+
+	prev := sensor.LookupEnvFn
+	sensor.LookupEnvFn = func(name string) (string, bool) {
+		if name == "DETECT_SENSORS_INF_GHOST" {
+			return "", false
+		}
+		return os.LookupEnv(name)
+	}
+	t.Cleanup(func() { sensor.LookupEnvFn = prev })
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--schemas-dir", schemasDir, "--slot", "a=x", "--slot", "b=y", path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("expected exit 0 (Signal printed), got %d stderr=%s", code, stderr.String())
+	}
+	lines := parseJSONL(t, stdout.String())
+	if len(lines) != 1 {
+		t.Fatalf("expected exactly 1 aggregate, got %d", len(lines))
+	}
+	agg := lines[0]
+	if agg["verdict"] != "error" || agg["severity"] != "high" {
+		t.Fatalf("expected error/high, got %v/%v", agg["verdict"], agg["severity"])
+	}
+	rem, _ := agg["remediation"].(map[string]interface{})
+	if rem == nil || !strings.Contains(rem["instructions"].(string), "DETECT_SENSORS_INF_GHOST") {
+		t.Fatalf("remediation should name missing var: %+v", rem)
 	}
 }
 

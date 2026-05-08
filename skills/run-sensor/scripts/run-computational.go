@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
@@ -62,8 +63,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	if missing := sensor.CheckRequiredEnv(sensorJSON); len(missing) > 0 {
+		output, _ := sensorJSON["output"].(string)
+		sig := sensor.BuildErrorSignal(envelope, output, missingEnvRationale(missing), missingEnvRemediation(missing))
+		if err := v.Validate(schema.TargetSignal, sig); err != nil {
+			schema.PrintValidationOrPlain(err, stderr)
+			return 1
+		}
+		_ = json.NewEncoder(stdout).Encode(sig)
+		return 0
+	}
+
 	execMap := sensorJSON["execution"].(map[string]interface{})
 	command, _ := execMap["command"].(string)
+	longRunning, _ := execMap["long_running"].(bool)
 
 	var patterns []signal.Pattern
 	if op, ok := execMap["output_parsing"].(map[string]interface{}); ok {
@@ -104,9 +117,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		StreamVerdict:  streamVerd,
 		StreamSeverity: streamSev,
 		TimedOut:       res.TimedOut,
+		LongRunning:    longRunning,
 	})
 
-	sig := buildAggregateSignal(envelope, res, agg, command, output)
+	sig := buildAggregateSignal(envelope, res, agg, command, output, longRunning)
 	if err := v.Validate(schema.TargetSignal, sig); err != nil {
 		schema.PrintValidationOrPlain(err, stderr)
 		return 1
@@ -115,9 +129,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, agg signal.AggregateResult, command, outputMode string) map[string]interface{} {
+func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, agg signal.AggregateResult, command, outputMode string, longRunning bool) map[string]interface{} {
 	finished := sensor.NowFn().Format("2006-01-02T15:04:05Z")
 	evidence := signal.SelectTopEvidence(res.Individuals, 20)
+	md := map[string]interface{}{
+		"kind":        "aggregate",
+		"output_mode": outputMode,
+		"command":     command,
+		"exit_code":   res.ExitCode,
+		"timed_out":   res.TimedOut,
+		"counts":      signal.CountVerdicts(res.Individuals),
+	}
+	if longRunning {
+		md["long_running"] = true
+	}
 	return map[string]interface{}{
 		"sensor_id":   env.SensorID,
 		"version":     env.Version,
@@ -129,15 +154,29 @@ func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, agg 
 		"confidence":  1.0,
 		"evidence":    evidence,
 		"cost_actual": map[string]interface{}{"latency_ms": res.ElapsedMS},
-		"metadata": map[string]interface{}{
-			"kind":        "aggregate",
-			"output_mode": outputMode,
-			"command":     command,
-			"exit_code":   res.ExitCode,
-			"timed_out":   res.TimedOut,
-			"counts":      signal.CountVerdicts(res.Individuals),
-		},
+		"metadata":    md,
 	}
+}
+
+func missingEnvRationale(missing []sensor.MissingEnv) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Sensor cannot run: %d required env var(s) missing from the runner's environment.\n", len(missing))
+	for _, m := range missing {
+		if m.Description != "" {
+			fmt.Fprintf(&b, "  - %s — %s\n", m.Name, m.Description)
+		} else {
+			fmt.Fprintf(&b, "  - %s\n", m.Name)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func missingEnvRemediation(missing []sensor.MissingEnv) string {
+	names := make([]string, 0, len(missing))
+	for _, m := range missing {
+		names = append(names, m.Name)
+	}
+	return "Set the following env var(s) before invoking /run-sensor: " + strings.Join(names, ", ") + ". Source them from your shell, a .env file, or the secret manager backing this project."
 }
 
 func asNumber(v interface{}) float64 {

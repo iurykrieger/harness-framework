@@ -164,7 +164,22 @@
         "tools":            { "type": "array", "items": { "type": "string" }, "default": [], "description": "Binaries, MCP servers, CLIs the sensor invokes." },
         "permissions":      { "type": "array", "items": { "type": "string" }, "default": [], "description": "Least-privilege scopes." },
         "context":          { "type": "array", "items": { "type": "string" }, "default": [], "description": "Repo paths the sensor reads (docs, configs, fixtures)." },
-        "upstream_sensors": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Sensor ids that must PASS first (chain cheap → expensive)." }
+        "upstream_sensors": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Sensor ids that must PASS first (chain cheap → expensive)." },
+        "env": {
+          "type": "array",
+          "default": [],
+          "description": "Environment variables the runner forwards from its own environment (os.Environ) into the sensor's subprocess. Use this for secrets, project ids, auth tokens, region/profile selectors — anything that would be wrong to hardcode in the sensor JSON. The runner forwards every listed name whose value is set; if a non-optional name is unset at run time it aborts and emits verdict=error with a remediation pointing at the missing var. Declared env vars document intent — the existence of the sensor never depends on the variable being set right now.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name":        { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$", "description": "Env var name (uppercase + underscores)." },
+              "description": { "type": "string", "description": "What the variable is and how to obtain it (e.g., 'GitHub PAT with repo:read scope', 'GCP project id for log queries')." },
+              "optional":    { "type": "boolean", "default": false, "description": "When true, the runner forwards the value if set but does not abort if missing — useful for env vars that change behaviour rather than being mandatory." }
+            }
+          }
+        }
       }
     },
 
@@ -175,6 +190,11 @@
       "properties": {
         "command":        { "type": "string", "description": "Required for both sensor types. Shell invocation (passed to sh -c by the runner) — pipes, redirects, globs and quoted args all work. Should be hermetic and idempotent." },
         "env":            { "type": "object", "additionalProperties": { "type": "string" }, "description": "Environment variables set during subprocess execution. Inferential runner additionally injects HARNESS_PROMPT with the rendered user_prompt_template." },
+        "long_running": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, the command is expected to run continuously (dev servers, watchers, log tailers, replay loops). The runner spawns the process, streams individual Signals as patterns match, and terminates the process when cost.latency.timeout_ms elapses; deadline-driven termination is NOT treated as verdict=error — the aggregate verdict comes from worst-of-stream and defaults to pass when no pattern surfaced a problem. Use this for sensors whose value is observation while the process runs (e.g., `npm run dev`, `make watch`), pairing it with output: stream and patterns that capture both failure modes (errors, port collisions) and success markers (boot lines, ready probes)."
+        },
         "exit_code_map": {
           "type": "array",
           "description": "Maps process exit codes to verdict/severity. Required for computational sensors; optional for inferential (when omitted, the inferential runner defaults to exit 0 → pass/info, anything else → error/high). Use exit_code='*' as wildcard fallback.",

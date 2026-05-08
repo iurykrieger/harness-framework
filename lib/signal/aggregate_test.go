@@ -47,6 +47,45 @@ func TestAggregate_TimeoutForcesError(t *testing.T) {
 	}
 }
 
+func TestAggregate_LongRunningTimeoutIsPass(t *testing.T) {
+	// Deadline reached on a long-running sensor with a clean stream:
+	// the deliberate SIGTERM is the lifecycle, not a failure.
+	r := signal.Aggregate(signal.AggregateInput{
+		ExitVerdict: "error", ExitSeverity: "high", // exec.CommandContext SIGKILL → typically maps to error
+		StreamVerdict: "pass", StreamSeverity: "info",
+		TimedOut: true, LongRunning: true,
+	})
+	if r.Verdict != "pass" || r.Severity != "info" {
+		t.Fatalf("expected pass/info, got %+v", r)
+	}
+}
+
+func TestAggregate_LongRunningTimeoutPreservesStreamFail(t *testing.T) {
+	// Deadline on a long-running sensor whose stream surfaced fail signals:
+	// the worst-of-stream still wins; long_running only neutralises the
+	// timeout's error override, not real findings.
+	r := signal.Aggregate(signal.AggregateInput{
+		ExitVerdict: "error", ExitSeverity: "high",
+		StreamVerdict: "fail", StreamSeverity: "high",
+		TimedOut: true, LongRunning: true,
+	})
+	if r.Verdict != "fail" || r.Severity != "high" {
+		t.Fatalf("expected fail/high (stream-driven), got %+v", r)
+	}
+}
+
+func TestAggregate_OneShotTimeoutStillError(t *testing.T) {
+	// Default (LongRunning=false): timeout dominates regardless of stream.
+	r := signal.Aggregate(signal.AggregateInput{
+		ExitVerdict: "pass", ExitSeverity: "info",
+		StreamVerdict: "pass", StreamSeverity: "info",
+		TimedOut: true,
+	})
+	if r.Verdict != "error" || r.Severity != "high" {
+		t.Fatalf("expected error/high, got %+v", r)
+	}
+}
+
 func TestMaxStreamVerdict_Empty(t *testing.T) {
 	v, s := signal.MaxStreamVerdict(nil)
 	if v != "pass" || s != "info" {
