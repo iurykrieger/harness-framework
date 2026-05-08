@@ -35,7 +35,7 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 		return code
 	}
 
-	rootID := stripJSONExt(filepath.Base(abs))
+	rootID := StripJSONExt(filepath.Base(abs))
 	order, err := Resolve(rootID, root)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
@@ -56,7 +56,7 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 	failed := map[string]map[string]interface{}{}
 
 	for _, s := range order {
-		if blocker := firstFailedDep(s, signals); blocker != nil {
+		if blocker := FirstFailedDep(s, signals); blocker != nil {
 			cascade := BuildCascadeSignal(s, blocker)
 			if err := v.Validate(schema.TargetSignal, cascade); err != nil {
 				schema.PrintValidationOrPlain(err, stderr)
@@ -80,9 +80,9 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 	return 0
 }
 
-// firstFailedDep returns the Signal of the first dep id (in declaration
+// FirstFailedDep returns the Signal of the first dep id (in declaration
 // order) of s that has a fail/error verdict, or nil when none failed.
-func firstFailedDep(s Sensor, signals map[string]map[string]interface{}) map[string]interface{} {
+func FirstFailedDep(s Sensor, signals map[string]map[string]interface{}) map[string]interface{} {
 	depIDs := readDepsArray(s.JSON)
 	for _, d := range depIDs {
 		sig := signals[d]
@@ -97,7 +97,10 @@ func firstFailedDep(s Sensor, signals map[string]map[string]interface{}) map[str
 	return nil
 }
 
-func stripJSONExt(name string) string {
+// StripJSONExt removes a trailing ".json" extension from a filename. It is
+// the inverse of FindSensorByID's "<id>.json" filename convention and is
+// exported so runner scripts can derive a sensor id from its on-disk path.
+func StripJSONExt(name string) string {
 	if len(name) > 5 && name[len(name)-5:] == ".json" {
 		return name[:len(name)-5]
 	}

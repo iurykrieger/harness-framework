@@ -21,10 +21,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/iurykrieger/harness-framework/lib/cli"
+	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
@@ -73,6 +75,59 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
+
+	// Resolve depends_on graph. Run every dep via orchestrator.RunOne;
+	// the requested sensor itself goes through the inferential pipeline below.
+	cwd, _ := os.Getwd()
+	sensorAbsPath, err := sensor.ResolveSensorPath(rest[0], cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "error: resolve:", err)
+		return 2
+	}
+	sensorRoot := filepath.Dir(sensorAbsPath)
+	rootID := orchestrator.StripJSONExt(filepath.Base(sensorAbsPath))
+
+	order, err := orchestrator.Resolve(rootID, sensorRoot)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+		return 1
+	}
+
+	depSignals := map[string]map[string]interface{}{}
+	for _, dep := range order[:len(order)-1] {
+		if err := v.Validate(schema.TargetSensor, dep.JSON); err != nil {
+			schema.PrintValidationOrPlain(err, stderr)
+			return 1
+		}
+		if blocker := orchestrator.FirstFailedDep(dep, depSignals); blocker != nil {
+			cascade := orchestrator.BuildCascadeSignal(dep, blocker)
+			if err := v.Validate(schema.TargetSignal, cascade); err != nil {
+				schema.PrintValidationOrPlain(err, stderr)
+				return 1
+			}
+			_ = json.NewEncoder(stdout).Encode(cascade)
+			depSignals[dep.ID] = cascade
+			continue
+		}
+		sig, depCode := orchestrator.RunOne(context.Background(), dep, schemasDir, v, stdout, stderr)
+		if depCode != 0 {
+			return depCode
+		}
+		depSignals[dep.ID] = sig
+	}
+
+	// If any dep of the requested sensor failed, cascade and stop.
+	requested := order[len(order)-1]
+	if blocker := orchestrator.FirstFailedDep(requested, depSignals); blocker != nil {
+		cascade := orchestrator.BuildCascadeSignal(requested, blocker)
+		if err := v.Validate(schema.TargetSignal, cascade); err != nil {
+			schema.PrintValidationOrPlain(err, stderr)
+			return 1
+		}
+		_ = json.NewEncoder(stdout).Encode(cascade)
+		return 0
+	}
+
 	envelope, err := sensor.BuildEnvelope(sensorJSON)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: envelope:", err)
