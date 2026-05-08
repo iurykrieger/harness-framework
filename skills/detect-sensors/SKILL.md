@@ -37,6 +37,11 @@ Pick `output` deliberately:
 
 `inferential` is reserved for verdicts that genuinely require LLM judgment (AI code review, semantic-duplicate detection). Most CI-mirroring sensors are computational.
 
+Pick the **lifecycle** deliberately too:
+
+- **One-shot** (default, `execution.long_running` omitted or `false`) — the command runs to natural completion. `cost.latency.timeout_ms` is a hard cap; exceeding it forces `verdict=error`. Suits tests, builds, linters, parsers, dry-runs.
+- **Continuous** (`execution.long_running: true`) — the command is *expected* to keep running (dev servers, watchers, log tailers, replay loops). The runner spawns it, streams pattern-matched Signals as they arrive, and terminates the process when `cost.latency.timeout_ms` elapses. **The deadline-driven termination is NOT an error** — the aggregate verdict is driven by what the stream observed during the window. Continuous sensors are first-class: a `run-project` sensor that boots the project locally and listens for failure markers in the first 30 seconds is as valuable as any one-shot test runner. Do NOT downgrade them to `npm run build` or `nest build`-style proxies just because a watcher feels harder to bound — bound it with `timeout_ms` and let the patterns do the work.
+
 ### 2. Inspect the project
 
 Use Read, Glob, Bash to build a picture of the project. At minimum:
@@ -68,7 +73,17 @@ Add or drop capabilities to match what you see. If the project sets up Sentry, d
 
 ### 4. Draft each sensor
 
-For every capability that survives step 3, draft a sensor JSON object. The id MUST be kebab-case starting with a letter (`^[a-z][a-z0-9-]*$`) and unique across the directory — combine capability + tool + (optional) scope, e.g. `lint-eslint`, `build-go`, `fetch-logs-cloudrun`, `unit-test-pytest-domain`.
+**Mandate: never skip a sensor.** Emit one for every capability the project plausibly has, even when:
+
+- The exact command isn't 100% determined — pick the closest production-shaped invocation (Dockerfile `CMD`, CI step, README "Run locally" recipe), put it in `execution.command`, and document the assumption in `blind_spots[]`.
+- Required config files are gitignored (`.env*`, `config/*.local.*`, RSA keys) — they exist on the developer's machine; reference them in the command, declare the env names you need under `requires.env`, and let the runner abort with a clear remediation if the user runs it without them.
+- The capability needs auth tokens, project ids, or other secrets — declare them under `requires.env`, NEVER hardcode. Sensor existence is independent of credential availability *right now*: the user (or a future agent turn) provides the value out of band when they invoke `/run-sensor`.
+- The command runs continuously (watchers, dev servers, log tailers) — set `execution.long_running: true` and pair with `output: "stream"` patterns; do not downgrade to a proxy command just to keep things one-shot. See §1's lifecycle guidance.
+- You aren't sure your patterns will catch every failure mode — that's what §7's iteration loop is for. Ship a v0.1.0 with your best guess and iterate via `/run-sensor` until the output is informative.
+
+The only legitimate reason to omit a capability is "the project genuinely doesn't have it" (no observability stack at all → no `fetch-logs` sensor; no IaC → no `terraform-validate`). Never omit because credentials, watchers, or partial knowledge make the run-time path harder.
+
+For every capability that survives step 3, draft a sensor JSON object. The id MUST be kebab-case starting with a letter (`^[a-z][a-z0-9-]*$`) and unique across the directory — combine capability + tool + (optional) scope, e.g. `lint-eslint`, `build-go`, `fetch-logs-cloudrun`, `unit-test-pytest-domain`, `run-project-nest`.
 
 Use these defaults unless the project tells you otherwise:
 
@@ -84,6 +99,63 @@ Use these defaults unless the project tells you otherwise:
 - For inferential sensors, add `calibration` (`confidence_threshold`, `calibration_set`, `calibration_size`, `calibration_date: 2026-05-08`) and `blind_spots`.
 
 When the literal command is uncertain (common for `fetch-logs`, `fetch-metrics`, `trace-request`), still emit the sensor: put your best-guess command in `execution.command` and add a `blind_spots[]` entry stating what you assumed (auth profile, project id, region, log filter, etc.). The user reviews and tightens.
+
+**Continuous-sensor template** (`run-project`-style — same shape works for `tail-logs-local`, `watch-build`, `replay-events`):
+
+```jsonc
+{
+  "id": "run-project-nest",
+  "version": "0.1.0",
+  "name": "Run project (nest start --watch)",
+  "description": "On demand, boots the NestJS app locally with the production-shaped command and listens for the first 30s. Regulates behaviour by surfacing crash, port, and dependency errors during startup.",
+  "type": "computational",
+  "regulation": "behaviour",
+  "phase": "on-demand",
+  "determinism": "high",
+  "output": "stream",
+  "cost": {
+    "class": "expensive",
+    "latency": { "p50_ms": 30000, "p95_ms": 30000, "timeout_ms": 30000 },
+    "compute": { "cpu": "medium", "memory_mb": 1024 }
+  },
+  "triggers": [{ "on": "manual" }],
+  "requires": {
+    "env": [
+      { "name": "DATABASE_URL",        "description": "Postgres connection string used by the app at boot" },
+      { "name": "RSA_PRIVATE_KEY",     "description": "PEM contents for JWT signing — gitignored, lives in config/.env.development on dev machines" }
+    ]
+  },
+  "execution": {
+    "command":      "node ./dist/main.js",
+    "long_running": true,
+    "exit_code_map": [
+      { "exit_code": 0,   "verdict": "pass",  "severity": "info" },
+      { "exit_code": "*", "verdict": "fail",  "severity": "high" }
+    ],
+    "output_parsing": {
+      "patterns": [
+        { "regex": "Nest application successfully started",        "verdict": "pass",  "severity": "info" },
+        { "regex": "Listening on .* port (\\d+)",                  "verdict": "pass",  "severity": "info", "captures": { "excerpt": 1 } },
+        { "regex": "EADDRINUSE",                                   "verdict": "fail",  "severity": "high" },
+        { "regex": "(?:ECONNREFUSED|ETIMEDOUT)",                   "verdict": "fail",  "severity": "high" },
+        { "regex": "(?i)\\bunhandled (?:exception|rejection)\\b",  "verdict": "fail",  "severity": "high" }
+      ]
+    }
+  },
+  "verification": {
+    "golden_cases": [
+      { "fixture": "sensors/fixtures/run-project-nest/clean-boot.txt",  "expected_verdict": "pass", "expected_severity": "info", "notes": "Captured stdout from a real local boot — Nest start banner + Listening line within ~3s." },
+      { "fixture": "sensors/fixtures/run-project-nest/port-collision.txt", "expected_verdict": "fail", "expected_severity": "high", "notes": "EADDRINUSE on port 3000 when another instance is running." }
+    ]
+  },
+  "blind_spots": [
+    "Boots the production binary (matches Dockerfile CMD), so a successful boot does not exercise the live-reload path that nest start --watch covers.",
+    "30s window is heuristic — slow CI machines may need more; tighten or relax cost.latency.timeout_ms after first real runs."
+  ]
+}
+```
+
+Things to copy from this template into other continuous sensors: `output: "stream"` + `long_running: true`, a tight `timeout_ms` that matches the *observation window* you actually need, success-marker patterns (boot lines, ready probes) AND failure-marker patterns (crashes, port conflicts, dependency errors), `requires.env` for any value that lives outside the repo, fixtures captured from a real boot.
 
 **Never skip a sensor because credentials are missing.** If a capability needs auth tokens, RSA keys, project ids, region selectors, or any other host-supplied secret, declare them in `requires.env` and emit the sensor anyway. The runner forwards every listed env var from its own environment into the subprocess; if a non-optional name is unset at run time, the runner aborts with `verdict=error` and a remediation that names the missing var. The sensor's *existence* is independent of whether you, right now, can run it. Examples:
 

@@ -76,6 +76,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	execMap := sensorJSON["execution"].(map[string]interface{})
 	command, _ := execMap["command"].(string)
+	longRunning, _ := execMap["long_running"].(bool)
 
 	var patterns []signal.Pattern
 	if op, ok := execMap["output_parsing"].(map[string]interface{}); ok {
@@ -116,9 +117,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		StreamVerdict:  streamVerd,
 		StreamSeverity: streamSev,
 		TimedOut:       res.TimedOut,
+		LongRunning:    longRunning,
 	})
 
-	sig := buildAggregateSignal(envelope, res, agg, command, output)
+	sig := buildAggregateSignal(envelope, res, agg, command, output, longRunning)
 	if err := v.Validate(schema.TargetSignal, sig); err != nil {
 		schema.PrintValidationOrPlain(err, stderr)
 		return 1
@@ -127,9 +129,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, agg signal.AggregateResult, command, outputMode string) map[string]interface{} {
+func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, agg signal.AggregateResult, command, outputMode string, longRunning bool) map[string]interface{} {
 	finished := sensor.NowFn().Format("2006-01-02T15:04:05Z")
 	evidence := signal.SelectTopEvidence(res.Individuals, 20)
+	md := map[string]interface{}{
+		"kind":        "aggregate",
+		"output_mode": outputMode,
+		"command":     command,
+		"exit_code":   res.ExitCode,
+		"timed_out":   res.TimedOut,
+		"counts":      signal.CountVerdicts(res.Individuals),
+	}
+	if longRunning {
+		md["long_running"] = true
+	}
 	return map[string]interface{}{
 		"sensor_id":   env.SensorID,
 		"version":     env.Version,
@@ -141,14 +154,7 @@ func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, agg 
 		"confidence":  1.0,
 		"evidence":    evidence,
 		"cost_actual": map[string]interface{}{"latency_ms": res.ElapsedMS},
-		"metadata": map[string]interface{}{
-			"kind":        "aggregate",
-			"output_mode": outputMode,
-			"command":     command,
-			"exit_code":   res.ExitCode,
-			"timed_out":   res.TimedOut,
-			"counts":      signal.CountVerdicts(res.Individuals),
-		},
+		"metadata":    md,
 	}
 }
 

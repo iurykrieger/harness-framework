@@ -190,6 +190,11 @@
       "properties": {
         "command":        { "type": "string", "description": "Required for both sensor types. Shell invocation (passed to sh -c by the runner) — pipes, redirects, globs and quoted args all work. Should be hermetic and idempotent." },
         "env":            { "type": "object", "additionalProperties": { "type": "string" }, "description": "Environment variables set during subprocess execution. Inferential runner additionally injects HARNESS_PROMPT with the rendered user_prompt_template." },
+        "long_running": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, the command is expected to run continuously (dev servers, watchers, log tailers, replay loops). The runner spawns the process, streams individual Signals as patterns match, and terminates the process when cost.latency.timeout_ms elapses; deadline-driven termination is NOT treated as verdict=error — the aggregate verdict comes from worst-of-stream and defaults to pass when no pattern surfaced a problem. Use this for sensors whose value is observation while the process runs (e.g., `npm run dev`, `make watch`), pairing it with output: stream and patterns that capture both failure modes (errors, port collisions) and success markers (boot lines, ready probes)."
+        },
         "exit_code_map": {
           "type": "array",
           "description": "Maps process exit codes to verdict/severity. Required for computational sensors; optional for inferential (when omitted, the inferential runner defaults to exit 0 → pass/info, anything else → error/high). Use exit_code='*' as wildcard fallback.",

@@ -152,6 +152,91 @@ func TestRunComputational_FatalNoStream(t *testing.T) {
 	}
 }
 
+func TestRunComputational_LongRunningTimeoutTreatedAsSuccess(t *testing.T) {
+	// A long-running sensor whose process never exits naturally — runner
+	// terminates by deadline, but the aggregate verdict should still be
+	// pass because the stream surfaced no failures and long_running=true.
+	schemasDir := repoSchemasDir(t)
+	path := writeSensor(t, "stream", map[string]interface{}{
+		"command": `while true; do printf 'tick\n'; sleep 0.05; done`,
+		"exit_code_map": []interface{}{
+			map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
+			map[string]interface{}{"exit_code": "*", "verdict": "fail", "severity": "high"},
+		},
+		"output_parsing": map[string]interface{}{
+			"patterns": []interface{}{
+				map[string]interface{}{"regex": "^tick$", "verdict": "pass", "severity": "info"},
+				map[string]interface{}{"regex": "^ERROR", "verdict": "fail", "severity": "high"},
+			},
+		},
+		"long_running": true,
+	})
+	// Cap the run window short so the test stays fast.
+	b, _ := os.ReadFile(path)
+	var s map[string]interface{}
+	_ = json.Unmarshal(b, &s)
+	s["cost"].(map[string]interface{})["latency"].(map[string]interface{})["timeout_ms"] = 300
+	nb, _ := json.Marshal(s)
+	_ = os.WriteFile(path, nb, 0o644)
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--schemas-dir", schemasDir, path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	lines := parseJSONL(t, stdout.String())
+	agg := lines[len(lines)-1]
+	if agg["verdict"] != "pass" {
+		t.Fatalf("expected long_running timeout to yield pass, got %v", agg["verdict"])
+	}
+	md := agg["metadata"].(map[string]interface{})
+	if md["long_running"] != true {
+		t.Fatalf("metadata.long_running should be true, got %v", md["long_running"])
+	}
+	if md["timed_out"] != true {
+		t.Fatalf("metadata.timed_out should still record the deadline, got %v", md["timed_out"])
+	}
+	// Stream should have produced at least a few ticks before SIGKILL.
+	counts := md["counts"].(map[string]interface{})
+	if int(counts["pass"].(float64)) < 1 {
+		t.Fatalf("expected ≥1 pass tick in counts, got %+v", counts)
+	}
+}
+
+func TestRunComputational_LongRunningSurfacesStreamFail(t *testing.T) {
+	// long_running=true must NOT mask real failures from the stream.
+	schemasDir := repoSchemasDir(t)
+	path := writeSensor(t, "stream", map[string]interface{}{
+		"command": `printf 'boot\nERROR boom\n'; sleep 5`,
+		"exit_code_map": []interface{}{
+			map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
+			map[string]interface{}{"exit_code": "*", "verdict": "fail", "severity": "high"},
+		},
+		"output_parsing": map[string]interface{}{
+			"patterns": []interface{}{
+				map[string]interface{}{"regex": "^boot$", "verdict": "pass", "severity": "info"},
+				map[string]interface{}{"regex": "^ERROR", "verdict": "fail", "severity": "high"},
+			},
+		},
+		"long_running": true,
+	})
+	b, _ := os.ReadFile(path)
+	var s map[string]interface{}
+	_ = json.Unmarshal(b, &s)
+	s["cost"].(map[string]interface{})["latency"].(map[string]interface{})["timeout_ms"] = 300
+	nb, _ := json.Marshal(s)
+	_ = os.WriteFile(path, nb, 0o644)
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--schemas-dir", schemasDir, path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	lines := parseJSONL(t, stdout.String())
+	agg := lines[len(lines)-1]
+	if agg["verdict"] != "fail" {
+		t.Fatalf("long_running should still surface stream fail, got %v", agg["verdict"])
+	}
+}
+
 func TestRunComputational_Timeout(t *testing.T) {
 	schemasDir := repoSchemasDir(t)
 	path := writeSensor(t, "single", map[string]interface{}{
