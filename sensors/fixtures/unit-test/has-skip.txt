@@ -1,0 +1,7 @@
+=== RUN   TestIntegrationOnly
+    foo_test.go:5: requires INTEGRATION env var
+--- SKIP: TestIntegrationOnly (0.00s)
+=== RUN   TestExample
+--- PASS: TestExample (0.00s)
+PASS
+ok  	example.com/x	0.001s

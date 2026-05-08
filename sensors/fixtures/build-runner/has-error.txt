@@ -1,0 +1,3 @@
+# github.com/iurykrieger/harness-framework/skills/run-sensor/scripts
+./skills/run-sensor/scripts/run-computational.go:42:5: undefined: NotARealFunction
+./skills/run-sensor/scripts/run-computational.go:50:9: cannot use x (untyped int constant) as string value in argument to fmt.Println

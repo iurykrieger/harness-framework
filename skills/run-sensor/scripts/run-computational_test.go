@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/iurykrieger/harness-framework/lib/sensor"
 )
 
 func repoSchemasDir(t *testing.T) string {
@@ -220,6 +222,94 @@ func TestRunComputational_RejectsInferential(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"--schemas-dir", schemasDir, path}, &stdout, &stderr); code != 2 {
 		t.Fatalf("expected exit 2 (type mismatch), got %d", code)
+	}
+}
+
+func TestRunComputational_MissingRequiredEnvAborts(t *testing.T) {
+	schemasDir := repoSchemasDir(t)
+	path := writeSensor(t, "single", map[string]interface{}{
+		"command": `printf "should not run\n"; exit 0`,
+		"exit_code_map": []interface{}{
+			map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
+		},
+	})
+	// Patch the persisted sensor: add requires.env with a definitely-unset name.
+	b, _ := os.ReadFile(path)
+	var s map[string]interface{}
+	_ = json.Unmarshal(b, &s)
+	s["requires"] = map[string]interface{}{
+		"env": []interface{}{
+			map[string]interface{}{"name": "DETECT_SENSORS_TEST_GHOST_VAR", "description": "intentionally unset"},
+		},
+	}
+	nb, _ := json.Marshal(s)
+	_ = os.WriteFile(path, nb, 0o644)
+
+	// Override the runtime LookupEnvFn so the test is hermetic regardless of
+	// whatever happens to live in the host environment.
+	prev := sensor.LookupEnvFn
+	sensor.LookupEnvFn = func(name string) (string, bool) {
+		if name == "DETECT_SENSORS_TEST_GHOST_VAR" {
+			return "", false
+		}
+		return os.LookupEnv(name)
+	}
+	t.Cleanup(func() { sensor.LookupEnvFn = prev })
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--schemas-dir", schemasDir, path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("expected exit 0 (Signal printed), got %d stderr=%s", code, stderr.String())
+	}
+	lines := parseJSONL(t, stdout.String())
+	if len(lines) != 1 {
+		t.Fatalf("expected exactly 1 aggregate, got %d", len(lines))
+	}
+	agg := lines[0]
+	if agg["verdict"] != "error" {
+		t.Fatalf("expected verdict=error, got %v", agg["verdict"])
+	}
+	if agg["severity"] != "high" {
+		t.Fatalf("expected severity=high, got %v", agg["severity"])
+	}
+	rem, ok := agg["remediation"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected remediation, got %v", agg["remediation"])
+	}
+	instructions, _ := rem["instructions"].(string)
+	if !strings.Contains(instructions, "DETECT_SENSORS_TEST_GHOST_VAR") {
+		t.Fatalf("expected remediation to name the missing var, got %q", instructions)
+	}
+}
+
+func TestRunComputational_RequiredEnvPresentRunsNormally(t *testing.T) {
+	schemasDir := repoSchemasDir(t)
+	path := writeSensor(t, "single", map[string]interface{}{
+		"command": `printf "ran with token=$DETECT_SENSORS_TEST_PRESENT\n"; exit 0`,
+		"exit_code_map": []interface{}{
+			map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
+		},
+	})
+	b, _ := os.ReadFile(path)
+	var s map[string]interface{}
+	_ = json.Unmarshal(b, &s)
+	s["requires"] = map[string]interface{}{
+		"env": []interface{}{
+			map[string]interface{}{"name": "DETECT_SENSORS_TEST_PRESENT"},
+		},
+	}
+	nb, _ := json.Marshal(s)
+	_ = os.WriteFile(path, nb, 0o644)
+
+	t.Setenv("DETECT_SENSORS_TEST_PRESENT", "ok")
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--schemas-dir", schemasDir, path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	lines := parseJSONL(t, stdout.String())
+	agg := lines[len(lines)-1]
+	if agg["verdict"] != "pass" {
+		t.Fatalf("expected pass when env is set, got %v", agg["verdict"])
 	}
 }
 

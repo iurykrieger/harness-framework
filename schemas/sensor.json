@@ -164,7 +164,22 @@
         "tools":            { "type": "array", "items": { "type": "string" }, "default": [], "description": "Binaries, MCP servers, CLIs the sensor invokes." },
         "permissions":      { "type": "array", "items": { "type": "string" }, "default": [], "description": "Least-privilege scopes." },
         "context":          { "type": "array", "items": { "type": "string" }, "default": [], "description": "Repo paths the sensor reads (docs, configs, fixtures)." },
-        "upstream_sensors": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Sensor ids that must PASS first (chain cheap → expensive)." }
+        "upstream_sensors": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Sensor ids that must PASS first (chain cheap → expensive)." },
+        "env": {
+          "type": "array",
+          "default": [],
+          "description": "Environment variables the runner forwards from its own environment (os.Environ) into the sensor's subprocess. Use this for secrets, project ids, auth tokens, region/profile selectors — anything that would be wrong to hardcode in the sensor JSON. The runner forwards every listed name whose value is set; if a non-optional name is unset at run time it aborts and emits verdict=error with a remediation pointing at the missing var. Declared env vars document intent — the existence of the sensor never depends on the variable being set right now.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name":        { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$", "description": "Env var name (uppercase + underscores)." },
+              "description": { "type": "string", "description": "What the variable is and how to obtain it (e.g., 'GitHub PAT with repo:read scope', 'GCP project id for log queries')." },
+              "optional":    { "type": "boolean", "default": false, "description": "When true, the runner forwards the value if set but does not abort if missing — useful for env vars that change behaviour rather than being mandatory." }
+            }
+          }
+        }
       }
     },
 
