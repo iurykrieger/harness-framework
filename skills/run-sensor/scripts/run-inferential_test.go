@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/sensor"
+	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
 func repoSchemasDir(t *testing.T) string {
@@ -25,6 +26,7 @@ func writeInferentialSensor(t *testing.T, command string) string {
 	sensor := map[string]interface{}{
 		"id": "infr-test", "version": "0.1.0",
 		"name": "infr-test", "description": "fixture",
+		"kind": "assertion",
 		"type": "inferential", "regulation": "maintainability",
 		"phase": "post-integration", "determinism": "low",
 		"output": "stream",
@@ -151,6 +153,7 @@ func TestRunInferential_RejectsComputational(t *testing.T) {
 	sensor := map[string]interface{}{
 		"id": "wrong", "version": "0.1.0",
 		"name": "x", "description": "x",
+		"kind": "assertion",
 		"type": "computational", "regulation": "maintainability",
 		"phase": "on-demand", "determinism": "high",
 		"output": "single",
@@ -267,5 +270,42 @@ func TestRunInferential_UnboundSlot(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "b") {
 		t.Fatalf("stderr should name unbound slot 'b': %s", stderr.String())
+	}
+}
+
+func TestRun_InferentialWithComputationalDep(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	dir := t.TempDir()
+
+	// Setup dep: a kind=setup computational sensor.
+	depJSON := testfixtures.ValidSensorSetup()
+	depJSON["id"] = "setup-x"
+	depExec := depJSON["execution"].(map[string]interface{})
+	depExec["command"] = "true"
+	depBytes, _ := json.MarshalIndent(depJSON, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "setup-x.json"), depBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Inferential requested sensor that depends on the setup.
+	infJSON := testfixtures.ValidSensorInferential()
+	infJSON["id"] = "inf-with-dep"
+	infJSON["depends_on"] = []interface{}{"setup-x"}
+	infExec := infJSON["execution"].(map[string]interface{})
+	infExec["user_prompt_template"] = "static prompt"
+	infExec["command"] = `echo '{"sensor_id":"inf-with-dep","version":"0.1.0","run_id":"r","started_at":"2026-05-08T00:00:00Z","finished_at":"2026-05-08T00:00:01Z","verdict":"pass","severity":"info","confidence":0.9,"evidence":[],"cost_actual":{"latency_ms":100}}'`
+	infBytes, _ := json.MarshalIndent(infJSON, "", "  ")
+	infPath := filepath.Join(dir, "inf-with-dep.json")
+	if err := os.WriteFile(infPath, infBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errBuf bytes.Buffer
+	if code := run([]string{"--schemas-dir", schemasDir, infPath}, &out, &errBuf); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 Signals (dep + inf aggregate), got %d:\n%s", len(lines), out.String())
 	}
 }

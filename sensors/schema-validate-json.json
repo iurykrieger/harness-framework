@@ -33,6 +33,7 @@
     ]
   },
   "id": "schema-validate-json",
+  "kind": "assertion",
   "name": "Schema files parse as JSON",
   "output": "single",
   "phase": "pre-commit",

@@ -57,6 +57,7 @@
     }
   },
   "id": "unit-test-skills-inferential",
+  "kind": "assertion",
   "name": "Unit tests (skills/, run_inferential)",
   "output": "stream",
   "phase": "pre-merge",

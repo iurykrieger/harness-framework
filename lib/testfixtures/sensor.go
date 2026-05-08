@@ -15,6 +15,7 @@ func ValidSensorComputational() map[string]interface{} {
 	return map[string]interface{}{
 		"id": "smoke-comp", "version": "0.1.0",
 		"name": "smoke", "description": "fixture",
+		"kind": "assertion",
 		"type": "computational", "regulation": "maintainability",
 		"phase": "on-demand", "determinism": "high",
 		"output": "single",
@@ -42,6 +43,7 @@ func ValidSensorInferential() map[string]interface{} {
 	return map[string]interface{}{
 		"id": "smoke-inf", "version": "0.1.0",
 		"name": "smoke inf", "description": "fixture",
+		"kind": "assertion",
 		"type": "inferential", "regulation": "maintainability",
 		"phase": "post-integration", "determinism": "low",
 		"output": "single",
@@ -66,6 +68,36 @@ func ValidSensorInferential() map[string]interface{} {
 			"calibration_set":      "tests/cal.jsonl",
 			"calibration_size":     120,
 			"calibration_date":     "2026-04-15",
+		},
+	}
+}
+
+// ValidSensorSetup returns a minimal setup sensor (kind=setup) that passes the schema.
+func ValidSensorSetup() map[string]interface{} {
+	return map[string]interface{}{
+		"id": "smoke-setup", "version": "0.1.0",
+		"name": "smoke setup", "description": "fixture: idempotent setup",
+		"kind": "setup",
+		"type": "computational", "regulation": "behaviour",
+		"phase": "on-demand", "determinism": "high",
+		"output": "single",
+		"cost": map[string]interface{}{
+			"class":   "cheap",
+			"latency": map[string]interface{}{"p50_ms": 10, "p95_ms": 100, "timeout_ms": 5000},
+			"compute": map[string]interface{}{"cpu": "low", "memory_mb": 64},
+		},
+		"triggers": []interface{}{map[string]interface{}{"on": "agent-request"}},
+		"execution": map[string]interface{}{
+			"command": "true",
+			"exit_code_map": []interface{}{
+				map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
+				map[string]interface{}{"exit_code": "*", "verdict": "fail", "severity": "high"},
+			},
+		},
+		"verification": map[string]interface{}{
+			"golden_cases": []interface{}{
+				map[string]interface{}{"fixture": "x", "expected_verdict": "pass", "expected_severity": "info"},
+			},
 		},
 	}
 }

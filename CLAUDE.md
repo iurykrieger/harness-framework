@@ -63,6 +63,22 @@ Each `skills/<name>/SKILL.md` has YAML frontmatter (`name`, `description`) read 
 
 `skills/run-sensor/` is the canonical sensor runner. Both runners (computational and inferential) follow the same model: spawn `sh -c <execution.command>`, scan stdout+stderr line-by-line against `execution.output_parsing.patterns` (when declared), emit one Signal per match as JSONL on stdout, then end with one aggregate Signal as the LAST JSONL line. The aggregate's verdict is the worse of `exit_code_map[exitCode]` and the highest-rank verdict observed in the stream. The inferential runner additionally exposes the rendered `user_prompt_template` to the subprocess via the `HARNESS_PROMPT` env var and applies the calibration `fail → warn` downgrade when the subprocess emits a `HARNESS_AGGREGATE_CONFIDENCE=<float>` line on its stdout below `calibration.confidence_threshold`. Both runners are thin CLI wrappers; the deterministic pipeline (path resolution, schema validation, envelope construction, pattern matching, subprocess streaming, aggregation, signal validation) lives in the top-level `lib/` package.
 
+### Dependencies and lifecycle
+
+A sensor's top-level `kind` is one of `observation`, `assertion`, `setup`. The first two are regulatory; the third is auxiliary (idempotent, makes a precondition true: `start-postgres`, `setup-env-from-example`, `install-deps-pnpm`).
+
+A sensor's `depends_on: [<id>...]` declares ids that must run and pass before it. The runner resolves the transitive closure topologically (deps first, requested sensor last), runs each sensor's full lifecycle (prepare → command → teardown), and propagates failures: dependents of a failed sensor never run and emit "cascade" Signals (`metadata.kind = "cascade"`) instead.
+
+Lifecycle phases live under `execution`:
+
+- `prepare[]` — silent, fail-fast (first non-pass step aborts and skips command, but teardown still runs). Use for sensor-specific setup that isn't worth a reusable setup sensor.
+- `command` — the observed step (existing streaming pipeline; emits individual JSONL Signals for matched output lines).
+- `teardown[]` — silent, best-effort, finally semantics. Runs regardless of prepare/command outcome. Per-step failures contribute warn evidence but do NOT downgrade the aggregate verdict.
+
+Per-step lifecycle results fold into the aggregate Signal under `metadata.lifecycle.{prepare,teardown}` (free-form per signal.json). The aggregate Signal of the requested sensor remains the LAST JSONL line on stdout — deps' aggregates appear earlier in the stream.
+
+The orchestrator lives in `lib/orchestrator/` (DAG resolution + lifecycle execution + cascade construction) and is reused by both `run-computational` and `run-inferential` runner scripts.
+
 ## Build, validate, test
 
 Single Go module at the repo root: `module github.com/iurykrieger/harness-framework` (Go 1.25). Per-skill modules only if a skill needs an isolated dependency graph.
