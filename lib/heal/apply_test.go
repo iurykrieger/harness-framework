@@ -113,6 +113,8 @@ func TestApply_SetEnvInFile_WithLiteralValue(t *testing.T) {
 	root := t.TempDir()
 	envFile := filepath.Join(root, ".env")
 	os.WriteFile(envFile, []byte(""), 0o644)
+	// .env must be gitignored so WriteEnvVar (Task 14) does not refuse the write.
+	os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".env\n"), 0o644)
 	results := heal.Apply(heal.ApplyContext{Root: root, FailedSensor: heal.FailedSensor{EnvNames: []string{"FOO"}}}, []heal.Action{
 		{Kind: "set-env-in-file", File: envFile, Name: "FOO", Value: "bar"},
 	})

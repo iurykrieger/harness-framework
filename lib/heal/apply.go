@@ -153,9 +153,3 @@ func pathUnderAny(target string, roots []string) bool {
 	}
 	return false
 }
-
-// WriteEnvVar is stubbed here so apply.go compiles; the real
-// implementation lands in lib/heal/envwriter.go (Task 14).
-func WriteEnvVar(file, name, value string) ApplyResult {
-	return ApplyResult{Action: Action{Kind: "set-env-in-file", File: file, Name: name, Value: value}, Reason: "envwriter not yet implemented"}
-}
