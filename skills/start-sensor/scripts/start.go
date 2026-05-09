@@ -52,17 +52,23 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		return 2, errorSignal(id, err.Error())
 	}
 
-	// Pre-flight: check blocking before full schema validation so callers
-	// get a clear exit 2 (usage error) without needing a schema-complete fixture.
+	// 1. Schema-validate the sensor definition before any further checks.
+	v, code := schema.LoadValidator("", os.Stderr)
+	if code != 0 {
+		return code, errorSignal(id, "schema validator init failed")
+	}
+	if err := v.Validate(schema.TargetSensor, sensorJSON); err != nil {
+		return 1, errorSignal(id, fmt.Sprintf("schema: %v", err))
+	}
+
+	// 2. Reject non-blocking sensors with exit 2 (usage error).
 	execMap, _ := sensorJSON["execution"].(map[string]interface{})
 	blocking, _ := execMap["blocking"].(bool)
 	if !blocking {
 		return 2, errorSignal(id, "sensor is not blocking; use /run-sensor instead")
 	}
 
-	// Check for already-running before schema validation: the registry check is
-	// cheap and returns a structured Signal, whereas schema validation would emit
-	// an opaque error for a sensor that's otherwise fine but already live.
+	// 3. Check whether the sensor is already running.
 	r := registry.NewRoot(projectRoot)
 	rs, err := registry.Load(r)
 	if err != nil {
@@ -72,19 +78,11 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		sig := buildStartedSkeleton(id, sensorJSON)
 		sig["verdict"] = "error"
 		sig["severity"] = "high"
-		sig["metadata"].(map[string]interface{})["kind"] = "start_rejected"
 		sig["evidence"] = []interface{}{map[string]interface{}{
 			"rationale": fmt.Sprintf("sensor %q already running with pid %d", id, existing.PID),
 		}}
-		return 1, sig
-	}
-
-	v, code := schema.LoadValidator("", os.Stderr)
-	if code != 0 {
-		return code, errorSignal(id, "schema validator init failed")
-	}
-	if err := v.Validate(schema.TargetSensor, sensorJSON); err != nil {
-		return 1, errorSignal(id, fmt.Sprintf("schema: %v", err))
+		sig["metadata"].(map[string]interface{})["kind"] = "start_rejected"
+		return 1, validateSignal(v, sig, id)
 	}
 
 	command, _ := execMap["command"].(string)
@@ -182,7 +180,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 	md["watcher_pid"] = watcherProc.Pid
 	md["log_dir"] = filepath.Join(".runtime", "sensors", id)
 	md["next_cursor"] = 0
-	return 0, sig
+	return 0, validateSignal(v, sig, id)
 }
 
 func loadSensorJSON(path string) (map[string]interface{}, error) {
@@ -202,6 +200,9 @@ func stringField(m map[string]interface{}, k string) string {
 	return v
 }
 
+// buildStartedSkeleton returns the envelope fields common to all started/rejected
+// signals. It does NOT set verdict, severity, or evidence — callers must set
+// those explicitly so the intent is clear at each call site.
 func buildStartedSkeleton(id string, sensorJSON map[string]interface{}) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	return map[string]interface{}{
@@ -210,10 +211,7 @@ func buildStartedSkeleton(id string, sensorJSON map[string]interface{}) map[stri
 		"run_id":      uuid.NewString(),
 		"started_at":  now,
 		"finished_at": now,
-		"verdict":     "error",
-		"severity":    "high",
 		"confidence":  1.0,
-		"evidence":    []interface{}{},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
 		"metadata":    map[string]interface{}{"kind": "started"},
 	}
@@ -234,4 +232,28 @@ func errorSignal(id, rationale string) map[string]interface{} {
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
 		"metadata":    map[string]interface{}{"kind": "start_failed"},
 	}
+}
+
+// validateSignal checks sig against signal.json. If validation fails it logs
+// the error to stderr and returns a minimal emergency signal so the bug
+// surfaces without recursion. On success it returns sig unchanged.
+func validateSignal(v *schema.Validator, sig map[string]interface{}, id string) map[string]interface{} {
+	if err := v.Validate(schema.TargetSignal, sig); err != nil {
+		fmt.Fprintf(os.Stderr, "start: BUG: emitted signal failed signal.json validation: %v\n", err)
+		now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		return map[string]interface{}{
+			"sensor_id":   id,
+			"version":     "0.0.0",
+			"run_id":      uuid.NewString(),
+			"started_at":  now,
+			"finished_at": now,
+			"verdict":     "error",
+			"severity":    "high",
+			"confidence":  1.0,
+			"evidence":    []interface{}{map[string]interface{}{"rationale": fmt.Sprintf("signal_validation_failed: %v", err)}},
+			"cost_actual": map[string]interface{}{"latency_ms": 0},
+			"metadata":    map[string]interface{}{"kind": "signal_validation_failed"},
+		}
+	}
+	return sig
 }

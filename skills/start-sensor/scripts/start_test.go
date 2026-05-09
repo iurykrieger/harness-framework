@@ -30,20 +30,35 @@ func TestStart_RejectsNonBlocking(t *testing.T) {
 	root := t.TempDir()
 	writeFixtureSensor(t, root, "not-blocking", map[string]interface{}{
 		"version":     "1.0.0",
+		"name":        "Not blocking fixture",
 		"description": "non-blocking fixture",
 		"determinism": "high",
 		"kind":        "observation",
 		"type":        "computational",
+		"regulation":  "behaviour",
+		"phase":       "on-demand",
 		"output":      "single",
 		"cost": map[string]interface{}{
 			"class":   "cheap",
 			"compute": map[string]interface{}{"cpu": "low", "memory_mb": 32},
 			"latency": map[string]interface{}{"p50_ms": 10, "p95_ms": 50, "timeout_ms": 1000},
 		},
+		"triggers": []interface{}{
+			map[string]interface{}{"on": "manual"},
+		},
 		"execution": map[string]interface{}{
 			"command": "echo hi",
 			"exit_code_map": []interface{}{
 				map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
+			},
+		},
+		"verification": map[string]interface{}{
+			"golden_cases": []interface{}{
+				map[string]interface{}{
+					"fixture":           "sensors/fixtures/not-blocking/pass.txt",
+					"expected_verdict":  "pass",
+					"expected_severity": "info",
+				},
 			},
 		},
 	})
@@ -80,26 +95,41 @@ func TestStart_RejectsAlreadyRunning(t *testing.T) {
 func blockingFixtureBody() map[string]interface{} {
 	return map[string]interface{}{
 		"version":     "1.0.0",
+		"name":        "Blocking fixture",
 		"description": "blocking fixture",
 		"determinism": "high",
 		"kind":        "observation",
 		"type":        "computational",
+		"regulation":  "behaviour",
+		"phase":       "continuous",
 		"output":      "stream",
 		"cost": map[string]interface{}{
 			"class":   "cheap",
 			"compute": map[string]interface{}{"cpu": "low", "memory_mb": 32},
 			"latency": map[string]interface{}{"p50_ms": 10, "p95_ms": 50},
 		},
+		"triggers": []interface{}{
+			map[string]interface{}{"on": "manual"},
+		},
 		"execution": map[string]interface{}{
 			"command":  "while true; do echo TICK; sleep 0.1; done",
 			"blocking": true,
 			"output_parsing": map[string]interface{}{
 				"patterns": []interface{}{
-					map[string]interface{}{"regex": "^TICK$", "verdict": "pass", "severity": "info", "rationale": "tick"},
+					map[string]interface{}{"regex": "^TICK$", "verdict": "pass", "severity": "info"},
 				},
 			},
 			"exit_code_map": []interface{}{
 				map[string]interface{}{"exit_code": "*", "verdict": "pass", "severity": "info"},
+			},
+		},
+		"verification": map[string]interface{}{
+			"golden_cases": []interface{}{
+				map[string]interface{}{
+					"fixture":           "sensors/fixtures/loop/pass.txt",
+					"expected_verdict":  "pass",
+					"expected_severity": "info",
+				},
 			},
 		},
 	}
