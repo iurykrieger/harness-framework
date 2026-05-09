@@ -79,7 +79,7 @@ This spec replaces the timeout-driven model with an explicit start / observe / s
 2. `flock(.runtime/sensors/running_sensors.lock)`, read `running_sensors.json`. If `watch-logs` already present and PID alive → emit Signal `verdict=error`, `metadata.kind=start_rejected`, `evidence` references the live entry. Release lock, exit 1.
 3. Run `execution.prepare[]` fail-fast. If any step fails → emit Signal `verdict=error`, `metadata.kind=start_failed`, `metadata.lifecycle.prepare` carries per-step results. No registry entry created. Exit 1. Teardown does **not** run for a never-started subprocess (consistent with the rule "teardown is finally for the command").
 4. `os.StartProcess` the command via `sh -c`, with `Setsid: true` and `Setpgid: true` (so the watcher can SIGTERM the whole group later). Stdout and stderr redirected to `.runtime/sensors/watch-logs/raw.log` (append).
-5. Spawn the watcher as a detached `os.StartProcess` invocation of the same Go binary with a hidden subcommand (`--watcher-mode`). Pass via env vars: `HARNESS_WATCHER_RAW=<raw.log>`, `HARNESS_WATCHER_SIGNALS=<signals.log>`, `HARNESS_WATCHER_PATTERNS=<json>`, `HARNESS_WATCHER_ENVELOPE=<json>`. Watcher uses `fsnotify` to follow `raw.log`, applies `signal.MatchLine` to each line, appends matches to `signals.log`.
+5. Spawn the watcher binary (built from `skills/start-sensor/scripts/watcher.go` with build tag `start_watcher`) via `os.StartProcess`, detached (`Setsid: true`, `Setpgid: true`). No flag dispatch on the `start` binary itself — the watcher is its own `package main`. Pass via env vars: `HARNESS_WATCHER_RAW=<raw.log>`, `HARNESS_WATCHER_SIGNALS=<signals.log>`, `HARNESS_WATCHER_PATTERNS=<json>`, `HARNESS_WATCHER_ENVELOPE=<json>`, `HARNESS_WATCHER_SUBPROCESS_PID=<pid>`, `HARNESS_WATCHER_REGISTRY_ROOT=<.runtime/sensors/<sensor.id>/>`. Watcher uses `fsnotify` to follow `raw.log`, applies `signal.MatchLine` to each line, appends matches to `signals.log`. Reaper goroutine `wait()`s on the subprocess PID and writes the exit code into `state.json`.
 6. Append entry to `running_sensors.json` (sensor.id, pid, pgid, watcher_pid, started_at, command, `held_by: [{kind: "manual", attached_at: <now>}]`). Write atomically (`.tmp` + rename). Release lock.
 7. Emit Signal `verdict=pass`, `metadata.kind=started`, payload includes `pid`, `started_at`, `log_dir`, and `next_cursor: 0`. Exit 0.
 
@@ -93,7 +93,12 @@ This spec replaces the timeout-driven model with an explicit start / observe / s
 ### Lifecycle: `/stop-sensor watch-logs`
 
 1. Lookup. Not found → Signal `verdict=warn`, `metadata.kind=stop_not_running`. Exit 0 (idempotent — stopping nothing is fine).
-2. `flock`. Remove the `{kind: "manual"}` record from `held_by` (or whichever caller token applies; here it's the explicit user invocation). If the `--reap-dead-holders` flag was passed, also drop any `{kind: "sensor", pid}` entries whose PID is no longer alive (logged to evidence). If `held_by` still non-empty → Signal `verdict=warn`, `metadata.kind=stop_held` (or `stop_held_with_dead_holders` when dead holders were detected and not reaped), evidence enumerates remaining holders with their live status. Release lock. Exit 0. Process keeps running.
+2. `flock`. Remove the `{kind: "manual"}` record from `held_by` (or whichever caller token applies; here it's the explicit user invocation). If `--reap-dead-holders` was passed, also drop every `{kind: "sensor", pid}` entry whose PID is no longer alive; capture the dropped records into a local `reaped_holders` slice for later evidence. After this step, decide:
+   - `held_by` non-empty and `--reap-dead-holders` was NOT passed → Signal `verdict=warn`, `metadata.kind=stop_held` (or `stop_held_with_dead_holders` when at least one remaining holder has a dead PID); evidence enumerates remaining holders with their live status. Release lock. Exit 0. Process keeps running.
+   - `held_by` non-empty and `--reap-dead-holders` WAS passed (some live holder still remains after reap) → Signal `verdict=warn`, `metadata.kind=stop_held`, `metadata.reaped_holders=<reaped_holders>` as evidence (warn severity). Release lock. Exit 0.
+   - `held_by` empty (with or without reap) → proceed to step 3. The final aggregate emitted at step 8 carries `metadata.reaped_holders=<reaped_holders>` (omitted if empty) and includes a warn evidence entry per reaped holder.
+
+The `--reap-dead-holders` flag is accepted **only** by `/stop-sensor`. The orchestrator's auto-detach path during `RunOneWithLiveDeps` never reaps — it only removes its own `{kind: "sensor", id, pid}` record matched by id+pid. Detection of leaked holders is a user-driven recovery action.
 3. `held_by` empty → SIGTERM the process group (`syscall.Kill(-pgid, SIGTERM)`).
 4. Wait up to `execution.graceful_timeout_ms` (default 5000) for `wait()`. If still alive → SIGKILL the group, mark `metadata.killed_forcefully=true` (warn evidence on aggregate).
 5. Signal the watcher process to drain (SIGTERM to its PID). Wait up to 1s for it to exit cleanly. If still alive → SIGKILL. If watcher had already died → mark `metadata.watcher_died=true` (warn evidence) and do an inline drain: read `raw.log` from where `signals.log` left off, apply patterns, append remaining matches to `signals.log`.
@@ -134,7 +139,11 @@ This spec replaces the timeout-driven model with an explicit start / observe / s
 ### Edge cases
 
 - **Watcher crashes mid-run.** Detected at `/stop-sensor` time; inline drain recovers any unparsed lines from `raw.log`. Aggregate flagged `watcher_died=true`, severity warn, verdict not downgraded.
-- **Subprocess exits on its own before /stop-sensor.** Watcher continues tailing `raw.log` (which stops growing) and stays alive. The watcher includes a small reaper goroutine that calls `wait()` on the subprocess PID and persists the exit code into `state.json` under a new `subprocess_exit` field. `/stop-sensor` detects PID dead, drains watcher, and computes aggregate from `signals.log`. **Critically, when subprocess exited on its own (not via our SIGTERM), `/stop-sensor` calls `signal.Aggregate` with `Blocking: false`** — so `exit_code_map` drives the exit side normally and a crashed `npm run dev` aggregates as fail/error rather than pass. Aggregate carries `metadata.subprocess_self_exited=true` and `metadata.subprocess_exit_code=<int>`. If the reaper missed it (race with `/stop-sensor`) → falls back to stream verdict with `metadata.exit_code_unknown=true`, also `Blocking: false` (a missing exit code on a process we did not stop is more concerning than a stream-clean run).
+- **Subprocess exits on its own before /stop-sensor.** Watcher continues tailing `raw.log` (which stops growing) and stays alive. The watcher includes a small reaper goroutine that calls `wait()` on the subprocess PID and persists the exit code into `state.json` under a new `subprocess_exit` field. `/stop-sensor` detects PID dead, drains watcher, and computes aggregate from `signals.log`. **Critically, when subprocess exited on its own (not via our SIGTERM), `/stop-sensor` calls `signal.Aggregate` with `Blocking: false`** — so `exit_code_map` (when present) drives the exit side normally and a crashed `npm run dev` aggregates as fail/error rather than pass. Aggregate carries `metadata.subprocess_self_exited=true` and `metadata.subprocess_exit_code=<int>`. Branch on sensor type:
+  - **Computational blocking** — `exit_code_map` is required by schema; apply it normally.
+  - **Inferential blocking** — `exit_code_map` is optional. If present, use it. If absent, fall back to stream verdict and add `metadata.exit_code_unmapped=true` warn evidence (the code is recorded but not interpreted).
+
+  If the reaper missed the exit (race with `/stop-sensor`) → fall back to stream verdict with `metadata.exit_code_unknown=true`, also `Blocking: false` (a missing exit code on a process we did not stop is more concerning than a stream-clean run).
 - **Orchestrator crashes between attaching a dep and running B.** The `held_by` entry for B carries the orchestrator's PID (`{ kind: "sensor", id: "B", pid, attached_at }`). `/list-sensors` cross-checks each holder's PID with `IsPIDAlive` and annotates dead holders. `/stop-sensor <dep>` invoked while a dead holder remains emits `verdict=warn`, `metadata.kind=stop_held_with_dead_holders`, evidence enumerates the dead PIDs. The user can pass `--reap-dead-holders` to `/stop-sensor` (defined in this spec, not deferred) to remove dead holders from `held_by` and proceed; if `held_by` becomes empty after reap, the normal stop sequence runs. This keeps the manual escape hatch first-class without inventing a forced-stop sledgehammer.
 - **Concurrent `/start-sensor` of the same id.** flock serializes; second invocation reads the new state and rejects with `already running`.
 - **Concurrent `/stop-sensor` of the same id.** First wins the flock and removes the entry; second sees `not_running` and exits warn (idempotent).
@@ -160,9 +169,9 @@ Concrete diffs against `schemas/sensor.json`:
 +    },
 +    "graceful_timeout_ms": {
 +      "type": "integer",
-+      "minimum": 1,
++      "minimum": 100,
 +      "default": 5000,
-+      "description": "Time to wait between SIGTERM and SIGKILL on /stop-sensor. Applies only when execution.blocking is true."
++      "description": "Time to wait between SIGTERM and SIGKILL on /stop-sensor. Applies only when execution.blocking is true. Minimum 100ms to ensure the process has a real chance to react to SIGTERM; sub-100ms values are effectively SIGKILL and would defeat the graceful path."
 +    },
      ...
    }
@@ -360,7 +369,7 @@ Deferred to follow-up specs. Each is a real concern but adds scope this design c
   - `lib/orchestrator/lifecycle.go` — reads `execMap["long_running"]` (line 57) and writes `aggregateMD["long_running"]` (line 106). **Updated to `blocking`.**
   - `skills/detect-sensors/SKILL.md` — five references (lines 52, 53, 102, 151, 179) including a sensor template that emits `"long_running": true`. **Rewritten to teach the new `blocking` model and the `/start-sensor` workflow.** Without this update, the detect-sensors skill would generate sensors that fail schema validation.
   - `docs/superpowers/specs/2026-05-06-streaming-sensors-design.md` and `2026-05-08-sensor-dependencies-design.md` — historical references. **Left untouched** (specs reflect what was true at the time).
-- No sensor JSON file under `sensors/` uses `long_running` (verified). Existing sensors continue to validate without changes.
+- No sensor JSON file uses `long_running`. Verified by `grep -rn '"long_running"' sensors/ lib/testfixtures/` (recursive across `sensors/`, `sensors/fixtures/`, and `lib/testfixtures/`). Step 4's DoD includes re-running this grep and asserting zero matches before merge. Existing sensors and test fixtures continue to validate without changes.
 - `/run-sensor` argument change (`<path>` → `<id>`) requires updating `skills/run-sensor/SKILL.md` and the two runner scripts. Path-style argument is removed in the same PR (consistent contract, no compatibility burden).
 
 ## Testing strategy
