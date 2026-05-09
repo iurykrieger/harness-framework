@@ -267,9 +267,11 @@ Run the script once per draft. Iterate per capability — it is faster than batc
 
 Do not skip the validator step. The schema's `allOf` discriminators catch a class of mistakes you cannot reliably catch by inspection (computational sensors leaking inferential fields, single sensors declaring `output_parsing`, etc.).
 
-### 7. Run each sensor and iterate until the output is informative
+### 7. Run each sensor and iterate on shape correctness only
 
-Schema-valid is not the same as semantically useful. After persisting, **run each sensor through `/run-sensor`** and inspect the aggregate Signal. Reject any of these symptoms:
+Schema-valid is not the same as semantically useful. After persisting, **run each sensor through the runner once** and inspect the aggregate Signal. Iterate ONLY on shape-correctness symptoms (regex matches, exit_code_map right, fixtures replay correctly). For setup-shape symptoms (missing env, missing binary, absent .env), do NOT iterate here — invoke `/heal-sensor` (see step 7.5).
+
+Shape-correctness symptoms to fix in this loop:
 
 - `output: "stream"` sensor returning `evidence: []` and `metadata.counts: {error:0,fail:0,pass:0,warn:0}` *when the underlying command actually produced output*. That means your patterns matched nothing — fix the regex, add `-v`/`--verbose` to the command, or escalate the relevant lines (e.g. `go test` needs `-v` or no PASS lines appear).
 - Aggregate `verdict: "pass"` when you know the codebase has unfixed findings — patterns are skipping them.
@@ -284,9 +286,6 @@ go run -tags=run_computational ./skills/run-sensor/scripts @sensors/<id>.json | 
   | jq -c '{verdict, severity, counts: .metadata.counts, individuals: (.evidence|length)}'
 
 # 2) Replay each fail/warn fixture to prove the unhappy paths.
-#    Build a temp sensor whose execution.command is `cat <fixture>` so the
-#    runner exercises the production patterns + exit_code_map against captured
-#    content, then assert the aggregate matches expected_verdict.
 TMP=$(mktemp /tmp/replay-XXXX.json)
 jq --arg cmd "cat sensors/fixtures/<group>/<case>.txt" \
    '.execution.command = $cmd | .id = "replay-" + .id' \
@@ -302,6 +301,21 @@ For each sensor, both must hold:
 - Each `golden_cases[]` entry: replay must produce the declared `expected_verdict` and `expected_severity`. If a replay disagrees, EITHER the patterns are wrong (most common) OR `expected_verdict` is wrong — fix one and re-replay until both agree.
 
 If iteration changes `output`, `execution`, or `verification`, bump the sensor `version` (e.g. `0.1.0` → `0.2.0`) and re-persist via the validator. The version stamp is the audit trail of which shape was actually verified.
+
+### 7.5. If smoke run fails with a setup-shape symptom, invoke /heal-sensor
+
+When step 7's smoke run produces an aggregate Signal that is setup-shape (missing env, missing binary, absent `.env`, unavailable service), do NOT iterate inside this skill. Invoke `/heal-sensor` instead:
+
+```
+/heal-sensor --signal=<path-to-saved-aggregate-signal-json> --sensor=@sensors/<id>.json
+```
+
+`/heal-sensor` will read the project state, build a Setup Plan, apply allowlisted idempotent fixes (cp .env.example .env, mkdir, touch, set-env-in-file), persist any patched/new sensors via the same `lib/sensor.ValidateAndPersist` primitive this skill uses, and retry the original sensor. After it returns:
+
+- If the retry passed: continue the draft loop — your sensor is healthy.
+- If `/heal-sensor` couldn't recover: the failure is genuinely outside the harness's reach (needs `pnpm install`, `gcloud login`, etc.). Read the remediation it emitted, surface it to the user, and continue with the OTHER sensors. Don't block this skill on credentials the harness can't synthesize.
+
+Setup-shape recovery used to be the responsibility of this skill's prose ("if credentials are missing, declare them and proceed"). It is now `/heal-sensor`'s job — exclusively. This skill stays focused on shape correctness.
 
 ### 8. Report back to the user
 
