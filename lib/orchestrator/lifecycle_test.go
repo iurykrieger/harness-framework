@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
@@ -224,6 +226,69 @@ func TestRunOne_HealHintAbsentOnPassingCommand(t *testing.T) {
 	md := sig["metadata"].(map[string]interface{})
 	if _, ok := md["heal_hint"]; ok {
 		t.Fatalf("metadata.heal_hint should be absent on pass; metadata=%v", md)
+	}
+}
+
+// TestRunOne_AbortsOnMissingRequiresEnv verifies the orchestrator
+// enforces sensor.requires.env BEFORE running prepare/command/teardown.
+// When a non-optional env var is missing, RunOne emits a single
+// verdict=error/severity=high aggregate Signal whose evidence rationale
+// matches the per-var format from rule_missing_env, and never spawns
+// the subprocess.
+func TestRunOne_AbortsOnMissingRequiresEnv(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	v, _ := schema.NewValidator(schemasDir)
+	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	js["requires"] = map[string]interface{}{
+		"env": []interface{}{
+			map[string]interface{}{
+				"name":        "HARNESS_TEST_NEVER_SET",
+				"description": "intentionally unset for this test",
+			},
+		},
+	}
+	exec := js["execution"].(map[string]interface{})
+	// Use a tripwire command — if the orchestrator forgets to abort,
+	// this writes a file we can detect to surface the regression.
+	exec["command"] = "echo SHOULD-NOT-RUN; exit 0"
+
+	// Hard-guarantee the env var is unset for both os.LookupEnv and the
+	// LookupEnvFn hook (some tests in other packages override it).
+	_ = os.Unsetenv("HARNESS_TEST_NEVER_SET")
+	prev := sensor.LookupEnvFn
+	sensor.LookupEnvFn = func(name string) (string, bool) {
+		if name == "HARNESS_TEST_NEVER_SET" {
+			return "", false
+		}
+		return os.LookupEnv(name)
+	}
+	t.Cleanup(func() { sensor.LookupEnvFn = prev })
+
+	s := Sensor{ID: js["id"].(string), JSON: js}
+	var out, errBuf bytes.Buffer
+	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
+	}
+	if sig["verdict"] != "error" || sig["severity"] != "high" {
+		t.Fatalf("verdict/severity = %v/%v, want error/high", sig["verdict"], sig["severity"])
+	}
+	if strings.Contains(out.String(), "SHOULD-NOT-RUN") {
+		t.Fatal("subprocess was spawned despite missing required env var")
+	}
+	ev, _ := sig["evidence"].([]interface{})
+	if len(ev) != 1 {
+		t.Fatalf("expected exactly 1 evidence entry, got %d", len(ev))
+	}
+	first, _ := ev[0].(map[string]interface{})
+	rat, _ := first["rationale"].(string)
+	want := "Required environment variable HARNESS_TEST_NEVER_SET is not set: intentionally unset for this test"
+	if rat != want {
+		t.Fatalf("rationale = %q\nwant     = %q", rat, want)
+	}
+	rem, _ := sig["remediation"].(map[string]interface{})
+	if rem == nil || !strings.Contains(rem["instructions"].(string), "HARNESS_TEST_NEVER_SET") {
+		t.Fatalf("remediation should name missing var: %+v", rem)
 	}
 }
 

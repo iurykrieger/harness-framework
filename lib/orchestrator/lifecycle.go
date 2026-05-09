@@ -45,6 +45,26 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 	execMap, _ := s.JSON["execution"].(map[string]interface{})
 	output, _ := s.JSON["output"].(string)
 
+	// Phase 0: enforce sensor.requires.env BEFORE prepare runs.
+	// A missing non-optional env var means the sensor cannot run at all —
+	// skip prepare, command, and teardown entirely and emit a single
+	// verdict=error aggregate Signal whose per-var evidence rationale is
+	// shaped to match the heal classifier's missing-env rule. This is the
+	// canonical entry point for the heal loop's documented happy path:
+	// without it, the rule fires only for inferential sensors (which is
+	// the bug we are fixing here).
+	if missing := sensor.CheckRequiredEnv(s.JSON); len(missing) > 0 {
+		sig := sensor.BuildMissingEnvSignal(envelope, output, missing)
+		if v != nil {
+			if err := v.Validate(schema.TargetSignal, sig); err != nil {
+				schema.PrintValidationOrPlain(err, stderr)
+				return nil, 1
+			}
+		}
+		_ = json.NewEncoder(stdout).Encode(sig)
+		return sig, 0
+	}
+
 	timeoutMS := readTimeoutMS(s.JSON)
 
 	// Phase 1: prepare (fail-fast).
