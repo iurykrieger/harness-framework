@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
@@ -142,6 +144,151 @@ func TestRunOne_TeardownRunsAfterCommandFail(t *testing.T) {
 	td := lc["teardown"].([]interface{})
 	if len(td) != 1 || td[0].(map[string]interface{})["verdict"] != "pass" {
 		t.Fatalf("teardown should still run after command fail; got %v", td)
+	}
+}
+
+func TestRunOne_HealHintEmittedOnStderrPattern(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	v, _ := schema.NewValidator(schemasDir)
+	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	exec := js["execution"].(map[string]interface{})
+	// Single-mode failure whose stderr matches the env-file-absent
+	// curated heal pattern. The orchestrator must surface
+	// metadata.heal_hint = "env-file-absent:<excerpt>" so the heal
+	// classifier's fast path can fire.
+	exec["command"] = "echo 'open .env: ENOENT no such file or directory' >&2; exit 1"
+	s := Sensor{ID: js["id"].(string), JSON: js}
+
+	var out, errBuf bytes.Buffer
+	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
+	}
+	if sig["verdict"] != "fail" {
+		t.Fatalf("expected verdict=fail, got %v", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	hint, ok := md["heal_hint"].(string)
+	if !ok {
+		t.Fatalf("expected metadata.heal_hint to be set; metadata=%v", md)
+	}
+	if !strings.HasPrefix(hint, "env-file-absent:") {
+		t.Fatalf("heal_hint = %q, want prefix %q", hint, "env-file-absent:")
+	}
+	if len(hint) > 120+len("env-file-absent:")+1 {
+		t.Fatalf("heal_hint excerpt should be truncated to ~120 chars, got %d: %q", len(hint), hint)
+	}
+}
+
+func TestRunOne_HealHintAbsentOnBenignFailure(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	v, _ := schema.NewValidator(schemasDir)
+	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	exec := js["execution"].(map[string]interface{})
+	// Single-mode failure with stderr that does NOT match any curated
+	// heal pattern. metadata.heal_hint MUST be absent — emitting it on
+	// generic failures would poison the classifier.
+	exec["command"] = "echo 'some unrelated error message' >&2; exit 1"
+	s := Sensor{ID: js["id"].(string), JSON: js}
+
+	var out, errBuf bytes.Buffer
+	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
+	}
+	if sig["verdict"] != "fail" {
+		t.Fatalf("expected verdict=fail, got %v", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if _, ok := md["heal_hint"]; ok {
+		t.Fatalf("metadata.heal_hint should be absent on benign stderr; metadata=%v", md)
+	}
+}
+
+func TestRunOne_HealHintAbsentOnPassingCommand(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	v, _ := schema.NewValidator(schemasDir)
+	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	exec := js["execution"].(map[string]interface{})
+	// Even when stderr would match a heal pattern, a passing command
+	// must NOT emit heal_hint — there is nothing to heal.
+	exec["command"] = "echo 'open .env: ENOENT no such file' >&2; exit 0"
+	s := Sensor{ID: js["id"].(string), JSON: js}
+
+	var out, errBuf bytes.Buffer
+	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
+	}
+	if sig["verdict"] != "pass" {
+		t.Fatalf("expected verdict=pass, got %v", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if _, ok := md["heal_hint"]; ok {
+		t.Fatalf("metadata.heal_hint should be absent on pass; metadata=%v", md)
+	}
+}
+
+// TestRunOne_AbortsOnMissingRequiresEnv verifies the orchestrator
+// enforces sensor.requires.env BEFORE running prepare/command/teardown.
+// When a non-optional env var is missing, RunOne emits a single
+// verdict=error/severity=high aggregate Signal whose evidence rationale
+// matches the per-var format from rule_missing_env, and never spawns
+// the subprocess.
+func TestRunOne_AbortsOnMissingRequiresEnv(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	v, _ := schema.NewValidator(schemasDir)
+	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	js["requires"] = map[string]interface{}{
+		"env": []interface{}{
+			map[string]interface{}{
+				"name":        "HARNESS_TEST_NEVER_SET",
+				"description": "intentionally unset for this test",
+			},
+		},
+	}
+	exec := js["execution"].(map[string]interface{})
+	// Use a tripwire command — if the orchestrator forgets to abort,
+	// this writes a file we can detect to surface the regression.
+	exec["command"] = "echo SHOULD-NOT-RUN; exit 0"
+
+	// Hard-guarantee the env var is unset for both os.LookupEnv and the
+	// LookupEnvFn hook (some tests in other packages override it).
+	_ = os.Unsetenv("HARNESS_TEST_NEVER_SET")
+	prev := sensor.LookupEnvFn
+	sensor.LookupEnvFn = func(name string) (string, bool) {
+		if name == "HARNESS_TEST_NEVER_SET" {
+			return "", false
+		}
+		return os.LookupEnv(name)
+	}
+	t.Cleanup(func() { sensor.LookupEnvFn = prev })
+
+	s := Sensor{ID: js["id"].(string), JSON: js}
+	var out, errBuf bytes.Buffer
+	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
+	}
+	if sig["verdict"] != "error" || sig["severity"] != "high" {
+		t.Fatalf("verdict/severity = %v/%v, want error/high", sig["verdict"], sig["severity"])
+	}
+	if strings.Contains(out.String(), "SHOULD-NOT-RUN") {
+		t.Fatal("subprocess was spawned despite missing required env var")
+	}
+	ev, _ := sig["evidence"].([]interface{})
+	if len(ev) != 1 {
+		t.Fatalf("expected exactly 1 evidence entry, got %d", len(ev))
+	}
+	first, _ := ev[0].(map[string]interface{})
+	rat, _ := first["rationale"].(string)
+	want := "Required environment variable HARNESS_TEST_NEVER_SET is not set: intentionally unset for this test"
+	if rat != want {
+		t.Fatalf("rationale = %q\nwant     = %q", rat, want)
+	}
+	rem, _ := sig["remediation"].(map[string]interface{})
+	if rem == nil || !strings.Contains(rem["instructions"].(string), "HARNESS_TEST_NEVER_SET") {
+		t.Fatalf("remediation should name missing var: %+v", rem)
 	}
 }
 

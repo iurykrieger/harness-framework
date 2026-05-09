@@ -1,12 +1,6 @@
-// Command write-sensor reads a draft sensor JSON file, validates it
-// against schemas/sensor.json (Draft 2020-12, with cross-file $ref to
-// signal.json), and writes the canonicalised JSON to <out>/<id>.json.
-//
-// The skill's detection logic is intentionally LLM-driven (see
-// skills/detect-sensors/SKILL.md): no project archetype, capability list,
-// or command template is hardcoded here. This script is the one
-// deterministic step in that loop — it makes sure every persisted sensor
-// is well-formed before /run-sensor ever sees it.
+// Command write-sensor reads a draft sensor JSON file and persists it
+// via lib/sensor.ValidateAndPersist (validate against schemas + atomic
+// write). Thin CLI wrapper around the shared primitive.
 //
 // Usage:
 //
@@ -18,14 +12,16 @@
 package main
 
 import (
-	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+
+	"github.com/santhosh-tekuri/jsonschema/v5"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/sensor"
 )
 
 func main() {
@@ -51,70 +47,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	draftPath := fs.Arg(0)
 
-	sensor, code := readSensorFile(draftPath, stderr)
-	if code != 0 {
-		return code
-	}
-
-	v, code := schema.LoadValidator(schemasDir, stderr)
-	if code != 0 {
-		return code
-	}
-	if err := v.Validate(schema.TargetSensor, sensor); err != nil {
-		schema.PrintValidationOrPlain(err, stderr)
-		return 1
-	}
-
-	id, ok := sensor["id"].(string)
-	if !ok || id == "" {
-		// The schema's id pattern guarantees this branch is unreachable,
-		// but keep a clear error in case schema and code drift apart.
-		fmt.Fprintln(stderr, "error: sensor.id missing or empty after validation")
-		return 1
-	}
-
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		fmt.Fprintln(stderr, "error: mkdir:", err)
-		return 2
-	}
-	outPath := filepath.Join(outDir, id+".json")
-	if err := writeCanonical(outPath, sensor); err != nil {
-		fmt.Fprintln(stderr, "error: write:", err)
-		return 2
-	}
-
-	abs, err := filepath.Abs(outPath)
-	if err != nil {
-		abs = outPath
-	}
-	fmt.Fprintln(stdout, abs)
-	return 0
-}
-
-func readSensorFile(path string, stderr io.Writer) (map[string]interface{}, int) {
-	data, err := os.ReadFile(path)
+	body, err := os.ReadFile(draftPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: read:", err)
-		return nil, 2
+		return 2
 	}
-	var sensor map[string]interface{}
-	if err := json.Unmarshal(data, &sensor); err != nil {
-		fmt.Fprintln(stderr, "error: parse sensor JSON:", err)
-		return nil, 2
-	}
-	return sensor, 0
-}
 
-func writeCanonical(path string, sensor map[string]interface{}) error {
-	f, err := os.Create(path)
+	path, err := sensor.ValidateAndPersist(body, outDir, schemasDir)
 	if err != nil {
-		return err
+		var ve *jsonschema.ValidationError
+		if errors.As(err, &ve) {
+			schema.PrintValidationOrPlain(err, stderr)
+			return 1
+		}
+		// Anything else (parse error, I/O, schema-load failure): exit 2.
+		fmt.Fprintln(stderr, "error:", err)
+		return 2
 	}
-	defer f.Close()
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(sensor); err != nil {
-		return err
-	}
-	return nil
+	fmt.Fprintln(stdout, path)
+	return 0
 }

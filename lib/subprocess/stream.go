@@ -8,6 +8,7 @@ package subprocess
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,12 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
 )
+
+// streamStderrExcerptCap bounds how much stderr text the streamer
+// retains for downstream heuristics (heal_hint emission, etc.). Mirrors
+// the cap used by RunStep so lifecycle and command captures are
+// comparable.
+const streamStderrExcerptCap = 4096
 
 // StreamConfig is the input to StreamSubprocess.
 type StreamConfig struct {
@@ -41,6 +48,13 @@ type StreamResult struct {
 	ElapsedMS   int
 	Individuals []map[string]interface{} // also already encoded onto Stdout
 	CommandRun  string                   // exact string passed to sh -c
+	// StderrExcerpt holds up to streamStderrExcerptCap bytes of the
+	// subprocess's stderr stream, captured verbatim regardless of
+	// whether output_parsing patterns matched. Consumed by the
+	// orchestrator to drive setup-shape heuristics (e.g. heal_hint
+	// emission) for single-mode failures whose only useful signal is
+	// the stderr text.
+	StderrExcerpt string
 }
 
 // StreamSubprocess spawns sh -c <Command>, scans merged stdout+stderr line by
@@ -89,15 +103,33 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 
 	// Drain stdout and stderr concurrently. Each goroutine pushes matched
 	// individuals onto a shared buffered channel; main loop emits JSONL.
+	// stderr is additionally tee'd into a capped byte buffer so the
+	// orchestrator can inspect the verbatim text for setup-shape
+	// heuristics (heal_hint emission) when output_parsing patterns
+	// match nothing.
 	type emit struct{ sig map[string]interface{} }
 	emits := make(chan emit, 64)
 	var wg sync.WaitGroup
-	scan := func(r io.Reader) {
+	var stderrBuf bytes.Buffer
+	var stderrMu sync.Mutex
+	scan := func(r io.Reader, captureStderr bool) {
 		defer wg.Done()
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 64*1024), 1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
+			if captureStderr {
+				stderrMu.Lock()
+				if remaining := streamStderrExcerptCap - stderrBuf.Len(); remaining > 0 {
+					if len(line)+1 <= remaining {
+						stderrBuf.WriteString(line)
+						stderrBuf.WriteByte('\n')
+					} else {
+						stderrBuf.WriteString(line[:remaining])
+					}
+				}
+				stderrMu.Unlock()
+			}
 			m, ok := signal.MatchLine(line, cfg.Patterns)
 			if !ok {
 				continue
@@ -106,8 +138,8 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 		}
 	}
 	wg.Add(2)
-	go scan(stdoutPipe)
-	go scan(stderrPipe)
+	go scan(stdoutPipe, false)
+	go scan(stderrPipe, true)
 	go func() { wg.Wait(); close(emits) }()
 
 	for e := range emits {
@@ -127,6 +159,9 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 	if cmd.ProcessState != nil {
 		res.ExitCode = cmd.ProcessState.ExitCode()
 	}
+	stderrMu.Lock()
+	res.StderrExcerpt = stderrBuf.String()
+	stderrMu.Unlock()
 	_ = waitErr
 	return res, nil
 }
