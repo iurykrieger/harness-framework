@@ -102,7 +102,7 @@ func runWatcher(cfg watcherConfig, stop <-chan struct{}) error {
 	var wg sync.WaitGroup
 	if cfg.SubprocessPID > 0 && cfg.RegistryRoot != "" && cfg.SensorID != "" {
 		wg.Add(1)
-		go func() { defer wg.Done(); runReaper(cfg) }()
+		go func() { defer wg.Done(); runReaper(cfg, stop) }()
 	}
 
 	for {
@@ -188,6 +188,7 @@ func buildIndividualSignal(env libsensor.Envelope, m libsignal.PatternMatch, raw
 }
 
 func appendSignal(path string, sig map[string]interface{}) {
+	// best-effort: signal loss is preferable to crashing the watcher.
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
@@ -201,8 +202,18 @@ func appendSignal(path string, sig map[string]interface{}) {
 // into running_sensors.json under flock once the process terminates.
 // We do not own the child (it was spawned detached by /start-sensor),
 // so syscall.Wait4 wouldn't apply — poll-based liveness check.
-func runReaper(cfg watcherConfig) {
+//
+// Returns early (without writing subprocess_exit) if stop is closed
+// while the subprocess is still alive — that path indicates the watcher
+// itself is being torn down (typically by /stop-sensor's SIGTERM to the
+// subprocess group), and /stop-sensor will record the outcome.
+func runReaper(cfg watcherConfig, stop <-chan struct{}) {
 	for {
+		select {
+		case <-stop:
+			return
+		default:
+		}
 		if !registry.IsPIDAlive(cfg.SubprocessPID) {
 			break
 		}

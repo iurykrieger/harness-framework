@@ -99,3 +99,38 @@ func TestSignalsLogIsValidJSONLNewlineDelimited(t *testing.T) {
 		t.Fatalf("got %d lines, want 3", count)
 	}
 }
+
+func TestRunWatcher_StopReturnsEvenWhenReaperWaitsForLiveSubprocess(t *testing.T) {
+	dir := t.TempDir()
+	raw := filepath.Join(dir, "raw.log")
+	signals := filepath.Join(dir, "signals.log")
+	if err := os.WriteFile(raw, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := watcherConfig{
+		RawLog:        raw,
+		SignalsLog:    signals,
+		PatternsJSON:  "[]",
+		EnvelopeJSON:  `{"sensor_id":"x","version":"1.0.0","run_id":"00000000-0000-0000-0000-000000000000","started_at":"2026-05-09T15:30:00Z","sensor_type":"computational"}`,
+		SubprocessPID: os.Getpid(), // ourselves: definitely alive, never dies during the test
+		RegistryRoot:  dir,
+		SensorID:      "x",
+	}
+
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- runWatcher(cfg, stop) }()
+
+	time.Sleep(20 * time.Millisecond)
+	close(stop)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runWatcher returned %v, want nil", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runWatcher did not return within 1s after stop closed (reaper-hang regression)")
+	}
+}
