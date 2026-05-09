@@ -22,7 +22,7 @@ This spec replaces the timeout-driven model with an explicit start / observe / s
 2. **Four new skills.** `/start-sensor`, `/stop-sensor`, `/tail-sensor`, `/list-sensors`. Each backed by a Go script under `skills/<skill>/scripts/`. All accept a `<sensor.id>` argument; the runner resolves to `sensors/<id>.json` by convention.
 3. **`/run-sensor` accepts `<sensor.id>` instead of a path.** Same convention as the new skills. Path resolution moves into `lib/sensor/path.go` as a single resolver shared by all five skills.
 4. **New `lib/registry/` subpackage.** Owns the `.runtime/sensors/` directory: state file format, atomic writes, lock files, refcount management via `held_by`, and orphan detection. Reused by the four new scripts and by the orchestrator.
-5. **Orchestrator extended for live dependencies.** When a sensor's `depends_on` includes a sensor whose `execution.blocking: true`, the orchestrator starts that dep (or attaches to it if already running), runs the dependent, and stops the dep at teardown — all by reusing the same registry primitives the standalone skills use.
+5. **Orchestrator extended for live dependencies.** When a sensor's `depends_on` includes a sensor whose `execution.blocking: true`, the orchestrator starts that dep (or attaches to it if already running), runs the dependent, and stops the dep at teardown — all by reusing the same registry primitives the standalone skills use. Blocking-on-blocking is supported transitively: `/stop-sensor B` re-resolves `B.depends_on` and walks the chain in reverse without persisting any intermediate state.
 6. **`lib/signal/aggregate.go` rename.** The `LongRunning` field on `AggregateInput` is renamed `Blocking` and its semantics retained (timeout treated as expected termination, exit side becomes `pass/info`, stream verdict drives aggregate). Callers in `lib/orchestrator/lifecycle.go` follow.
 7. **`.runtime/` directory.** New gitignored directory at the project root. Layout: `.runtime/sensors/<sensor.id>/{raw.log, signals.log}` per sensor, plus the shared `.runtime/sensors/running_sensors.json`. The `sensors/` segment under `.runtime/` keeps the namespace open for future runtime entities (e.g. inferential calibration runs, experiment outputs).
 
@@ -80,7 +80,7 @@ This spec replaces the timeout-driven model with an explicit start / observe / s
 3. Run `execution.prepare[]` fail-fast. If any step fails → emit Signal `verdict=error`, `metadata.kind=start_failed`, `metadata.lifecycle.prepare` carries per-step results. No registry entry created. Exit 1. Teardown does **not** run for a never-started subprocess (consistent with the rule "teardown is finally for the command").
 4. `os.StartProcess` the command via `sh -c`, with `Setsid: true` and `Setpgid: true` (so the watcher can SIGTERM the whole group later). Stdout and stderr redirected to `.runtime/sensors/watch-logs/raw.log` (append).
 5. Spawn the watcher as a detached `os.StartProcess` invocation of the same Go binary with a hidden subcommand (`--watcher-mode`). Pass via env vars: `HARNESS_WATCHER_RAW=<raw.log>`, `HARNESS_WATCHER_SIGNALS=<signals.log>`, `HARNESS_WATCHER_PATTERNS=<json>`, `HARNESS_WATCHER_ENVELOPE=<json>`. Watcher uses `fsnotify` to follow `raw.log`, applies `signal.MatchLine` to each line, appends matches to `signals.log`.
-6. Append entry to `running_sensors.json` (sensor.id, pid, pgid, watcher_pid, started_at, command, `held_by: ["manual"]`). Write atomically (`.tmp` + rename). Release lock.
+6. Append entry to `running_sensors.json` (sensor.id, pid, pgid, watcher_pid, started_at, command, `held_by: [{kind: "manual", attached_at: <now>}]`). Write atomically (`.tmp` + rename). Release lock.
 7. Emit Signal `verdict=pass`, `metadata.kind=started`, payload includes `pid`, `started_at`, `log_dir`, and `next_cursor: 0`. Exit 0.
 
 ### Lifecycle: `/tail-sensor watch-logs 12`
@@ -93,7 +93,7 @@ This spec replaces the timeout-driven model with an explicit start / observe / s
 ### Lifecycle: `/stop-sensor watch-logs`
 
 1. Lookup. Not found → Signal `verdict=warn`, `metadata.kind=stop_not_running`. Exit 0 (idempotent — stopping nothing is fine).
-2. `flock`. Remove `"manual"` from `held_by` (or whichever caller token applies; here it's the explicit user invocation). If `held_by` still non-empty → Signal `verdict=warn`, `metadata.kind=stop_held`, evidence enumerates remaining holders. Release lock. Exit 0. Process keeps running.
+2. `flock`. Remove the `{kind: "manual"}` record from `held_by` (or whichever caller token applies; here it's the explicit user invocation). If the `--reap-dead-holders` flag was passed, also drop any `{kind: "sensor", pid}` entries whose PID is no longer alive (logged to evidence). If `held_by` still non-empty → Signal `verdict=warn`, `metadata.kind=stop_held` (or `stop_held_with_dead_holders` when dead holders were detected and not reaped), evidence enumerates remaining holders with their live status. Release lock. Exit 0. Process keeps running.
 3. `held_by` empty → SIGTERM the process group (`syscall.Kill(-pgid, SIGTERM)`).
 4. Wait up to `execution.graceful_timeout_ms` (default 5000) for `wait()`. If still alive → SIGKILL the group, mark `metadata.killed_forcefully=true` (warn evidence on aggregate).
 5. Signal the watcher process to drain (SIGTERM to its PID). Wait up to 1s for it to exit cleanly. If still alive → SIGKILL. If watcher had already died → mark `metadata.watcher_died=true` (warn evidence) and do an inline drain: read `raw.log` from where `signals.log` left off, apply patterns, append remaining matches to `signals.log`.
@@ -119,14 +119,14 @@ This spec replaces the timeout-driven model with an explicit start / observe / s
    - **non-blocking S** → `RunOne(S)` as today.
    - **blocking S** →
      - `flock`, lookup S in `running_sensors.json`.
-     - If S not present → run prepare, fork+exec, spawn watcher, write entry with `held_by: [B.id]`. Equivalent of `/start-sensor S` minus the user-facing emit.
-     - If S already present and PID alive → append `B.id` to `held_by`. **Attach** semantics. Skip prepare (it already ran).
+     - If S not present → run prepare, fork+exec, spawn watcher, write entry with `held_by: [{kind: "sensor", id: B.id, pid: os.Getpid(), attached_at: <now>}]`. Equivalent of `/start-sensor S` minus the user-facing emit.
+     - If S already present and PID alive → append the same `{kind: "sensor", id: B.id, pid, attached_at}` record to `held_by`. **Attach** semantics. Skip prepare (it already ran).
      - If S present but PID dead (orphan) → emit cascade-style Signal `verdict=error`, `metadata.kind=dep_orphan`, abort: B and all dependents skipped.
      - On any failure to start → emit `verdict=error`, `metadata.kind=dep_start_failed`. Cascade applies.
      - Release lock. Emit Signal `verdict=pass`, `metadata.kind=dep_attached` (or `dep_started`).
 4. Run B normally via existing `RunOne`. B's individuals and aggregate stream as today.
 5. **Always** at the end (success, fail, cascade): walk the `live_deps_stack` in reverse. For each:
-   - `flock`, remove `B.id` from `held_by`.
+   - `flock`, remove the `{kind: "sensor", id: B.id, pid: <orchestrator-pid>}` record from `held_by` (matched by id+pid pair, so multiple concurrent runs of the same dependent — different orchestrator processes — don't accidentally release each other's hold).
    - If `held_by` now empty → run the same SIGTERM/wait/SIGKILL/teardown/aggregate sequence as `/stop-sensor`. Aggregate goes into the JSONL stream **before** B's aggregate.
    - If `held_by` still non-empty → emit Signal `verdict=pass`, `metadata.kind=dep_detached`. Process stays alive for the other holders.
 6. B's aggregate is the last JSONL line on stdout (contract preserved).
@@ -134,8 +134,8 @@ This spec replaces the timeout-driven model with an explicit start / observe / s
 ### Edge cases
 
 - **Watcher crashes mid-run.** Detected at `/stop-sensor` time; inline drain recovers any unparsed lines from `raw.log`. Aggregate flagged `watcher_died=true`, severity warn, verdict not downgraded.
-- **Subprocess exits on its own before /stop-sensor.** Watcher will continue tailing `raw.log` (which stops growing) and stay alive. `/stop-sensor` detects PID dead, drains watcher, and computes aggregate from `signals.log`. Aggregate uses the recorded exit code (read from `wait()` ghost in registry — recorded by a tiny reaper goroutine in the watcher) and applies `exit_code_map`. If exit code unavailable → aggregate falls back to stream verdict, with `metadata.exit_code_unknown=true`.
-- **Orchestrator crashes between attaching a dep and running B.** Dep is left with B in `held_by`. B's run never completes. Next `/list-sensors` shows the orphan-style state (B not running, but holding the dep). `/stop-sensor <dep>` from the user fails with `stop_held` until they manually `--release-holder` (deferred — see "out of scope").
+- **Subprocess exits on its own before /stop-sensor.** Watcher continues tailing `raw.log` (which stops growing) and stays alive. The watcher includes a small reaper goroutine that calls `wait()` on the subprocess PID and persists the exit code into `state.json` under a new `subprocess_exit` field. `/stop-sensor` detects PID dead, drains watcher, and computes aggregate from `signals.log`. **Critically, when subprocess exited on its own (not via our SIGTERM), `/stop-sensor` calls `signal.Aggregate` with `Blocking: false`** — so `exit_code_map` drives the exit side normally and a crashed `npm run dev` aggregates as fail/error rather than pass. Aggregate carries `metadata.subprocess_self_exited=true` and `metadata.subprocess_exit_code=<int>`. If the reaper missed it (race with `/stop-sensor`) → falls back to stream verdict with `metadata.exit_code_unknown=true`, also `Blocking: false` (a missing exit code on a process we did not stop is more concerning than a stream-clean run).
+- **Orchestrator crashes between attaching a dep and running B.** The `held_by` entry for B carries the orchestrator's PID (`{ kind: "sensor", id: "B", pid, attached_at }`). `/list-sensors` cross-checks each holder's PID with `IsPIDAlive` and annotates dead holders. `/stop-sensor <dep>` invoked while a dead holder remains emits `verdict=warn`, `metadata.kind=stop_held_with_dead_holders`, evidence enumerates the dead PIDs. The user can pass `--reap-dead-holders` to `/stop-sensor` (defined in this spec, not deferred) to remove dead holders from `held_by` and proceed; if `held_by` becomes empty after reap, the normal stop sequence runs. This keeps the manual escape hatch first-class without inventing a forced-stop sledgehammer.
 - **Concurrent `/start-sensor` of the same id.** flock serializes; second invocation reads the new state and rejects with `already running`.
 - **Concurrent `/stop-sensor` of the same id.** First wins the flock and removes the entry; second sees `not_running` and exits warn (idempotent).
 - **`graceful_timeout_ms` set very high (e.g. 60s) on a stuck process.** The agent's tool-use turn includes `/stop-sensor`. If the runner blocks 60s, the agent's turn waits. Acceptable: the agent author chose the timeout. No async background stop.
@@ -169,20 +169,44 @@ Concrete diffs against `schemas/sensor.json`:
  }
 ```
 
-A new `if/then` branch in the top-level `allOf`:
+`cost.latency.required` currently lists `["p50_ms", "p95_ms", "timeout_ms"]` unconditionally. Drop `timeout_ms` from that array and gate it via top-level `allOf`:
+
+```diff
+ "latency": {
+   "type": "object",
+   "additionalProperties": false,
+-  "required": ["p50_ms", "p95_ms", "timeout_ms"],
++  "required": ["p50_ms", "p95_ms"],
+   "properties": { "p50_ms": ..., "p95_ms": ..., "timeout_ms": ... }
+ }
+```
+
+Two new `allOf` branches:
 
 ```json
 {
-  "if":   { "properties": { "execution": { "properties": { "blocking": { "const": true } } } } },
+  "if":   { "properties": { "execution": { "properties": { "blocking": { "const": false } } } } },
+  "then": { "properties": { "cost": { "properties": { "latency": { "required": ["timeout_ms"] } } } } }
+},
+{
+  "if":   { "properties": { "execution": { "properties": { "blocking": { "const": true } } } }, "required": ["execution"] },
   "then": {
     "properties": {
-      "cost": { "properties": { "latency": { "not": { "required": ["timeout_ms"] } } } }
+      "cost":      { "properties": { "latency": { "not": { "required": ["timeout_ms"] } } } },
+      "output":    { "const": "stream" }
     }
   }
 }
 ```
 
-The existing `if/then` for `cost.latency.timeout_ms` (currently always required for computational) is narrowed to `blocking: false`.
+Trace of all four (type × blocking) cases:
+
+- (computational, blocking=false): existing computational branch requires `command + exit_code_map`; new branch requires `cost.latency.timeout_ms`. ✓
+- (computational, blocking=true): existing branch still requires `command + exit_code_map`; new branch forbids `timeout_ms` and forces `output: stream`. `graceful_timeout_ms` is allowed. ✓
+- (inferential, blocking=false): existing inferential branch requires its fields; new branch requires `timeout_ms`. ✓
+- (inferential, blocking=true): existing inferential branch requires command/model/etc.; new branch forbids `timeout_ms` and forces `output: stream`. Inferential blocking is unusual but the schema does not need to forbid it; it would mean an LLM CLI streaming verdicts indefinitely until `/stop-sensor`. Allowed. ✓
+
+`output: stream` is forced for blocking sensors because `/tail-sensor` reads `signals.log`, which assumes `execution.output_parsing.patterns` exists (the existing `output: stream` branch already requires it). A blocking sensor with `output: single` would produce an empty `signals.log` with no individuals to surface, defeating the purpose. The schema rejects that combination outright.
 
 `signal.json` is unchanged. New `metadata.kind` values (`started`, `start_rejected`, `start_failed`, `tail_envelope`, `tail_not_running`, `stop_not_running`, `stop_held`, `dep_attached`, `dep_started`, `dep_detached`, `dep_orphan`, `dep_start_failed`, `list`) are conventions; `metadata` remains free-form per signal.json.
 
@@ -219,7 +243,8 @@ All exported functions take a `RegistryRoot` parameter (default `<cwd>/.runtime/
 ### Extended: `lib/subprocess/`
 
 - New `detach.go`: `SpawnDetached(StreamConfig) (DetachResult, error)` for `Setsid: true`, `Setpgid: true`, redirected stdout/stderr to a file. Used by `/start-sensor` only; existing `StreamSubprocess` is unchanged.
-- New `watcher.go`: the watcher mode entrypoint. Reads env vars, follows `raw.log` with `fsnotify`, applies `signal.MatchLine`, appends matched signals to `signals.log`. Exits cleanly on SIGTERM.
+
+The watcher itself is **not** library code — it is a stand-alone script under the `start-sensor` skill (see below). Library reuse comes through `signal.MatchLine` and `signal.CompilePatterns`, which the watcher script imports.
 
 ## Skills changes
 
@@ -228,33 +253,40 @@ All exported functions take a `RegistryRoot` parameter (default `<cwd>/.runtime/
 - SKILL.md updated: argument is `<sensor.id>`. New "Refusing blocking sensors" section: if `execution.blocking: true`, the runner exits 2 with a message pointing the user to `/start-sensor`.
 - `run-computational.go` and `run-inferential.go` use `lib/sensor/path.go` to resolve `<id>` → path. They also use `lib/orchestrator/RunOneWithLiveDeps` instead of `RunOne` directly, so blocking deps are honored automatically.
 
+All four skills follow CLAUDE.md rule 6 strictly: SKILL.md is orchestration prose pointing at the Go script (which subcommand to call, with what arguments, in what order). Schema validation, registry I/O, signal construction, atomic writes, and exit-code mapping all live in Go.
+
 ### New: `skills/start-sensor/`
 
-- `SKILL.md`: argument `<sensor.id>`, validates `blocking: true`, fails on `cost.latency.timeout_ms` mismatch, emits `started` Signal.
-- `scripts/start.go` (`//go:build start_sensor`): the implementation as described above.
+- `SKILL.md`: argument `<sensor.id>`. Prose describes the dispatch sequence and links to the Go script. Defers all decisions (validation, blocking check, registry interaction, watcher spawn) to the script.
+- `scripts/start.go` (`//go:build start_sensor`): the implementation as described above. Validates schema, asserts `execution.blocking: true` (rejects with exit 2 otherwise), runs prepare, fork+exec, spawns the watcher script as a separate detached process, writes registry, emits `started` Signal.
 - `scripts/start_test.go`: table-driven coverage of accept/reject paths, registry interactions, watcher spawn.
 
 ### New: `skills/stop-sensor/`
 
-- `SKILL.md`: argument `<sensor.id>`, idempotent, returns aggregate Signal.
-- `scripts/stop.go` (`//go:build stop_sensor`).
-- `scripts/stop_test.go`: covers held_by refcount, graceful → SIGKILL escalation, watcher_died inline drain, teardown.
+- `SKILL.md`: argument `<sensor.id>`, idempotent. Prose only.
+- `scripts/stop.go` (`//go:build stop_sensor`). Owns held_by decrement, SIGTERM/wait/SIGKILL, watcher signaling, teardown invocation, aggregate construction, registry cleanup.
+- `scripts/stop_test.go`: covers held_by refcount, graceful → SIGKILL escalation, watcher_died inline drain, teardown, subprocess-self-exited path.
 
 ### New: `skills/tail-sensor/`
 
-- `SKILL.md`: arguments `<sensor.id> <cursor>`, returns JSONL Signals + tail-envelope.
-- `scripts/tail.go` (`//go:build tail_sensor`).
+- `SKILL.md`: arguments `<sensor.id> <cursor>`. Prose only.
+- `scripts/tail.go` (`//go:build tail_sensor`). Owns cursor parsing, line-based read of `signals.log`, tail-envelope construction.
 - `scripts/tail_test.go`: covers cursor=0, cursor=mid, cursor>EOF, missing run.
 
 ### New: `skills/list-sensors/`
 
-- `SKILL.md`: no arguments, returns `list` Signal with all live entries.
-- `scripts/list.go` (`//go:build list_sensors`).
+- `SKILL.md`: no arguments. Prose only.
+- `scripts/list.go` (`//go:build list_sensors`). Owns registry read, PID liveness check, summary construction.
 - `scripts/list_test.go`: covers empty registry, multiple entries, orphan annotation.
 
-### Watcher binary
+### Watcher script
 
-The watcher does not have its own SKILL.md (not user-facing). It lives at `skills/start-sensor/scripts/watcher.go` (`//go:build start_sensor_watcher`) and is invoked by `start.go` via `os.StartProcess` with the build-tag-built binary. Tests at `skills/start-sensor/scripts/watcher_test.go`.
+The watcher is a separate `package main` script — not library code, not a hidden subcommand of `start.go`, and not a `--watcher-mode` flag (rule 7 forbids mode flags). It lives at:
+
+- `skills/start-sensor/scripts/watcher.go` (`//go:build start_watcher`). Distinct build tag from `start.go` so the two coexist in the same directory (CLAUDE.md regra 7 pattern). Reads env vars (`HARNESS_WATCHER_RAW`, `HARNESS_WATCHER_SIGNALS`, `HARNESS_WATCHER_PATTERNS`, `HARNESS_WATCHER_ENVELOPE`, `HARNESS_WATCHER_SUBPROCESS_PID`). Follows `raw.log` with `fsnotify`, applies `signal.MatchLine`, appends matches to `signals.log`. Reaper goroutine calls `wait()` on the subprocess PID and writes the exit code into `state.json`. Exits cleanly on SIGTERM (drains buffers, fsync, exit).
+- `skills/start-sensor/scripts/watcher_test.go`: covers fsnotify lifecycle, pattern matching pipeline, SIGTERM drain, reaper exit-code capture, dead-watcher recovery.
+
+`start.go` invokes the watcher binary by name (`os.StartProcess` with the path to the built `watcher` binary), not via flag dispatch on itself.
 
 ## File contracts
 
@@ -271,12 +303,24 @@ The watcher does not have its own SKILL.md (not user-facing). It lives at `skill
       "watcher_pid": 12346,
       "started_at": "2026-05-09T15:30:00Z",
       "command": "npm run dev",
-      "held_by": ["manual", "smoke-tests"],
+      "held_by": [
+        { "kind": "manual", "attached_at": "2026-05-09T15:30:00Z" },
+        { "kind": "sensor", "id": "smoke-tests", "pid": 23456, "attached_at": "2026-05-09T15:31:12Z" }
+      ],
       "log_dir": ".runtime/sensors/run-project"
     }
   ]
 }
 ```
+
+Each `held_by` entry is a discriminated record:
+
+- `kind: "manual"` — added by an explicit `/start-sensor` invocation. Carries `attached_at` only.
+- `kind: "sensor"` — added by the orchestrator when a dependent attaches. Carries `id` (the holder sensor's id), `pid` (the orchestrator process running the holder), and `attached_at`.
+
+The discriminator avoids collision with a hypothetical sensor whose id happens to be `manual` (sensor ids match `^[a-z][a-z0-9-]*$`, so the literal `"manual"` could otherwise be ambiguous). `held_by.go` validates `kind ∈ {manual, sensor}` on every read.
+
+`/list-sensors` enriches each `kind: "sensor"` entry by checking `IsPIDAlive(pid)` and annotating `holder_alive` in its output. `/stop-sensor`'s `stop_held` Signal lists holders with their live status so the user can spot a leaked holder.
 
 Atomic write: marshal, write to `running_sensors.json.tmp`, `os.Rename`. flock held during read-modify-write.
 
@@ -302,15 +346,21 @@ Deferred to follow-up specs. Each is a real concern but adds scope this design c
 - **Idle timeout / safety max lifetime.** A sensor could hang forever with no output. The user explicitly rejected `idle_timeout_ms` and `safety_max_lifetime_ms` as part of this design. A future spec could reintroduce them as opt-in fields.
 - **Sentinel-driven exit (`exit_when` patterns).** Discussed and rejected for now in favor of explicit stop. Could be added as a parallel mechanism later without breaking this design.
 - **Cross-session resilience.** If the agent's session dies between `/start-sensor` and `/stop-sensor`, the subprocess and watcher continue running; `/list-sensors` from a new session can see them. There is no automatic adoption or signaling — the user manually `/stop-sensor`s. Adoption protocols (e.g. a daemon) are out of scope.
-- **Manual holder release.** If `held_by` contains a dead sensor (orchestrator crashed mid-run), there's no `/stop-sensor --force` or `--release-holder`. Workaround: edit `running_sensors.json` by hand. A force-flag is straightforward to add later.
+- **Forced stop (--force).** No sledgehammer flag that ignores `held_by` entirely. The narrower `--reap-dead-holders` is in scope; a blanket `--force` that kills A regardless of live holders is deferred and can be added later if real workflows demand it.
 - **Multi-host / multi-machine.** `.runtime/` is local-fs only. No remote registry.
 - **`detect-sensors` updates for blocking sensors.** Skill should learn to detect when an archetype implies a blocking sensor (dev server commands like `npm run dev`, `make watch`, `cargo watch`). Tracked separately.
 
 ## Migration
 
-- `execution.long_running` is removed without alias. Search confirmed no sensor in `sensors/` uses it; only the schema description and `lib/signal/aggregate.go` reference it. Plugin version bumps (`.claude-plugin/plugin.json`).
-- `lib/signal/aggregate.go::AggregateInput.LongRunning` → `Blocking`. All callers (`lib/orchestrator/lifecycle.go`, `lib/signal/aggregate_test.go`) updated in the same PR.
-- Existing sensors are unaffected (none used `long_running`). All current tests continue to pass.
+- `execution.long_running` is removed without alias. Plugin version bumps (`.claude-plugin/plugin.json`).
+- Reference inventory of `long_running` (verified by `grep -rn long_running`):
+  - `schemas/sensor.json` — field definition. **Removed.**
+  - `lib/signal/aggregate.go` — `LongRunning` field on `AggregateInput`. **Renamed to `Blocking`.**
+  - `lib/signal/aggregate_test.go` — test cases referencing `LongRunning`. **Renamed in lockstep.**
+  - `lib/orchestrator/lifecycle.go` — reads `execMap["long_running"]` (line 57) and writes `aggregateMD["long_running"]` (line 106). **Updated to `blocking`.**
+  - `skills/detect-sensors/SKILL.md` — five references (lines 52, 53, 102, 151, 179) including a sensor template that emits `"long_running": true`. **Rewritten to teach the new `blocking` model and the `/start-sensor` workflow.** Without this update, the detect-sensors skill would generate sensors that fail schema validation.
+  - `docs/superpowers/specs/2026-05-06-streaming-sensors-design.md` and `2026-05-08-sensor-dependencies-design.md` — historical references. **Left untouched** (specs reflect what was true at the time).
+- No sensor JSON file under `sensors/` uses `long_running` (verified). Existing sensors continue to validate without changes.
 - `/run-sensor` argument change (`<path>` → `<id>`) requires updating `skills/run-sensor/SKILL.md` and the two runner scripts. Path-style argument is removed in the same PR (consistent contract, no compatibility burden).
 
 ## Testing strategy
@@ -324,13 +374,17 @@ Deferred to follow-up specs. Each is a real concern but adds scope this design c
 
 ## Implementation sequence (suggested for the plan)
 
-1. `lib/registry/` (state, lock, liveness, held_by, paths) + tests.
-2. `lib/sensor/path.go::ResolveByID` + tests; update `/run-sensor` to use it (no schema change yet — feature-flagged on a `<id>` heuristic that detects path-style for backward compat during the PR).
-3. `lib/subprocess/detach.go` + `watcher.go` + tests.
-4. `skills/start-sensor/`, `skills/stop-sensor/`, `skills/tail-sensor/`, `skills/list-sensors/` + tests.
-5. Schema bump: rename `long_running` → `blocking`, add `graceful_timeout_ms`, narrow `cost.latency.timeout_ms` requirement. Schema validation tests updated.
-6. `lib/signal/aggregate.go` rename + callers.
-7. `lib/orchestrator/live_deps.go` + integration with `RunOne`.
-8. Update `/run-sensor` SKILL.md and scripts to refuse blocking sensors and to honor live deps.
-9. Fixture sensors + integration tests.
-10. Plugin version bump.
+Each step must compile and test in isolation; no step leaves the tree red.
+
+1. `lib/registry/` (state, lock, liveness, held_by, paths) + tests. Pure new code; no dependency on the rest.
+2. `lib/sensor/path.go::ResolveByID` + tests. Library addition only — `/run-sensor` is not modified yet.
+3. `lib/subprocess/detach.go` + tests. Pure new code.
+4. **Atomic step (must merge together):** schema rename `long_running` → `blocking`, `cost.latency.required` adjustment, new `allOf` branches for `blocking`, `graceful_timeout_ms` field; `lib/signal/aggregate.go::AggregateInput.LongRunning` → `Blocking`; `lib/signal/aggregate_test.go` updates; `lib/orchestrator/lifecycle.go` reads `execMap["blocking"]` instead of `execMap["long_running"]` and writes `aggregateMD["blocking"]`; `skills/detect-sensors/SKILL.md` rewritten to remove all `long_running` references and teach the `blocking` + `/start-sensor` model. After this step, `go test ./lib/... ./skills/...` is green and the schema validates only the new shape. No step before this one references `Blocking`; no step after this one references `LongRunning`.
+5. `skills/start-sensor/scripts/{start.go,start_test.go,watcher.go,watcher_test.go}` + `SKILL.md`. Build tags `start_sensor` and `start_watcher`.
+6. `skills/stop-sensor/scripts/{stop.go,stop_test.go}` + `SKILL.md`.
+7. `skills/tail-sensor/scripts/{tail.go,tail_test.go}` + `SKILL.md`.
+8. `skills/list-sensors/scripts/{list.go,list_test.go}` + `SKILL.md`.
+9. `lib/orchestrator/live_deps.go` + `RunOneWithLiveDeps` + tests. Reuses the start/stop helpers extracted from steps 5/6 (factored into `lib/registry/` and the orchestrator).
+10. `/run-sensor` argument change (`<path>` → `<id>`) and switch from `RunOne` to `RunOneWithLiveDeps`; refusal of blocking sensors. Update `skills/run-sensor/SKILL.md` and both runner scripts.
+11. Fixture sensors (`sensors/fixtures/blocking-echo-loop.json`, `sensors/fixtures/consumer-of-blocking.json`) + integration tests.
+12. `.gitignore` adds `.runtime/`. Plugin version bump in `.claude-plugin/plugin.json`.
