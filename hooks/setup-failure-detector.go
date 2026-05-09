@@ -1,10 +1,11 @@
 // hooks/setup-failure-detector.go
 //
-// Claude Code Stop hook that classifies the most-recent /run-sensor
-// aggregate Signal in the conversation transcript. On setup-shaped
-// failure, emits additionalContext on stdout instructing the LLM to
-// invoke /heal-sensor. On no-match (passing run, sensor-design
-// failure, already-healed-this-turn), prints nothing.
+// Claude Code Stop hook that classifies the most-recent
+// /run-sensor, /start-sensor, or /stop-sensor aggregate Signal in the
+// conversation transcript. On setup-shaped failure, emits
+// additionalContext on stdout instructing the LLM to invoke
+// /heal-sensor. On no-match (passing run, sensor-design failure,
+// already-healed-this-turn), prints nothing.
 //
 // Input (JSON on stdin):
 //
@@ -42,7 +43,14 @@ func main() {
 
 type hookInput struct {
 	TranscriptPath string `json:"transcript_path"`
+	Cwd            string `json:"cwd"`
 }
+
+// sensorCommands lists the slash commands whose failures the hook
+// classifies for self-healing. /tail-sensor and /list-sensors are
+// excluded — they are read-only and never produce setup-shaped
+// failures.
+var sensorCommands = []string{"/run-sensor", "/start-sensor", "/stop-sensor"}
 
 type transcriptEntry struct {
 	Type    string          `json:"type"`
@@ -66,7 +74,7 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	scan, ok := scanTranscript(in.TranscriptPath)
+	scan, ok := scanTranscript(in.TranscriptPath, in.Cwd)
 	if !ok {
 		return 0
 	}
@@ -89,20 +97,25 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 // scanResult bundles everything scanTranscript discovers about the most
-// recent /run-sensor failure that warrants heal: the Signal to classify
-// on, the sensor file path to target, whether heal already ran, and
-// (for cascades) which originally-requested sensor caused the chain.
+// recent sensor-command failure that warrants heal: the Signal to
+// classify on, the sensor file path to target, whether heal already
+// ran, the slash command that produced the failure, and (for cascades)
+// which originally-requested sensor caused the chain.
 type scanResult struct {
 	Signal              heal.Signal
 	SensorPath          string // path of the sensor whose Signal we classify
 	AlreadyHealed       bool
+	Command             string // "/run-sensor", "/start-sensor", or "/stop-sensor"
 	OriginalRequestedID string // requested sensor's id, when ≠ SensorPath's owner (cascade)
 }
 
 // scanTranscript walks the JSONL transcript backward, finds the most
-// recent /run-sensor aggregate Signal, and reports whether a
-// subsequent /heal-sensor invocation already happened in this turn.
-func scanTranscript(path string) (scanResult, bool) {
+// recent /run-sensor, /start-sensor, or /stop-sensor aggregate Signal,
+// and reports whether a subsequent /heal-sensor invocation already
+// happened in this turn. cwd is the user's working directory (passed
+// by Claude Code in the hook input) and is used to resolve bare
+// sensor ids to their on-disk paths.
+func scanTranscript(path, cwd string) (scanResult, bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		return scanResult{}, false
@@ -143,16 +156,22 @@ func scanTranscript(path string) (scanResult, bool) {
 		}
 		kind, _ := md["kind"].(string)
 
-		// Find the matching /run-sensor invocation in earlier entries.
-		// We always need it to derive sensors_dir (filepath.Dir).
-		originalSensorPath := findRunSensorTarget(entries[:i])
-		if originalSensorPath == "" {
+		// Find the matching sensor-command invocation in earlier
+		// entries. We always need it to derive sensors_dir
+		// (filepath.Dir) and to label which command failed.
+		invocation := findSensorInvocation(entries[:i], cwd)
+		if invocation.SensorPath == "" {
 			continue
 		}
+		originalSensorPath := invocation.SensorPath
 
 		var sensorPath, originalRequestedID string
 		switch kind {
-		case "aggregate":
+		case "aggregate", "start_failed":
+			// /run-sensor and /stop-sensor produce metadata.kind=aggregate;
+			// /start-sensor produces metadata.kind=start_failed when prepare,
+			// schema validation, or fork+exec fails before the sensor is
+			// registered. Both are candidates for setup-shape healing.
 			sensorPath = originalSensorPath
 		case "cascade":
 			// Walk backward through earlier JSONL lines in the same
@@ -177,6 +196,7 @@ func scanTranscript(path string) (scanResult, bool) {
 			Signal:              signalFromMap(sigMap),
 			SensorPath:          sensorPath,
 			AlreadyHealed:       anyHealAfter(entries[i+1:]),
+			Command:             invocation.Command,
 			OriginalRequestedID: originalRequestedID,
 		}, true
 	}
@@ -212,20 +232,74 @@ func findDepAggregate(lines []string, failedDepID string) (map[string]interface{
 }
 
 
-func findRunSensorTarget(entries []transcriptEntry) string {
-	// Walk backward: nearest user message containing "/run-sensor <path>".
+// sensorInvocation captures the most recent slash-command invocation
+// that may have produced a failing aggregate Signal: which command
+// (/run-sensor, /start-sensor, /stop-sensor) and the resolved sensor
+// file path.
+type sensorInvocation struct {
+	Command    string
+	SensorPath string
+}
+
+// findSensorInvocation walks the transcript backward and returns the
+// most recent /run-sensor, /start-sensor, or /stop-sensor invocation,
+// resolving its first non-flag argument to a sensor file path.
+//
+// Path-style arguments (containing "/" or "\", or starting with "@",
+// or ending in ".json") are returned with the leading "@" stripped.
+// Bare-id arguments (e.g., "watch-logs") are resolved against
+// <cwd>/sensors/<id>.json.
+func findSensorInvocation(entries []transcriptEntry, cwd string) sensorInvocation {
 	for i := len(entries) - 1; i >= 0; i-- {
 		content := contentText(entries[i].Content)
-		if strings.Contains(content, "/run-sensor ") {
+		for _, cmd := range sensorCommands {
+			if !strings.Contains(content, cmd+" ") {
+				continue
+			}
 			parts := strings.Fields(content)
 			for j, p := range parts {
-				if p == "/run-sensor" && j+1 < len(parts) {
-					return strings.TrimPrefix(parts[j+1], "@")
+				if p != cmd {
+					continue
+				}
+				arg := firstPositionalArg(parts[j+1:])
+				if arg == "" {
+					break
+				}
+				return sensorInvocation{
+					Command:    cmd,
+					SensorPath: resolveSensorTarget(arg, cwd),
 				}
 			}
 		}
 	}
+	return sensorInvocation{}
+}
+
+// firstPositionalArg returns the first element of parts that doesn't
+// start with "-" (i.e., is not a flag). Returns "" if none.
+func firstPositionalArg(parts []string) string {
+	for _, p := range parts {
+		if strings.HasPrefix(p, "-") {
+			continue
+		}
+		return p
+	}
 	return ""
+}
+
+// resolveSensorTarget converts a slash-command argument into an on-disk
+// path. Path-shaped inputs (containing separators, ending in .json, or
+// "@"-prefixed) pass through; bare ids are resolved to
+// <cwd>/sensors/<id>.json.
+func resolveSensorTarget(arg, cwd string) string {
+	arg = strings.TrimPrefix(arg, "@")
+	if strings.ContainsAny(arg, "/\\") || strings.HasSuffix(arg, ".json") {
+		return arg
+	}
+	if cwd == "" {
+		return arg // best-effort fallback; loadFailedSensorView will fail and the hook silently no-ops.
+	}
+	return filepath.Join(cwd, "sensors", arg+".json")
 }
 
 func anyHealAfter(entries []transcriptEntry) bool {
@@ -344,16 +418,20 @@ func loadFailedSensorView(path string) (heal.FailedSensor, error) {
 }
 
 func emitInjection(stdout io.Writer, scan scanResult, sensorID string, res heal.Result) {
+	cmd := scan.Command
+	if cmd == "" {
+		cmd = "/run-sensor"
+	}
 	var msg string
 	if scan.OriginalRequestedID != "" && scan.OriginalRequestedID != sensorID {
 		msg = fmt.Sprintf(
-			"The previous /run-sensor invocation for sensor %q failed because dep %q failed setup-shape (rule=%s, shape=%s, detail=%q). Invoke `/heal-sensor --signal-from=transcript --sensor=%s` to heal the dep before reporting the failure to the user.",
-			scan.OriginalRequestedID, sensorID, res.Rule, res.Shape, res.Detail, scan.SensorPath,
+			"The previous %s invocation for sensor %q failed because dep %q failed setup-shape (rule=%s, shape=%s, detail=%q). Invoke `/heal-sensor --signal-from=transcript --sensor=%s` to heal the dep before reporting the failure to the user.",
+			cmd, scan.OriginalRequestedID, sensorID, res.Rule, res.Shape, res.Detail, scan.SensorPath,
 		)
 	} else {
 		msg = fmt.Sprintf(
-			"The previous /run-sensor invocation for sensor %q produced a setup-shaped failure (rule=%s, shape=%s, detail=%q). Invoke `/heal-sensor --signal-from=transcript --sensor=%s` to attempt automatic recovery before reporting the failure to the user.",
-			sensorID, res.Rule, res.Shape, res.Detail, scan.SensorPath,
+			"The previous %s invocation for sensor %q produced a setup-shaped failure (rule=%s, shape=%s, detail=%q). Invoke `/heal-sensor --signal-from=transcript --sensor=%s` to attempt automatic recovery before reporting the failure to the user.",
+			cmd, sensorID, res.Rule, res.Shape, res.Detail, scan.SensorPath,
 		)
 	}
 	out := map[string]interface{}{

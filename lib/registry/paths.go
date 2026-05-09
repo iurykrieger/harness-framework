@@ -1,0 +1,49 @@
+// Package registry owns the .runtime/sensors/ directory layout, atomic
+// state-file writes, file locks, PID liveness checks, and held_by
+// refcount management for blocking-sensor runs.
+package registry
+
+import "path/filepath"
+
+// Root is the absolute path to a project's .runtime/sensors/ directory.
+// All registry helpers are methods on Root so tests can pivot to a temp
+// directory by constructing a Root around it.
+type Root struct {
+	projectRoot string
+}
+
+// NewRoot returns a Root anchored at <projectRoot>/.runtime/sensors/.
+func NewRoot(projectRoot string) Root {
+	return Root{projectRoot: projectRoot}
+}
+
+// SensorsDir is the directory holding running_sensors.json and per-sensor
+// subdirectories.
+func (r Root) SensorsDir() string {
+	return filepath.Join(r.projectRoot, ".runtime", "sensors")
+}
+
+// RegistryFile is the absolute path to running_sensors.json.
+func (r Root) RegistryFile() string {
+	return filepath.Join(r.SensorsDir(), "running_sensors.json")
+}
+
+// LockFile is the sibling lock used by WithFileLock.
+func (r Root) LockFile() string {
+	return filepath.Join(r.SensorsDir(), "running_sensors.lock")
+}
+
+// SensorDir returns the per-sensor directory under .runtime/sensors/<id>/.
+func (r Root) SensorDir(id string) string {
+	return filepath.Join(r.SensorsDir(), id)
+}
+
+// RawLog is the per-sensor raw subprocess output file.
+func (r Root) RawLog(id string) string {
+	return filepath.Join(r.SensorDir(id), "raw.log")
+}
+
+// SignalsLog is the per-sensor JSONL signals file written by the watcher.
+func (r Root) SignalsLog(id string) string {
+	return filepath.Join(r.SensorDir(id), "signals.log")
+}

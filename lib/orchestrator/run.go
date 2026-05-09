@@ -53,8 +53,32 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 	}
 
 	signals := map[string]map[string]interface{}{}
+	var liveStack []string
+
+	projectRoot := filepath.Dir(filepath.Dir(abs))
+
+	defer func() {
+		// Detach in reverse order. Even if RunWithDeps panics or returns
+		// early, blocking deps must come down.
+		for i := len(liveStack) - 1; i >= 0; i-- {
+			DetachLiveDep(liveStack[i], projectRoot, rootID, v, stdout, stderr)
+		}
+	}()
 
 	for _, s := range order {
+		execMap, _ := s.JSON["execution"].(map[string]interface{})
+		blocking, _ := execMap["blocking"].(bool)
+		if blocking && s.ID != rootID {
+			depID, err := AttachLiveDep(ctx, s, projectRoot, rootID, v, stdout, stderr)
+			if err != nil {
+				cascade := buildSimpleSignal(rootID, "error", "high", "dep_start_failed", err.Error())
+				_ = json.NewEncoder(stdout).Encode(cascade)
+				return 1
+			}
+			liveStack = append(liveStack, depID)
+			signals[s.ID] = map[string]interface{}{"verdict": "pass"}
+			continue
+		}
 		if blocker := FirstFailedDep(s, signals); blocker != nil {
 			cascade := BuildCascadeSignal(s, blocker)
 			if err := v.Validate(schema.TargetSignal, cascade); err != nil {

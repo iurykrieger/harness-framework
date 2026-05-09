@@ -37,10 +37,13 @@ import (
 const harnessConfidencePrefix = "HARNESS_AGGREGATE_CONFIDENCE="
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	cwd, _ := os.Getwd()
+	os.Exit(run(os.Args[1:], cwd, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+// run is the testable entry point. projectRoot is the directory from which
+// sensor ids are resolved (sensors/<id>.json); pass os.Getwd() for production.
+func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run-inferential", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var schemasDir string
@@ -52,7 +55,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(stderr, "usage: run-inferential [--schemas-dir=DIR] [--slot k=v]... <sensor-path>")
+		fmt.Fprintln(stderr, "usage: run-inferential [--schemas-dir=DIR] [--slot k=v]... <sensor-id>")
 		return 2
 	}
 
@@ -62,30 +65,52 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	sensorJSON, _, code := sensor.LoadAndValidateSensor(rest[0], schemasDir, stderr)
-	if code != 0 {
-		return code
-	}
-	if t, _ := sensorJSON["type"].(string); t != "inferential" {
-		fmt.Fprintf(stderr, "error: sensor.type=%q (run-inferential requires 'inferential')\n", t)
+	id := rest[0]
+
+	sensorAbsPath, err := sensor.ResolveByID(id, projectRoot)
+	if err != nil {
+		fmt.Fprintln(stderr, "error: resolve:", err)
 		return 2
 	}
-	output, _ := sensorJSON["output"].(string)
+
 	v, code := schema.LoadValidator(schemasDir, stderr)
 	if code != 0 {
 		return code
 	}
 
-	// Resolve depends_on graph. Run every dep via orchestrator.RunOne;
-	// the requested sensor itself goes through the inferential pipeline below.
-	cwd, _ := os.Getwd()
-	sensorAbsPath, err := sensor.ResolveSensorPath(rest[0], cwd)
-	if err != nil {
-		fmt.Fprintln(stderr, "error: resolve:", err)
+	var sensorJSON map[string]interface{}
+	if b, rerr := os.ReadFile(sensorAbsPath); rerr != nil {
+		fmt.Fprintln(stderr, "error: read:", rerr)
+		return 2
+	} else if jerr := json.Unmarshal(b, &sensorJSON); jerr != nil {
+		fmt.Fprintln(stderr, "error: parse:", jerr)
 		return 2
 	}
+	if err := v.Validate(schema.TargetSensor, sensorJSON); err != nil {
+		schema.PrintValidationOrPlain(err, stderr)
+		return 1
+	}
+
+	if t, _ := sensorJSON["type"].(string); t != "inferential" {
+		fmt.Fprintf(stderr, "error: sensor.type=%q (run-inferential requires 'inferential')\n", t)
+		return 2
+	}
+
+	execMapTop, _ := sensorJSON["execution"].(map[string]interface{})
+	if execMapTop != nil {
+		if blocking, _ := execMapTop["blocking"].(bool); blocking {
+			fmt.Fprintln(stderr, "error: sensor is blocking; use /start-sensor instead")
+			return 2
+		}
+	}
+
+	output, _ := sensorJSON["output"].(string)
+
+	// Resolve depends_on graph. Run every dep via orchestrator.RunOne;
+	// blocking deps are started/attached via AttachLiveDep and detached
+	// after the requested sensor completes.
 	sensorRoot := filepath.Dir(sensorAbsPath)
-	rootID := orchestrator.StripJSONExt(filepath.Base(sensorAbsPath))
+	rootID := id
 
 	order, err := orchestrator.Resolve(rootID, sensorRoot)
 	if err != nil {
@@ -93,11 +118,35 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	depSignals := map[string]map[string]interface{}{}
-	for _, dep := range order[:len(order)-1] {
-		if err := v.Validate(schema.TargetSensor, dep.JSON); err != nil {
+	// Validate every sensor in the graph before running anything.
+	for _, s := range order {
+		if err := v.Validate(schema.TargetSensor, s.JSON); err != nil {
 			schema.PrintValidationOrPlain(err, stderr)
 			return 1
+		}
+	}
+
+	depSignals := map[string]map[string]interface{}{}
+	var liveStack []string
+
+	defer func() {
+		for i := len(liveStack) - 1; i >= 0; i-- {
+			orchestrator.DetachLiveDep(liveStack[i], projectRoot, rootID, v, stdout, stderr)
+		}
+	}()
+
+	for _, dep := range order[:len(order)-1] {
+		depExecMap, _ := dep.JSON["execution"].(map[string]interface{})
+		blocking, _ := depExecMap["blocking"].(bool)
+		if blocking {
+			depID, aerr := orchestrator.AttachLiveDep(context.Background(), dep, projectRoot, rootID, v, stdout, stderr)
+			if aerr != nil {
+				fmt.Fprintln(stderr, "error: attach live dep:", aerr)
+				return 1
+			}
+			liveStack = append(liveStack, depID)
+			depSignals[dep.ID] = map[string]interface{}{"verdict": "pass"}
+			continue
 		}
 		if blocker := orchestrator.FirstFailedDep(dep, depSignals); blocker != nil {
 			cascade := orchestrator.BuildCascadeSignal(dep, blocker)

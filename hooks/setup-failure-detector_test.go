@@ -284,3 +284,186 @@ func TestHook_NoTranscriptPath_Exit2(t *testing.T) {
 		t.Fatalf("expected 2, got %d", code)
 	}
 }
+
+// writeBareIDTranscript writes a transcript that invokes <command> with
+// a BARE sensor id (the new contract after the blocking-sensors PR).
+// The hook must resolve the id against cwd/sensors/<id>.json. Returns
+// (transcriptPath, projectRoot).
+func writeBareIDTranscript(t *testing.T, command, sensorID string, signal map[string]interface{}, sensorJSON map[string]interface{}) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	sensorsDir := filepath.Join(dir, "sensors")
+	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sensorJSON["id"] = sensorID
+	sensorBytes, _ := json.Marshal(sensorJSON)
+	if err := os.WriteFile(filepath.Join(sensorsDir, sensorID+".json"), sensorBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sigBytes, _ := json.Marshal(signal)
+	transcript := []map[string]interface{}{
+		{"type": "user", "content": command + " " + sensorID},
+		{"type": "tool_result", "content": string(sigBytes)},
+	}
+	path := filepath.Join(dir, "transcript.jsonl")
+	f, _ := os.Create(path)
+	for _, e := range transcript {
+		b, _ := json.Marshal(e)
+		f.Write(b)
+		f.WriteString("\n")
+	}
+	f.Close()
+	return path, dir
+}
+
+func TestHook_StartSensor_BareID_EmitsInjection(t *testing.T) {
+	failingSignal := map[string]interface{}{
+		"sensor_id": "watch-logs",
+		"verdict":   "error",
+		"severity":  "high",
+		"evidence": []interface{}{
+			map[string]interface{}{"rationale": "Required environment variable RSA_PRIVATE_KEY not set"},
+		},
+		"metadata": map[string]interface{}{"kind": "start_failed"},
+	}
+	sensor := map[string]interface{}{
+		"requires": map[string]interface{}{
+			"env": []interface{}{
+				map[string]interface{}{"name": "RSA_PRIVATE_KEY"},
+			},
+		},
+	}
+	tPath, cwd := writeBareIDTranscript(t, "/start-sensor", "watch-logs", failingSignal, sensor)
+
+	var stdout, stderr bytes.Buffer
+	hookInput := []byte(`{"transcript_path":"` + tPath + `","cwd":"` + cwd + `"}`)
+	code := run(bytes.NewReader(hookInput), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "/heal-sensor") {
+		t.Fatalf("expected /heal-sensor injection; got %q", out)
+	}
+	if !strings.Contains(out, "/start-sensor") {
+		t.Fatalf("expected injection to mention /start-sensor (the failing command); got %q", out)
+	}
+	if !strings.Contains(out, "watch-logs") {
+		t.Fatalf("expected sensor id watch-logs in injection; got %q", out)
+	}
+	if !strings.Contains(out, filepath.Join(cwd, "sensors", "watch-logs.json")) {
+		t.Fatalf("expected resolved sensor path in injection; got %q", out)
+	}
+}
+
+func TestHook_StopSensor_BareID_EmitsInjection(t *testing.T) {
+	// /stop-sensor's aggregate, when the subprocess died from a missing-env
+	// failure during its run, should also trigger heal.
+	failingSignal := map[string]interface{}{
+		"sensor_id": "run-project",
+		"verdict":   "error",
+		"severity":  "high",
+		"evidence": []interface{}{
+			map[string]interface{}{"rationale": "Required environment variable DATABASE_URL not set"},
+		},
+		"metadata": map[string]interface{}{"kind": "aggregate"},
+	}
+	sensor := map[string]interface{}{
+		"requires": map[string]interface{}{
+			"env": []interface{}{
+				map[string]interface{}{"name": "DATABASE_URL"},
+			},
+		},
+	}
+	tPath, cwd := writeBareIDTranscript(t, "/stop-sensor", "run-project", failingSignal, sensor)
+
+	var stdout, stderr bytes.Buffer
+	hookInput := []byte(`{"transcript_path":"` + tPath + `","cwd":"` + cwd + `"}`)
+	code := run(bytes.NewReader(hookInput), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "/heal-sensor") {
+		t.Fatalf("expected /heal-sensor injection; got %q", out)
+	}
+	if !strings.Contains(out, "/stop-sensor") {
+		t.Fatalf("expected injection to mention /stop-sensor; got %q", out)
+	}
+	if !strings.Contains(out, "run-project") {
+		t.Fatalf("expected sensor id run-project in injection; got %q", out)
+	}
+}
+
+func TestHook_StopSensor_FlagBeforeID_ResolvesCorrectly(t *testing.T) {
+	// /stop-sensor accepts --reap-dead-holders. Some users write the
+	// flag BEFORE the id; the hook must still find the id. This guards
+	// against the trivial regression of taking parts[j+1] verbatim.
+	dir := t.TempDir()
+	sensorsDir := filepath.Join(dir, "sensors")
+	os.MkdirAll(sensorsDir, 0o755)
+	sensor := map[string]interface{}{
+		"id":       "my-sensor",
+		"requires": map[string]interface{}{"env": []interface{}{map[string]interface{}{"name": "FOO"}}},
+	}
+	sensorBytes, _ := json.Marshal(sensor)
+	os.WriteFile(filepath.Join(sensorsDir, "my-sensor.json"), sensorBytes, 0o644)
+
+	failingSignal := map[string]interface{}{
+		"sensor_id": "my-sensor",
+		"verdict":   "error", "severity": "high",
+		"evidence": []interface{}{map[string]interface{}{"rationale": "Required environment variable FOO not set"}},
+		"metadata": map[string]interface{}{"kind": "aggregate"},
+	}
+	sigBytes, _ := json.Marshal(failingSignal)
+
+	transcript := []map[string]interface{}{
+		{"type": "user", "content": "/stop-sensor --reap-dead-holders my-sensor"},
+		{"type": "tool_result", "content": string(sigBytes)},
+	}
+	path := filepath.Join(dir, "transcript.jsonl")
+	f, _ := os.Create(path)
+	for _, e := range transcript {
+		b, _ := json.Marshal(e)
+		f.Write(b)
+		f.WriteString("\n")
+	}
+	f.Close()
+
+	var stdout, stderr bytes.Buffer
+	hookInput := []byte(`{"transcript_path":"` + path + `","cwd":"` + dir + `"}`)
+	code := run(bytes.NewReader(hookInput), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "my-sensor") {
+		t.Fatalf("expected sensor id to be resolved past the --flag; got %q", out)
+	}
+}
+
+func TestHook_StartSensor_AlreadyRejected_NotSetupShape(t *testing.T) {
+	// /start-sensor's start_rejected (already running) is not
+	// setup-shaped — no rule should match, no injection.
+	rejectSignal := map[string]interface{}{
+		"sensor_id": "watch-logs",
+		"verdict":   "error",
+		"severity":  "high",
+		"evidence":  []interface{}{map[string]interface{}{"rationale": "sensor \"watch-logs\" already running with pid 12345"}},
+		"metadata":  map[string]interface{}{"kind": "start_rejected"},
+	}
+	sensor := map[string]interface{}{}
+	tPath, cwd := writeBareIDTranscript(t, "/start-sensor", "watch-logs", rejectSignal, sensor)
+
+	var stdout, stderr bytes.Buffer
+	hookInput := []byte(`{"transcript_path":"` + tPath + `","cwd":"` + cwd + `"}`)
+	code := run(bytes.NewReader(hookInput), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no injection for start_rejected; got %q", stdout.String())
+	}
+}

@@ -21,7 +21,7 @@ type AggregateInput struct {
 	StreamVerdict  string // from MaxStreamVerdict over individuals
 	StreamSeverity string
 	TimedOut       bool
-	LongRunning    bool // true for execution.long_running=true sensors
+	Blocking       bool // true for execution.blocking=true sensors
 }
 
 // AggregateResult is what goes into the aggregate Signal.
@@ -32,11 +32,11 @@ type AggregateResult struct {
 
 // Aggregate applies the worst-of-two rule.
 //
-// For one-shot sensors (LongRunning=false), timeout always forces
+// For one-shot sensors (Blocking=false), timeout always forces
 // verdict=error regardless of the inputs: the run is incomplete and the
 // tool's own notion of success cannot be trusted.
 //
-// For long-running sensors (LongRunning=true), timeout is the *intended*
+// For blocking sensors (Blocking=true), timeout is the *intended*
 // lifecycle — the runner deliberately terminates the process when its
 // observation window ends. In that case the exit side is treated as
 // pass/info and the aggregate is driven entirely by what the stream
@@ -48,11 +48,11 @@ type AggregateResult struct {
 // notion of success, while the stream verdict is reconstructed from
 // per-item parsing.
 func Aggregate(in AggregateInput) AggregateResult {
-	if in.TimedOut && !in.LongRunning {
+	if in.TimedOut && !in.Blocking {
 		return AggregateResult{Verdict: "error", Severity: "high"}
 	}
 	exitV, exitS := in.ExitVerdict, in.ExitSeverity
-	if in.TimedOut && in.LongRunning {
+	if in.TimedOut && in.Blocking {
 		exitV, exitS = "pass", "info"
 	}
 	if VerdictRank[in.StreamVerdict] > VerdictRank[exitV] {
