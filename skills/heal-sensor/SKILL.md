@@ -28,7 +28,7 @@ go run ./skills/heal-sensor/scripts/diagnose.go \
   --root=<project-root> > /tmp/heal-input.json
 ```
 
-The output contains: the failing Signal verbatim, the sensor JSON verbatim, the contents of README/CLAUDE/AGENTS/CONTRIBUTING (capped to 16 KB each), and the list of `.example` template files in the tree.
+The output contains: the failing Signal verbatim, the sensor JSON verbatim, the contents of README/CLAUDE/AGENTS/GEMINI/CONTRIBUTING (capped to 16 KB each), and the list of `.example` template files in the tree.
 
 ### 2. Build the Setup Plan
 
@@ -84,7 +84,7 @@ Inspect `/tmp/heal-apply.json`. For each result with `needs_input: true`:
 4. Edit the Plan: set the `value` field on the matching auto_apply item to the user's answer; remove `value_source`.
 5. Re-run `apply-safe.go` against the patched Plan — it will write the line via `WriteEnvVar` (chmod 600).
 
-If the user cancels or returns empty: skip step 6, jump to step 7, surface remediation explaining the cancellation.
+If the user cancels or returns empty: skip step 5 (retry), jump to step 6 (surface remediation) explaining the cancellation.
 
 ### 4. Apply sensor mutations
 
