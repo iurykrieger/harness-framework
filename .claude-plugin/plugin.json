@@ -1,7 +1,7 @@
 {
   "name": "harness-framework",
-  "version": "0.3.0",
-  "description": "Empty Claude Code plugin scaffold",
+  "version": "0.4.0",
+  "description": "Sensor harness for AI coding agents",
   "author": {
     "name": "Iury Krieger",
     "email": "iury.krieger@stone.com.br",
@@ -10,5 +10,18 @@
   "homepage": "https://github.com/iurykrieger/harness-framework",
   "repository": "https://github.com/iurykrieger/harness-framework",
   "license": "MIT",
-  "keywords": ["claude-code", "plugin"]
+  "keywords": ["claude-code", "plugin"],
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "go run ${CLAUDE_PLUGIN_ROOT}/hooks/setup-failure-detector.go"
+          }
+        ]
+      }
+    ]
+  }
 }
