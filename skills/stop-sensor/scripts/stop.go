@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/schema"
 	libsensor "github.com/iurykrieger/harness-framework/lib/sensor"
 	libsignal "github.com/iurykrieger/harness-framework/lib/signal"
 )
@@ -47,6 +48,12 @@ func runStop(projectRoot string, args []string, reap bool) (int, map[string]inte
 		return 2, simpleSignal("stop", "warn", "low", "stop_not_running", "missing sensor id")
 	}
 	id := args[0]
+
+	v, code := schema.LoadValidator("", os.Stderr)
+	if code != 0 {
+		return code, simpleSignal(id, "error", "high", "stop_failed", "schema validator init failed")
+	}
+
 	r := registry.NewRoot(projectRoot)
 
 	var entry *registry.RunningSensorEntry
@@ -69,11 +76,11 @@ func runStop(projectRoot string, args []string, reap bool) (int, map[string]inte
 		// doesn't leave a stale "manual" hold.
 		return registry.Save(r, rs)
 	}); err != nil {
-		return 1, simpleSignal(id, "error", "high", "stop_failed", fmt.Sprintf("registry: %v", err))
+		return 1, validateSignal(v, simpleSignal(id, "error", "high", "stop_failed", fmt.Sprintf("registry: %v", err)), id)
 	}
 
 	if entry == nil {
-		return 0, simpleSignal(id, "warn", "low", "stop_not_running", fmt.Sprintf("no live entry for %q", id))
+		return 0, validateSignal(v, simpleSignal(id, "warn", "low", "stop_not_running", fmt.Sprintf("no live entry for %q", id)), id)
 	}
 
 	if registry.IsHeld(entry) {
@@ -87,7 +94,7 @@ func runStop(projectRoot string, args []string, reap bool) (int, map[string]inte
 		if len(reaped) > 0 {
 			md["reaped_holders"] = holderSummaries(reaped)
 		}
-		return 0, sig
+		return 0, validateSignal(v, sig, id)
 	}
 
 	// We are clear to stop. Send SIGTERM to the process group.
@@ -121,9 +128,9 @@ func runStop(projectRoot string, args []string, reap bool) (int, map[string]inte
 		rs.RemoveEntry(id)
 		return registry.Save(r, rs)
 	}); err != nil {
-		return 1, simpleSignal(id, "error", "high", "stop_failed", fmt.Sprintf("registry: %v", err))
+		return 1, validateSignal(v, simpleSignal(id, "error", "high", "stop_failed", fmt.Sprintf("registry: %v", err)), id)
 	}
-	return 0, sig
+	return 0, validateSignal(v, sig, id)
 }
 
 func terminateWithGrace(pgid int, gracefulMS int) bool {
@@ -305,6 +312,30 @@ func stringField(m map[string]interface{}, k string) string {
 	}
 	v, _ := m[k].(string)
 	return v
+}
+
+func validateSignal(v *schema.Validator, sig map[string]interface{}, id string) map[string]interface{} {
+	if v == nil {
+		return sig
+	}
+	if err := v.Validate(schema.TargetSignal, sig); err != nil {
+		fmt.Fprintf(os.Stderr, "stop: BUG: emitted signal failed signal.json validation: %v\n", err)
+		now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		return map[string]interface{}{
+			"sensor_id":   id,
+			"version":     "0.0.0",
+			"run_id":      uuid.NewString(),
+			"started_at":  now,
+			"finished_at": now,
+			"verdict":     "error",
+			"severity":    "high",
+			"confidence":  1.0,
+			"evidence":    []interface{}{map[string]interface{}{"rationale": fmt.Sprintf("signal_validation_failed: %v", err)}},
+			"cost_actual": map[string]interface{}{"latency_ms": 0},
+			"metadata":    map[string]interface{}{"kind": "signal_validation_failed"},
+		}
+	}
+	return sig
 }
 
 func simpleSignal(id, verdict, severity, kind, rationale string) map[string]interface{} {
