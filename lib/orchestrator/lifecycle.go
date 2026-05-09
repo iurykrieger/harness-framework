@@ -5,12 +5,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
+	"github.com/iurykrieger/harness-framework/lib/heal"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
 	"github.com/iurykrieger/harness-framework/lib/subprocess"
 )
+
+// healHintExcerptCap bounds the length of the detail portion of a
+// metadata.heal_hint string. Keeps the metadata block small while
+// retaining enough context for human inspection. ~120 chars matches
+// the spec's recommendation for setup-shape heal_hint emission.
+const healHintExcerptCap = 120
 
 // RunOne executes a single sensor's full lifecycle:
 //
@@ -104,6 +112,16 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 		}
 		if longRunning {
 			aggregateMD["long_running"] = true
+		}
+		// Single-mode setup-shape heuristic: when the command failed
+		// and stderr matches a curated heal pattern, surface a
+		// metadata.heal_hint = "<shape>:<excerpt>" so the heal
+		// classifier's fast path (rule_heal_hint) can fire.
+		// Stream-mode failures already surface evidence rationales
+		// that rule_stderr_pattern matches against, so we skip them
+		// here to avoid double-classification noise.
+		if hint, ok := buildHealHint(output, aggVerdict, res.StderrExcerpt); ok {
+			aggregateMD["heal_hint"] = hint
 		}
 	}
 
@@ -237,6 +255,56 @@ func buildLifecycleEvidence(prep, td []interface{}) []interface{} {
 		}
 	}
 	return out
+}
+
+// buildHealHint synthesises a metadata.heal_hint = "<shape>:<excerpt>"
+// string when the conditions for emission are met:
+//
+//   - sensor.output == "single" (stream-mode aggregates already carry
+//     evidence rationales the classifier matches against)
+//   - aggregate verdict is fail or error
+//   - stderr is non-empty and matches a curated heal pattern
+//
+// excerpt is the first non-empty stderr line that matched, truncated
+// to healHintExcerptCap to keep the metadata block compact.
+func buildHealHint(output, verdict, stderrText string) (string, bool) {
+	if output != "single" {
+		return "", false
+	}
+	if verdict != "fail" && verdict != "error" {
+		return "", false
+	}
+	if stderrText == "" {
+		return "", false
+	}
+	shape, ok := heal.MatchStderrPattern(stderrText)
+	if !ok {
+		return "", false
+	}
+	excerpt := firstMatchingLine(stderrText)
+	if excerpt == "" {
+		excerpt = strings.TrimSpace(stderrText)
+	}
+	if len(excerpt) > healHintExcerptCap {
+		excerpt = excerpt[:healHintExcerptCap]
+	}
+	return string(shape) + ":" + excerpt, true
+}
+
+// firstMatchingLine returns the first non-empty stderr line that
+// matches a curated heal pattern. Falls back to "" when no individual
+// line matches (caller will use the trimmed full text).
+func firstMatchingLine(stderrText string) string {
+	for _, line := range strings.Split(stderrText, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if _, ok := heal.MatchStderrPattern(line); ok {
+			return line
+		}
+	}
+	return ""
 }
 
 func readEnvMap(execMap map[string]interface{}) map[string]string {

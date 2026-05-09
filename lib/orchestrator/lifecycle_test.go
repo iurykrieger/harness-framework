@@ -145,6 +145,88 @@ func TestRunOne_TeardownRunsAfterCommandFail(t *testing.T) {
 	}
 }
 
+func TestRunOne_HealHintEmittedOnStderrPattern(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	v, _ := schema.NewValidator(schemasDir)
+	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	exec := js["execution"].(map[string]interface{})
+	// Single-mode failure whose stderr matches the env-file-absent
+	// curated heal pattern. The orchestrator must surface
+	// metadata.heal_hint = "env-file-absent:<excerpt>" so the heal
+	// classifier's fast path can fire.
+	exec["command"] = "echo 'open .env: ENOENT no such file or directory' >&2; exit 1"
+	s := Sensor{ID: js["id"].(string), JSON: js}
+
+	var out, errBuf bytes.Buffer
+	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
+	}
+	if sig["verdict"] != "fail" {
+		t.Fatalf("expected verdict=fail, got %v", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	hint, ok := md["heal_hint"].(string)
+	if !ok {
+		t.Fatalf("expected metadata.heal_hint to be set; metadata=%v", md)
+	}
+	if !strings.HasPrefix(hint, "env-file-absent:") {
+		t.Fatalf("heal_hint = %q, want prefix %q", hint, "env-file-absent:")
+	}
+	if len(hint) > 120+len("env-file-absent:")+1 {
+		t.Fatalf("heal_hint excerpt should be truncated to ~120 chars, got %d: %q", len(hint), hint)
+	}
+}
+
+func TestRunOne_HealHintAbsentOnBenignFailure(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	v, _ := schema.NewValidator(schemasDir)
+	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	exec := js["execution"].(map[string]interface{})
+	// Single-mode failure with stderr that does NOT match any curated
+	// heal pattern. metadata.heal_hint MUST be absent — emitting it on
+	// generic failures would poison the classifier.
+	exec["command"] = "echo 'some unrelated error message' >&2; exit 1"
+	s := Sensor{ID: js["id"].(string), JSON: js}
+
+	var out, errBuf bytes.Buffer
+	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
+	}
+	if sig["verdict"] != "fail" {
+		t.Fatalf("expected verdict=fail, got %v", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if _, ok := md["heal_hint"]; ok {
+		t.Fatalf("metadata.heal_hint should be absent on benign stderr; metadata=%v", md)
+	}
+}
+
+func TestRunOne_HealHintAbsentOnPassingCommand(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	v, _ := schema.NewValidator(schemasDir)
+	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	exec := js["execution"].(map[string]interface{})
+	// Even when stderr would match a heal pattern, a passing command
+	// must NOT emit heal_hint — there is nothing to heal.
+	exec["command"] = "echo 'open .env: ENOENT no such file' >&2; exit 0"
+	s := Sensor{ID: js["id"].(string), JSON: js}
+
+	var out, errBuf bytes.Buffer
+	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
+	}
+	if sig["verdict"] != "pass" {
+		t.Fatalf("expected verdict=pass, got %v", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if _, ok := md["heal_hint"]; ok {
+		t.Fatalf("metadata.heal_hint should be absent on pass; metadata=%v", md)
+	}
+}
+
 // The aggregate Signal emitted on stdout is valid JSON and the LAST line.
 func TestRunOne_OutputIsValidJSON(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
