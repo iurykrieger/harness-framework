@@ -81,7 +81,7 @@ Both cases share root cause: there is no mechanism that turns a setup-shaped fai
 
 ### Setup Plan contract (`lib/heal/plan.go`)
 
-Internal contract — not exposed via `schemas/`. The plan is the structured handoff between `diagnose.go` (LLM-flavored, runs an inferential sensor or directly prompts the calling agent) and `apply.go` / `persist.go` (deterministic).
+Internal contract — not exposed via `schemas/`. The plan is the structured handoff between `diagnose.go` (LLM-flavored, runs an inferential sensor or directly prompts the calling agent) and the deterministic appliers (`apply.go` for file-system mutations, `apply-sensors.go` + `lib/sensor.ValidateAndPersist` for sensor mutations).
 
 ```jsonc
 {
@@ -173,7 +173,7 @@ type Rule interface {
 func Classify(signal Signal, failed FailedSensor) (Result, bool) { ... }
 ```
 
-`Shape` is a closed Go enum (`ShapeMissingEnv`, `ShapeBinaryNotFound`, `ShapeEnvFileAbsent`, `ShapeServiceUnavailable`, ...). Adding a shape is a typed constant addition + accompanying rule(s); both are localised changes.
+`Shape` and `FailedSensor` are types defined in `lib/heal/classify.go` alongside the `Rule` interface (`Shape` is a closed Go enum: `ShapeMissingEnv`, `ShapeBinaryNotFound`, `ShapeEnvFileAbsent`, `ShapeServiceUnavailable`, ...; `FailedSensor` is a thin struct exposing the failed sensor's `id`, `requires.env`, `requires.tools`, and `requires.context` — the only fields any rule needs). Adding a shape is a typed constant addition + accompanying rule(s); both are localised changes.
 
 #### The registrar (`lib/heal/rules.go`)
 
