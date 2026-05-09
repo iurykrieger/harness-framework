@@ -223,6 +223,60 @@ func TestHook_CascadeFromFailedDep_TargetsDep(t *testing.T) {
 	}
 }
 
+func TestHook_ContentArrayForm_StillParses(t *testing.T) {
+	// Real Claude Code transcripts may serialize tool_result.content
+	// as an array of {type, text} content blocks. The hook must still
+	// extract the JSONL aggregate.
+	dir := t.TempDir()
+
+	failingSignal := map[string]interface{}{
+		"sensor_id": "run-x",
+		"verdict":   "error",
+		"severity":  "high",
+		"evidence": []interface{}{
+			map[string]interface{}{"rationale": "Required environment variable FOO not set"},
+		},
+		"metadata": map[string]interface{}{"kind": "aggregate"},
+	}
+	sensor := map[string]interface{}{
+		"id":       "run-x",
+		"requires": map[string]interface{}{"env": []interface{}{map[string]interface{}{"name": "FOO"}}},
+	}
+
+	sigBytes, _ := json.Marshal(failingSignal)
+	sensorBytes, _ := json.Marshal(sensor)
+	sensorPath := filepath.Join(dir, "broken.json")
+	os.WriteFile(sensorPath, sensorBytes, 0o644)
+
+	// The user message also uses content-block form to ensure
+	// findRunSensorTarget tolerates both shapes.
+	transcript := []map[string]interface{}{
+		{"type": "user", "content": []map[string]interface{}{{"type": "text", "text": "/run-sensor " + sensorPath}}},
+		{"type": "tool_result", "content": []map[string]interface{}{{"type": "text", "text": string(sigBytes)}}},
+	}
+	path := filepath.Join(dir, "transcript.jsonl")
+	f, _ := os.Create(path)
+	for _, e := range transcript {
+		b, _ := json.Marshal(e)
+		f.Write(b)
+		f.WriteString("\n")
+	}
+	f.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run(bytes.NewReader([]byte(`{"transcript_path":"`+path+`"}`)), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "/heal-sensor") {
+		t.Fatalf("expected injection from content-block form; got %q", out)
+	}
+	if !strings.Contains(out, "run-x") {
+		t.Fatalf("expected sensor id in injection; got %q", out)
+	}
+}
+
 func TestHook_NoTranscriptPath_Exit2(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run(bytes.NewReader([]byte(`{}`)), &stdout, &stderr)

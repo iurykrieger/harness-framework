@@ -128,8 +128,7 @@ func scanTranscript(path string) (scanResult, bool) {
 		if e.Type != "tool_result" {
 			continue
 		}
-		var content string
-		_ = json.Unmarshal(e.Content, &content)
+		content := contentText(e.Content)
 		if content == "" {
 			continue
 		}
@@ -216,8 +215,7 @@ func findDepAggregate(lines []string, failedDepID string) (map[string]interface{
 func findRunSensorTarget(entries []transcriptEntry) string {
 	// Walk backward: nearest user message containing "/run-sensor <path>".
 	for i := len(entries) - 1; i >= 0; i-- {
-		var content string
-		_ = json.Unmarshal(entries[i].Content, &content)
+		content := contentText(entries[i].Content)
 		if strings.Contains(content, "/run-sensor ") {
 			parts := strings.Fields(content)
 			for j, p := range parts {
@@ -232,13 +230,37 @@ func findRunSensorTarget(entries []transcriptEntry) string {
 
 func anyHealAfter(entries []transcriptEntry) bool {
 	for _, e := range entries {
-		var content string
-		_ = json.Unmarshal(e.Content, &content)
-		if strings.Contains(content, "/heal-sensor") {
+		if strings.Contains(contentText(e.Content), "/heal-sensor") {
 			return true
 		}
 	}
 	return false
+}
+
+// contentText extracts text from a Claude Code transcript entry's
+// content field, which may serialize as either a plain JSON string or
+// an array of {type, text, ...} content blocks.
+func contentText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil && s != "" {
+		return s
+	}
+	var arr []map[string]interface{}
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		var b strings.Builder
+		for _, item := range arr {
+			if item["type"] == "text" {
+				if t, ok := item["text"].(string); ok {
+					b.WriteString(t)
+				}
+			}
+		}
+		return b.String()
+	}
+	return ""
 }
 
 func signalFromMap(m map[string]interface{}) heal.Signal {
