@@ -30,7 +30,7 @@ func RunWithDepsRoot(ctx context.Context, id, projectRoot, schemasDir string, st
 // AttachLiveDep starts (or attaches to) a blocking dep. Emits a
 // `dep_attached` or `dep_started` Signal on stdout. Returns the dep id
 // so the caller can stack it for detach.
-func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string, stdout, stderr io.Writer) (string, error) {
+func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string, v *schema.Validator, stdout, stderr io.Writer) (string, error) {
 	r := registry.NewRoot(projectRoot)
 	holderPID := os.Getpid()
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
@@ -58,14 +58,16 @@ func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string
 	if startedFresh {
 		kind = "dep_started"
 	}
-	_ = json.NewEncoder(stdout).Encode(buildSimpleSignal(dep.ID, "pass", "info", kind, fmt.Sprintf("blocking dep %q held by %q", dep.ID, holderID)))
+	sig := buildSimpleSignal(dep.ID, "pass", "info", kind, fmt.Sprintf("blocking dep %q held by %q", dep.ID, holderID))
+	sig = validateOrFallback(v, sig, dep.ID, stderr)
+	_ = json.NewEncoder(stdout).Encode(sig)
 	return dep.ID, nil
 }
 
 // DetachLiveDep removes the holder from dep's HeldBy. If HeldBy becomes
 // empty, the dep is stopped (SIGTERM/SIGKILL, registry cleanup) and an
 // aggregate Signal is emitted on stdout. Otherwise emits dep_detached.
-func DetachLiveDep(depID, projectRoot, holderID string, stdout, stderr io.Writer) {
+func DetachLiveDep(depID, projectRoot, holderID string, v *schema.Validator, stdout, stderr io.Writer) {
 	r := registry.NewRoot(projectRoot)
 	var entry *registry.RunningSensorEntry
 	stopNow := false
@@ -91,10 +93,12 @@ func DetachLiveDep(depID, projectRoot, holderID string, stdout, stderr io.Writer
 		return
 	}
 	if !stopNow {
-		_ = json.NewEncoder(stdout).Encode(buildSimpleSignal(depID, "pass", "info", "dep_detached", fmt.Sprintf("blocking dep %q remains held", depID)))
+		sig := buildSimpleSignal(depID, "pass", "info", "dep_detached", fmt.Sprintf("blocking dep %q remains held", depID))
+		sig = validateOrFallback(v, sig, depID, stderr)
+		_ = json.NewEncoder(stdout).Encode(sig)
 		return
 	}
-	stopBlockingDep(r, entry, stdout, stderr)
+	stopBlockingDep(r, entry, v, stdout, stderr)
 }
 
 // startBlockingDep is called from AttachLiveDep under flock. It spawns
@@ -136,7 +140,7 @@ func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, 
 
 // stopBlockingDep terminates the dep's process group and removes its
 // registry entry. Emits an aggregate Signal on stdout.
-func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, stdout, stderr io.Writer) {
+func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, v *schema.Validator, stdout, stderr io.Writer) {
 	gracefulMS := 5000
 	if entry.PGID > 0 {
 		_ = syscall.Kill(-entry.PGID, syscall.SIGTERM)
@@ -173,6 +177,7 @@ func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, stdout
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
 		"metadata":    map[string]interface{}{"kind": "aggregate", "command": entry.Command, "output_mode": "stream", "counts": map[string]int{"pass": 0, "warn": 0, "fail": 0, "error": 0}},
 	}
+	agg = validateOrFallback(v, agg, entry.SensorID, stderr)
 	_ = json.NewEncoder(stdout).Encode(agg)
 }
 
@@ -193,5 +198,29 @@ func buildSimpleSignal(id, verdict, severity, kind, rationale string) map[string
 	}
 }
 
-// avoid unused import (schema is referenced in updated run.go)
-var _ = schema.TargetSensor
+// validateOrFallback validates a signal and falls back to a minimal valid
+// emergency signal on failure. This ensures orchestrator-emitted signals
+// always conform to schemas/signal.json.
+func validateOrFallback(v *schema.Validator, sig map[string]interface{}, id string, stderr io.Writer) map[string]interface{} {
+	if v == nil {
+		return sig
+	}
+	if err := v.Validate(schema.TargetSignal, sig); err != nil {
+		fmt.Fprintf(stderr, "orchestrator: emitted signal failed validation: %v\n", err)
+		now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		return map[string]interface{}{
+			"sensor_id":   id,
+			"version":     "0.0.0",
+			"run_id":      uuid.NewString(),
+			"started_at":  now,
+			"finished_at": now,
+			"verdict":     "error",
+			"severity":    "high",
+			"confidence":  1.0,
+			"evidence":    []interface{}{map[string]interface{}{"rationale": fmt.Sprintf("emitted signal invalid: %v", err)}},
+			"cost_actual": map[string]interface{}{"latency_ms": 0},
+			"metadata":    map[string]interface{}{"kind": "signal_validation_failed"},
+		}
+	}
+	return sig
+}
