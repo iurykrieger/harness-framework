@@ -4,6 +4,7 @@ package heal_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/heal"
@@ -37,8 +38,11 @@ func TestApply_CopyTemplate_DstAlreadyExists(t *testing.T) {
 	results := heal.Apply(heal.ApplyContext{Root: dir, FailedSensor: heal.FailedSensor{Context: []string{dir}}}, []heal.Action{
 		{Kind: "copy-template", Src: src, Dst: dst},
 	})
-	if results[0].Applied {
-		t.Fatal("dst exists; must NOT auto-apply")
+	if !results[0].Applied {
+		t.Fatalf("dst exists; must report idempotent success (Applied=true); got %#v", results[0])
+	}
+	if results[0].Reason == "" || !strings.Contains(results[0].Reason, "idempotent") {
+		t.Fatalf("expected Reason to mention idempotency; got %q", results[0].Reason)
 	}
 	body, _ := os.ReadFile(dst)
 	if string(body) != "EXISTING=true\n" {

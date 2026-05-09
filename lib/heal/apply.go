@@ -64,7 +64,7 @@ func applyCopyTemplate(a Action) ApplyResult {
 		return ApplyResult{Action: a, Reason: "src does not exist"}
 	}
 	if _, err := os.Stat(a.Dst); err == nil {
-		return ApplyResult{Action: a, Reason: "dst already exists"}
+		return ApplyResult{Action: a, Applied: true, Reason: "dst already in place (idempotent)"}
 	}
 	body, err := os.ReadFile(a.Src)
 	if err != nil {
