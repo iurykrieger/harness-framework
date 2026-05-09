@@ -1,0 +1,36 @@
+{
+  "id": "consumer-of-blocking",
+  "version": "1.0.0",
+  "name": "Consumer of blocking-echo-loop",
+  "description": "Test fixture: depends on blocking-echo-loop; runs a single echo and asserts SMOKE_OK. Used to verify orchestrator attach/detach.",
+  "determinism": "high",
+  "kind": "assertion",
+  "type": "computational",
+  "output": "stream",
+  "regulation": "behaviour",
+  "phase": "on-demand",
+  "triggers": [{"on": "manual"}],
+  "verification": {
+    "golden_cases": [
+      {"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}
+    ]
+  },
+  "depends_on": ["blocking-echo-loop"],
+  "cost": {
+    "class": "cheap",
+    "compute": {"cpu": "low", "memory_mb": 16},
+    "latency": {"p50_ms": 10, "p95_ms": 50, "timeout_ms": 2000}
+  },
+  "execution": {
+    "command": "echo SMOKE_OK",
+    "exit_code_map": [
+      {"exit_code": 0, "verdict": "pass", "severity": "info"},
+      {"exit_code": "*", "verdict": "fail", "severity": "high"}
+    ],
+    "output_parsing": {
+      "patterns": [
+        {"regex": "SMOKE_OK", "verdict": "pass", "severity": "info"}
+      ]
+    }
+  }
+}
