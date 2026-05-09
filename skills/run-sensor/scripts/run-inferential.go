@@ -135,7 +135,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if missing := sensor.CheckRequiredEnv(sensorJSON); len(missing) > 0 {
-		sig := sensor.BuildErrorSignal(envelope, output, missingEnvRationale(missing), missingEnvRemediation(missing))
+		sig := sensor.BuildMissingEnvSignal(envelope, output, missing)
 		if err := v.Validate(schema.TargetSignal, sig); err != nil {
 			schema.PrintValidationOrPlain(err, stderr)
 			return 1
@@ -301,27 +301,6 @@ func buildAggregateSignal(env sensor.Envelope, res subprocess.StreamResult, filt
 		"cost_actual": map[string]interface{}{"latency_ms": res.ElapsedMS},
 		"metadata":    md,
 	}
-}
-
-func missingEnvRationale(missing []sensor.MissingEnv) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Sensor cannot run: %d required env var(s) missing from the runner's environment.\n", len(missing))
-	for _, m := range missing {
-		if m.Description != "" {
-			fmt.Fprintf(&b, "  - %s — %s\n", m.Name, m.Description)
-		} else {
-			fmt.Fprintf(&b, "  - %s\n", m.Name)
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-func missingEnvRemediation(missing []sensor.MissingEnv) string {
-	names := make([]string, 0, len(missing))
-	for _, m := range missing {
-		names = append(names, m.Name)
-	}
-	return "Set the following env var(s) before invoking /run-sensor: " + strings.Join(names, ", ") + ". Source them from your shell, a .env file, or the secret manager backing this project."
 }
 
 // defaultInferentialExit is the fallback exit-code mapping used when the
