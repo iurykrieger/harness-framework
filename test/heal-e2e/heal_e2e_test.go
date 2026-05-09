@@ -26,10 +26,12 @@ func TestHealE2E_MissingEnvFile_HealAndRetry(t *testing.T) {
 		t.Skip("go not in PATH")
 	}
 	root := setupFixtureProject(t)
-	sensorPath := filepath.Join(root, "sensors", "run-needs-env.json")
+	sensorID := "run-needs-env"
+	sensorPath := filepath.Join(root, "sensors", sensorID+".json")
+	bin := buildRunSensor(t, root)
 
 	// 1) First run: must fail with .env missing.
-	out1, _ := runSensor(t, root, sensorPath)
+	out1, _ := runSensor(t, root, bin, sensorID)
 	agg1 := lastJSONL(t, out1)
 	if agg1["verdict"] == "pass" {
 		t.Fatalf("expected first run to fail; got %v", agg1)
@@ -57,16 +59,30 @@ func TestHealE2E_MissingEnvFile_HealAndRetry(t *testing.T) {
 	}
 
 	// 4) Retry — must pass.
-	out2, _ := runSensor(t, root, sensorPath)
+	out2, _ := runSensor(t, root, bin, sensorID)
 	agg2 := lastJSONL(t, out2)
 	if agg2["verdict"] != "pass" {
 		t.Fatalf("expected retry to pass; got %v", agg2)
 	}
 }
 
+// setupFixtureProject creates a project under the repo root so the
+// runner's schema discovery (which walks up from cwd) can find
+// schemas/ via the parent directory. Tempdirs under /tmp would
+// require copying or symlinking schemas/ in.
 func setupFixtureProject(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	repo := repoRoot(t)
+	scratch := filepath.Join(repo, ".test-tmp")
+	if err := os.MkdirAll(scratch, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.MkdirTemp(scratch, "heal-e2e-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+
 	// Minimal .env.example with the var the sensor's command reads.
 	os.WriteFile(filepath.Join(root, ".env.example"), []byte("RSA_PRIVATE_KEY=stub-key\n"), 0o644)
 	os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".env\n"), 0o644)
@@ -87,10 +103,26 @@ func setupFixtureProject(t *testing.T) string {
 	return root
 }
 
-func runSensor(t *testing.T, root, sensorPath string) (string, string) {
+// buildRunSensor compiles the run-computational binary into the
+// fixture project so we can exec it with cmd.Dir = root (where the
+// runner's os.Getwd() must equal the projectRoot for ResolveByID to
+// find sensors/<id>.json). Returns the absolute path to the binary.
+func buildRunSensor(t *testing.T, root string) string {
 	t.Helper()
-	cmd := exec.Command("go", "run", "-tags=run_computational", "./skills/run-sensor/scripts", sensorPath)
+	bin := filepath.Join(root, "run-sensor")
+	cmd := exec.Command("go", "build", "-tags=run_computational", "-o", bin, "./skills/run-sensor/scripts")
 	cmd.Dir = repoRoot(t)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build run-sensor: %v\n%s", err, out)
+	}
+	return bin
+}
+
+func runSensor(t *testing.T, root, bin, sensorID string) (string, string) {
+	t.Helper()
+	cmd := exec.Command(bin, sensorID)
+	cmd.Dir = root // projectRoot for ResolveByID; schema discovery walks up to repo root.
 	cmd.Env = append(os.Environ(), "HARNESS_FIXTURE_ROOT="+root)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
