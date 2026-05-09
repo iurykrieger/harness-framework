@@ -1,6 +1,6 @@
 ---
 name: run-sensor
-description: Use when the user invokes /run-sensor or asks to run a harness sensor. Takes a path to a sensor JSON file (e.g. `@sensors/<id>.json`). Reads `sensor.type` (computational|inferential) and `sensor.output` (single|stream). For both types, the runner spawns the sensor's `execution.command` as a subprocess. In `stream` mode it emits one Signal per matched output line plus a final aggregate Signal as the LAST JSONL line; in `single` mode it emits exactly one aggregate Signal.
+description: Use when the user invokes /run-sensor or asks to run a harness sensor. Takes a sensor id (e.g. `my-sensor`). Reads `sensor.type` (computational|inferential) and `sensor.output` (single|stream). For both types, the runner spawns the sensor's `execution.command` as a subprocess. In `stream` mode it emits one Signal per matched output line plus a final aggregate Signal as the LAST JSONL line; in `single` mode it emits exactly one aggregate Signal.
 ---
 
 # run-sensor
@@ -44,10 +44,17 @@ The skipped sensor never runs its `command` or its prepare/teardown — only the
 ## Invocation
 
 ```
-/run-sensor <path-to-sensor.json>
+/run-sensor <sensor.id>
 ```
 
-The argument may use `@`-prefix file syntax, a repo-relative path, or an absolute path. If absent, ask the user. Do not invent a sensor.
+The argument is a bare sensor id (e.g. `my-sensor`). The runner resolves it to `sensors/<id>.json` relative to the project root. If absent, ask the user. Do not invent a sensor.
+
+### Refusing blocking sensors
+
+If `execution.blocking: true`, the runner exits 2 with an error message pointing at `/start-sensor`. Blocking sensors do not have a hard timeout and cannot be invoked through `/run-sensor`. They can only be reached:
+
+- Manually, through `/start-sensor` / `/stop-sensor` / `/tail-sensor` / `/list-sensors`.
+- Implicitly, when another sensor declares them in `depends_on` — the orchestrator brings them up before the dependent runs.
 
 ## Procedure
 
@@ -58,7 +65,7 @@ Both fields are required by `schemas/sensor.json`. Use the Read tool. Branch on 
 ### 2a. `computational`
 
 ```bash
-go run -tags=run_computational ./skills/run-sensor/scripts <SENSOR_PATH>
+go run -tags=run_computational ./skills/run-sensor/scripts <SENSOR_ID>
 ```
 
 The script does everything: resolves the path (including `@` prefix), validates against `schemas/sensor.json`, spawns `sh -c <execution.command>` with the configured env capped by `cost.latency.timeout_ms`, scans stdout+stderr line-by-line, matches each line against `execution.output_parsing.patterns` (when declared), emits a Signal per match as JSONL, and ends with one aggregate Signal whose verdict is the worse of `exit_code_map[exitCode]` and the highest verdict observed in the stream. Pass its stdout through to step 3.
@@ -70,7 +77,7 @@ Exit codes: `0` Signals printed; `1` schema/pattern compile failure; `2` usage o
 ```bash
 go run -tags=run_inferential ./skills/run-sensor/scripts \
   [--slot key1=value1] [--slot key2=value2] ... \
-  <SENSOR_PATH>
+  <SENSOR_ID>
 ```
 
 Same pipeline, but the sensor's `execution.command` is an LLM CLI (e.g. `claude -p ...`). The runner renders `execution.user_prompt_template` against `--slot` bindings and exposes the result to the subprocess as the `HARNESS_PROMPT` env var. The subprocess prints judgment lines that are matched by `output_parsing.patterns` like any other sensor.

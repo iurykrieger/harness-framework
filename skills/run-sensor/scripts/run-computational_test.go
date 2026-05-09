@@ -13,30 +13,35 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
-func writeSensor(t *testing.T, dir, id string, mut func(map[string]interface{})) string {
+// writeSensor writes a sensor fixture to <root>/sensors/<id>.json and returns
+// the sensor id. Tests pass root as projectRoot so ResolveByID can find it.
+func writeSensor(t *testing.T, root, id string, mut func(map[string]interface{})) string {
 	t.Helper()
 	s := testfixtures.ValidSensorComputational()
 	s["id"] = id
 	if mut != nil {
 		mut(s)
 	}
-	b, _ := json.MarshalIndent(s, "", "  ")
-	path := filepath.Join(dir, id+".json")
-	if err := os.WriteFile(path, b, 0o644); err != nil {
+	sensorsDir := filepath.Join(root, "sensors")
+	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	b, _ := json.MarshalIndent(s, "", "  ")
+	if err := os.WriteFile(filepath.Join(sensorsDir, id+".json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func TestRun_NoDeps(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
-	dir := t.TempDir()
-	path := writeSensor(t, dir, "noop", func(s map[string]interface{}) {
+	root := t.TempDir()
+	id := writeSensor(t, root, "noop", func(s map[string]interface{}) {
 		s["execution"].(map[string]interface{})["command"] = "true"
 	})
 
 	var out, errBuf bytes.Buffer
-	code := run([]string{"--schemas-dir", schemasDir, path}, &out, &errBuf)
+	code := run([]string{"--schemas-dir", schemasDir, id}, root, &out, &errBuf)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
 	}
@@ -48,17 +53,17 @@ func TestRun_NoDeps(t *testing.T) {
 
 func TestRun_WithDep(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
-	dir := t.TempDir()
-	writeSensor(t, dir, "dep", func(s map[string]interface{}) {
+	root := t.TempDir()
+	writeSensor(t, root, "dep", func(s map[string]interface{}) {
 		s["execution"].(map[string]interface{})["command"] = "true"
 	})
-	mainPath := writeSensor(t, dir, "main", func(s map[string]interface{}) {
+	mainID := writeSensor(t, root, "main", func(s map[string]interface{}) {
 		s["depends_on"] = []interface{}{"dep"}
 		s["execution"].(map[string]interface{})["command"] = "true"
 	})
 
 	var out, errBuf bytes.Buffer
-	code := run([]string{"--schemas-dir", schemasDir, mainPath}, &out, &errBuf)
+	code := run([]string{"--schemas-dir", schemasDir, mainID}, root, &out, &errBuf)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
 	}
@@ -76,19 +81,51 @@ func TestRun_WithDep(t *testing.T) {
 }
 
 func TestRun_UsageError(t *testing.T) {
+	root := t.TempDir()
 	var out, errBuf bytes.Buffer
-	if code := run([]string{}, &out, &errBuf); code != 2 {
+	if code := run([]string{}, root, &out, &errBuf); code != 2 {
 		t.Fatalf("expected 2 (no args), got %d", code)
 	}
-	if code := run([]string{"a", "b"}, &out, &errBuf); code != 2 {
+	if code := run([]string{"a", "b"}, root, &out, &errBuf); code != 2 {
 		t.Fatalf("expected 2 (extra args), got %d", code)
 	}
 }
 
-func TestRun_DraftFileMissing(t *testing.T) {
+func TestRun_SensorNotFound(t *testing.T) {
+	root := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(root, "sensors"), 0o755)
 	var out, errBuf bytes.Buffer
-	code := run([]string{"--schemas-dir", testfixtures.RepoSchemasDir(t), "/nonexistent/x.json"}, &out, &errBuf)
+	code := run([]string{"--schemas-dir", testfixtures.RepoSchemasDir(t), "nonexistent"}, root, &out, &errBuf)
 	if code != 2 {
 		t.Fatalf("expected 2 when sensor missing, got %d", code)
+	}
+}
+
+func TestRun_BlockingSensorRejected(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	root := t.TempDir()
+	id := writeSensor(t, root, "block-me", func(s map[string]interface{}) {
+		exec := s["execution"].(map[string]interface{})
+		exec["command"] = "sleep 999"
+		exec["blocking"] = true
+		// Blocking sensors require output=stream and output_parsing.patterns.
+		s["output"] = "stream"
+		exec["output_parsing"] = map[string]interface{}{
+			"patterns": []interface{}{
+				map[string]interface{}{"regex": "^READY", "verdict": "pass", "severity": "info"},
+			},
+		}
+		// Blocking sensors forbid cost.latency.timeout_ms per schema.
+		latency := s["cost"].(map[string]interface{})["latency"].(map[string]interface{})
+		delete(latency, "timeout_ms")
+	})
+
+	var out, errBuf bytes.Buffer
+	code := run([]string{"--schemas-dir", schemasDir, id}, root, &out, &errBuf)
+	if code != 2 {
+		t.Fatalf("expected exit 2 for blocking sensor, got %d stderr=%s", code, errBuf.String())
+	}
+	if !strings.Contains(errBuf.String(), "blocking") {
+		t.Fatalf("stderr should mention 'blocking': %s", errBuf.String())
 	}
 }
