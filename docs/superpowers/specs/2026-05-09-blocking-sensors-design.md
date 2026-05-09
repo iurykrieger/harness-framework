@@ -341,6 +341,25 @@ Append-only. Subprocess's stdout+stderr concatenated. No structure assumed.
 
 Append-only. Each line is a complete Signal JSON. Lines are 1-based for cursor purposes (cursor=0 means "I have not read any lines yet"; first call returns lines 1..N, next_cursor=N).
 
+### `.runtime/sensors/<sensor.id>/state.json`
+
+Per-sensor mutable state, written exclusively by the watcher process (no flock needed — single writer). `/stop-sensor` and `/list-sensors` read it. Created by the watcher on first write; absent until the watcher emits its first state update.
+
+```json
+{
+  "version": 1,
+  "subprocess_exit": {
+    "code": 1,
+    "exited_at": "2026-05-09T15:42:18Z"
+  },
+  "watcher_started_at": "2026-05-09T15:30:00Z"
+}
+```
+
+`subprocess_exit` is omitted while the subprocess is still running. The reaper goroutine inside the watcher writes the field once `wait()` returns. Atomic write: marshal, write to `state.json.tmp`, `os.Rename`. The watcher is the only writer; readers tolerate a brief absence (file exists but `subprocess_exit` is missing) by treating it as "subprocess still running" (then double-checked via `IsPIDAlive`).
+
+Kept as a file separate from `running_sensors.json` so the watcher does not contend on the global registry lock for high-frequency state updates (none today, but the file is the natural extension point).
+
 ### `.gitignore`
 
 ```
