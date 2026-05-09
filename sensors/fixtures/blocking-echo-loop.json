@@ -1,0 +1,36 @@
+{
+  "id": "blocking-echo-loop",
+  "version": "1.0.0",
+  "name": "Blocking echo loop",
+  "description": "Test fixture: emits TICK every 100ms forever; used by /start-sensor and /tail-sensor smoke tests.",
+  "determinism": "high",
+  "kind": "setup",
+  "type": "computational",
+  "output": "stream",
+  "regulation": "behaviour",
+  "phase": "continuous",
+  "triggers": [{"on": "manual"}],
+  "verification": {
+    "golden_cases": [
+      {"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}
+    ]
+  },
+  "cost": {
+    "class": "cheap",
+    "compute": {"cpu": "low", "memory_mb": 16},
+    "latency": {"p50_ms": 10, "p95_ms": 50}
+  },
+  "execution": {
+    "command": "while true; do echo TICK; sleep 0.1; done",
+    "blocking": true,
+    "graceful_timeout_ms": 200,
+    "exit_code_map": [
+      {"exit_code": "*", "verdict": "pass", "severity": "info"}
+    ],
+    "output_parsing": {
+      "patterns": [
+        {"regex": "^TICK$", "verdict": "pass", "severity": "info"}
+      ]
+    }
+  }
+}
