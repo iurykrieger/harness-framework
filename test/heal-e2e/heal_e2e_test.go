@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/heal"
+	"github.com/iurykrieger/harness-framework/lib/heal/rules"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
@@ -37,7 +38,7 @@ func TestHealE2E_MissingEnvFile_HealAndRetry(t *testing.T) {
 	// 2) Classify the aggregate — must be setup-shape.
 	sig := signalFromMap(agg1)
 	failed := mustLoadFailedView(t, sensorPath)
-	res, ok := heal.Classify(sig, failed)
+	res, ok := heal.ClassifyWith(rules.Registered(), sig, failed)
 	if !ok {
 		t.Fatalf("expected setup-shape classification; aggregate=%v", agg1)
 	}

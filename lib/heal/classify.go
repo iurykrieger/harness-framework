@@ -65,28 +65,27 @@ type FailedSensor struct {
 }
 
 // Rule classifies a Signal as setup-shape. Implementations live in
-// lib/heal/rule_*.go files; the registrar (rules.go) holds the
-// canonical ordered list.
+// the lib/heal/rules subpackage; rules.Registered returns the
+// canonical ordered list. Production callers invoke
+// heal.ClassifyWith(rules.Registered(), signal, failed) directly —
+// the heal package itself stays free of any rule-side import to
+// avoid an import cycle (rules imports heal for these types).
 type Rule interface {
 	Name() string
 	Match(signal Signal, failed FailedSensor) (matched bool, shape Shape, detail string)
 }
 
-// Result is what Classify returns when a rule matches.
+// Result is what ClassifyWith returns when a rule matches.
 type Result struct {
 	Rule   string
 	Shape  Shape
 	Detail string
 }
 
-// Classify walks the registered rules in order and returns the first
-// match. Empty result + ok=false means "not setup-shape".
-func Classify(signal Signal, failed FailedSensor) (Result, bool) {
-	return ClassifyWith(registeredRules(), signal, failed)
-}
-
-// ClassifyWith is Classify with explicit rules — used by tests. The
-// production caller uses Classify.
+// ClassifyWith walks rules in order and returns the first match.
+// Empty result + ok=false means "not setup-shape". The caller is
+// responsible for supplying the rules slice (typically
+// rules.Registered() from lib/heal/rules).
 func ClassifyWith(rules []Rule, signal Signal, failed FailedSensor) (Result, bool) {
 	for _, r := range rules {
 		matched, shape, detail := r.Match(signal, failed)

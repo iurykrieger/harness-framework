@@ -1,18 +1,22 @@
-// lib/heal/rule_missing_env.go
-package heal
+// lib/heal/rules/missing_env.go
+package rules
 
-import "regexp"
+import (
+	"regexp"
 
-// ruleMissingEnv fires when verdict=error AND an evidence rationale
+	"github.com/iurykrieger/harness-framework/lib/heal"
+)
+
+// missingEnv fires when verdict=error AND an evidence rationale
 // matches "required environment variable <NAME> not set" AND <NAME>
 // is declared in the failed sensor's requires.env[].
-type ruleMissingEnv struct{}
+type missingEnv struct{}
 
 var missingEnvRegex = regexp.MustCompile(`(?i)required env(?:ironment)? variable\s+([A-Z_][A-Z0-9_]*)\s+(?:is\s+)?not\s+set`)
 
-func (ruleMissingEnv) Name() string { return "missing-env" }
+func (missingEnv) Name() string { return "missing-env" }
 
-func (ruleMissingEnv) Match(signal Signal, failed FailedSensor) (bool, Shape, string) {
+func (missingEnv) Match(signal heal.Signal, failed heal.FailedSensor) (bool, heal.Shape, string) {
 	if signal.Verdict != "error" {
 		return false, "", ""
 	}
@@ -24,7 +28,7 @@ func (ruleMissingEnv) Match(signal Signal, failed FailedSensor) (bool, Shape, st
 		name := m[1]
 		for _, declared := range failed.EnvNames {
 			if declared == name {
-				return true, ShapeMissingEnv, name
+				return true, heal.ShapeMissingEnv, name
 			}
 		}
 	}

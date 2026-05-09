@@ -1,5 +1,5 @@
-// lib/heal/rules_test.go
-package heal
+// lib/heal/rules/registry_test.go
+package rules
 
 import "testing"
 
@@ -11,7 +11,7 @@ func TestRegisteredRules_OrderIsStable(t *testing.T) {
 		"prepare-template-copy",
 		"stderr-pattern",
 	}
-	got := registeredRules()
+	got := Registered()
 	if len(got) != len(expected) {
 		t.Fatalf("len = %d, want %d", len(got), len(expected))
 	}

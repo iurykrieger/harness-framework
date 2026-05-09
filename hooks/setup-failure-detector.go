@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"github.com/iurykrieger/harness-framework/lib/heal"
+	"github.com/iurykrieger/harness-framework/lib/heal/rules"
 )
 
 func main() {
@@ -78,7 +79,7 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	res, matched := heal.Classify(signal, failed)
+	res, matched := heal.ClassifyWith(rules.Registered(), signal, failed)
 	if !matched {
 		return 0
 	}
