@@ -82,7 +82,7 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 	} else {
 		// Phase 2: command (existing streaming pipeline).
 		command, _ := execMap["command"].(string)
-		longRunning, _ := execMap["long_running"].(bool)
+		blocking, _ := execMap["blocking"].(bool)
 		envExtra := readEnvMap(execMap)
 
 		var patterns []signal.Pattern
@@ -116,7 +116,7 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 			StreamVerdict:  streamVerd,
 			StreamSeverity: streamSev,
 			TimedOut:       res.TimedOut,
-			LongRunning:    longRunning,
+			Blocking:       blocking,
 		})
 		aggVerdict, aggSeverity = agg.Verdict, agg.Severity
 		commandRun = command
@@ -130,8 +130,8 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 			"timed_out":   res.TimedOut,
 			"counts":      signal.CountVerdicts(res.Individuals),
 		}
-		if longRunning {
-			aggregateMD["long_running"] = true
+		if blocking {
+			aggregateMD["blocking"] = true
 		}
 		// Single-mode setup-shape heuristic: when the command failed
 		// and stderr matches a curated heal pattern, surface a
