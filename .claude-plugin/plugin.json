@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "go run ${CLAUDE_PLUGIN_ROOT}/hooks/setup-failure-detector.go"
+            "command": "cd \"${CLAUDE_PLUGIN_ROOT}\" && go run ./hooks"
           }
         ]
       }
