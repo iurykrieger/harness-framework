@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
 func main() {
@@ -41,21 +42,27 @@ func runTail(projectRoot string, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	v, code := schema.LoadValidator("", stderr)
+	if code != 0 {
+		_ = json.NewEncoder(stdout).Encode(simpleErrSignal(id, "tail_failed", "schema validator init failed"))
+		return code
+	}
+
 	r := registry.NewRoot(projectRoot)
 	rs, err := registry.Load(r)
 	if err != nil {
-		_ = json.NewEncoder(stdout).Encode(simpleErrSignal(id, "tail_failed", fmt.Sprintf("load registry: %v", err)))
+		_ = json.NewEncoder(stdout).Encode(validateSignal(v, simpleErrSignal(id, "tail_failed", fmt.Sprintf("load registry: %v", err)), id, stderr))
 		return 1
 	}
 	entry := rs.FindEntry(id)
 	if entry == nil {
-		_ = json.NewEncoder(stdout).Encode(simpleErrSignal(id, "tail_not_running", fmt.Sprintf("no live entry for %q", id)))
+		_ = json.NewEncoder(stdout).Encode(validateSignal(v, simpleErrSignal(id, "tail_not_running", fmt.Sprintf("no live entry for %q", id)), id, stderr))
 		return 1
 	}
 
 	f, err := os.Open(r.SignalsLog(id))
 	if err != nil {
-		_ = json.NewEncoder(stdout).Encode(simpleErrSignal(id, "tail_failed", fmt.Sprintf("open signals.log: %v", err)))
+		_ = json.NewEncoder(stdout).Encode(validateSignal(v, simpleErrSignal(id, "tail_failed", fmt.Sprintf("open signals.log: %v", err)), id, stderr))
 		return 1
 	}
 	defer f.Close()
@@ -71,7 +78,7 @@ func runTail(projectRoot string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, sc.Text())
 	}
 	envelope := tailEnvelope(id, current)
-	_ = json.NewEncoder(stdout).Encode(envelope)
+	_ = json.NewEncoder(stdout).Encode(validateSignal(v, envelope, id, stderr))
 	return 0
 }
 
@@ -94,6 +101,30 @@ func tailEnvelope(id string, nextCursor int) map[string]interface{} {
 			"sensor_id":   id,
 		},
 	}
+}
+
+// validateSignal checks sig against signal.json. If validation fails it logs
+// the error to stderr and returns a minimal emergency signal so the bug
+// surfaces without recursion. On success it returns sig unchanged.
+func validateSignal(v *schema.Validator, sig map[string]interface{}, id string, stderr io.Writer) map[string]interface{} {
+	if err := v.Validate(schema.TargetSignal, sig); err != nil {
+		fmt.Fprintf(stderr, "tail: BUG: emitted signal failed signal.json validation: %v\n", err)
+		now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		return map[string]interface{}{
+			"sensor_id":   id,
+			"version":     "0.0.0",
+			"run_id":      uuid.NewString(),
+			"started_at":  now,
+			"finished_at": now,
+			"verdict":     "error",
+			"severity":    "high",
+			"confidence":  1.0,
+			"evidence":    []interface{}{map[string]interface{}{"rationale": fmt.Sprintf("signal_validation_failed: %v", err)}},
+			"cost_actual": map[string]interface{}{"latency_ms": 0},
+			"metadata":    map[string]interface{}{"kind": "signal_validation_failed"},
+		}
+	}
+	return sig
 }
 
 func simpleErrSignal(id, kind, rationale string) map[string]interface{} {

@@ -36,6 +36,10 @@ func main() {
 // runStart performs the full /start-sensor lifecycle for sensor id given
 // in args[0]. Returns (exitCode, finalSignal). The signal is encoded by
 // the caller; tests inspect it directly.
+//
+// Note: execution.prepare[] is not yet executed for blocking sensors; this
+// is a documented follow-up. Manual /start-sensor invocation skips prepare
+// today; orchestrator-driven blocking deps don't run it either.
 func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 	if len(args) < 1 {
 		return 2, errorSignal("start", "missing sensor id argument")
@@ -68,24 +72,8 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		return 2, errorSignal(id, "sensor is not blocking; use /run-sensor instead")
 	}
 
-	// 3. Check whether the sensor is already running.
-	r := registry.NewRoot(projectRoot)
-	rs, err := registry.Load(r)
-	if err != nil {
-		return 1, errorSignal(id, fmt.Sprintf("load registry: %v", err))
-	}
-	if existing := rs.FindEntry(id); existing != nil && registry.IsPIDAlive(existing.PID) {
-		sig := buildStartedSkeleton(id, sensorJSON)
-		sig["verdict"] = "error"
-		sig["severity"] = "high"
-		sig["evidence"] = []interface{}{map[string]interface{}{
-			"rationale": fmt.Sprintf("sensor %q already running with pid %d", id, existing.PID),
-		}}
-		sig["metadata"].(map[string]interface{})["kind"] = "start_rejected"
-		return 1, validateSignal(v, sig, id)
-	}
-
 	command, _ := execMap["command"].(string)
+	r := registry.NewRoot(projectRoot)
 	logDir := r.SensorDir(id)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return 1, errorSignal(id, fmt.Sprintf("mkdir log dir: %v", err))
@@ -97,58 +85,91 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		return 1, errorSignal(id, fmt.Sprintf("create signals.log: %v", err))
 	}
 
-	det, err := subprocess.SpawnDetached(subprocess.DetachConfig{
-		Command: command,
-		LogFile: r.RawLog(id),
-	})
-	if err != nil {
-		return 1, errorSignal(id, fmt.Sprintf("spawn: %v", err))
-	}
-
-	envelope := libsensor.Envelope{
-		SensorID:   id,
-		Version:    stringField(sensorJSON, "version"),
-		RunID:      uuid.NewString(),
-		StartedAt:  time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		SensorType: stringField(sensorJSON, "type"),
-	}
-	patterns := []interface{}{}
-	if op, ok := execMap["output_parsing"].(map[string]interface{}); ok {
-		if raw, ok := op["patterns"].([]interface{}); ok {
-			patterns = raw
-		}
-	}
-	patternsJSON, _ := json.Marshal(patterns)
-	envelopeJSON, _ := json.Marshal(envelope)
-
 	watcherPath, err := watcherBinaryPath()
 	if err != nil {
 		return 1, errorSignal(id, fmt.Sprintf("watcher binary: %v", err))
 	}
-	watcherProc, err := os.StartProcess(watcherPath, []string{watcherPath}, &os.ProcAttr{
-		Env: []string{
-			fmt.Sprintf("HARNESS_WATCHER_RAW=%s", r.RawLog(id)),
-			fmt.Sprintf("HARNESS_WATCHER_SIGNALS=%s", r.SignalsLog(id)),
-			fmt.Sprintf("HARNESS_WATCHER_PATTERNS=%s", string(patternsJSON)),
-			fmt.Sprintf("HARNESS_WATCHER_ENVELOPE=%s", string(envelopeJSON)),
-			fmt.Sprintf("HARNESS_WATCHER_SUBPROCESS_PID=%d", det.PID),
-			fmt.Sprintf("HARNESS_WATCHER_REGISTRY_ROOT=%s", projectRoot),
-			fmt.Sprintf("HARNESS_WATCHER_SENSOR_ID=%s", id),
-		},
-		Files: []*os.File{nil, nil, nil},
-		Sys:   &watcherSysProcAttr,
-	})
-	if err != nil {
-		return 1, errorSignal(id, fmt.Sprintf("start watcher: %v", err))
-	}
-	_ = watcherProc.Release()
 
-	if err := registry.WithFileLock(r.LockFile(), func() error {
+	// 3. Serialize the entire check-then-spawn-then-write sequence under a
+	// single flock so two concurrent /start-sensor calls cannot both pass the
+	// liveness check and both spawn subprocesses (which would leak the first
+	// process when the second's lock block overwrites its registry entry).
+	//
+	// Holding the flock during fork is acceptable because:
+	//   - The flock is process-bound; the child does NOT inherit it.
+	//   - The fork itself is sub-millisecond.
+	//   - This matches the spec's intent: serialize the entire
+	//     "no-other-process-is-spawning-this-id" guarantee.
+	type spawnResult struct {
+		det         subprocess.DetachResult
+		watcherProc *os.Process
+		envelope    libsensor.Envelope
+	}
+	var spawned spawnResult
+	var lockErr error
+	var alreadyRunning bool
+	var alreadyRunningPID int
+
+	lockErr = registry.WithFileLock(r.LockFile(), func() error {
+		// 3a. Load registry inside the lock.
 		rs, err := registry.Load(r)
 		if err != nil {
-			return err
+			return fmt.Errorf("load registry: %w", err)
 		}
-		rs.RemoveEntry(id) // safety: we already verified it's not running
+
+		// 3b. Liveness check inside the lock — early return if already alive.
+		if existing := rs.FindEntry(id); existing != nil && registry.IsPIDAlive(existing.PID) {
+			alreadyRunning = true
+			alreadyRunningPID = existing.PID
+			return nil
+		}
+
+		// 3c. Spawn the detached subprocess.
+		det, err := subprocess.SpawnDetached(subprocess.DetachConfig{
+			Command: command,
+			LogFile: r.RawLog(id),
+		})
+		if err != nil {
+			return fmt.Errorf("spawn: %w", err)
+		}
+
+		envelope := libsensor.Envelope{
+			SensorID:   id,
+			Version:    stringField(sensorJSON, "version"),
+			RunID:      uuid.NewString(),
+			StartedAt:  time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			SensorType: stringField(sensorJSON, "type"),
+		}
+		patterns := []interface{}{}
+		if op, ok := execMap["output_parsing"].(map[string]interface{}); ok {
+			if raw, ok := op["patterns"].([]interface{}); ok {
+				patterns = raw
+			}
+		}
+		patternsJSON, _ := json.Marshal(patterns)
+		envelopeJSON, _ := json.Marshal(envelope)
+
+		// 3d. Spawn the watcher process.
+		watcherProc, err := os.StartProcess(watcherPath, []string{watcherPath}, &os.ProcAttr{
+			Env: []string{
+				fmt.Sprintf("HARNESS_WATCHER_RAW=%s", r.RawLog(id)),
+				fmt.Sprintf("HARNESS_WATCHER_SIGNALS=%s", r.SignalsLog(id)),
+				fmt.Sprintf("HARNESS_WATCHER_PATTERNS=%s", string(patternsJSON)),
+				fmt.Sprintf("HARNESS_WATCHER_ENVELOPE=%s", string(envelopeJSON)),
+				fmt.Sprintf("HARNESS_WATCHER_SUBPROCESS_PID=%d", det.PID),
+				fmt.Sprintf("HARNESS_WATCHER_REGISTRY_ROOT=%s", projectRoot),
+				fmt.Sprintf("HARNESS_WATCHER_SENSOR_ID=%s", id),
+			},
+			Files: []*os.File{nil, nil, nil},
+			Sys:   &watcherSysProcAttr,
+		})
+		if err != nil {
+			return fmt.Errorf("start watcher: %w", err)
+		}
+		_ = watcherProc.Release()
+
+		// 3e. Write the new registry entry — only reached if both spawns succeeded.
+		rs.RemoveEntry(id)
 		rs.Entries = append(rs.Entries, registry.RunningSensorEntry{
 			SensorID:   id,
 			PID:        det.PID,
@@ -161,23 +182,41 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 				{Kind: "manual", AttachedAt: envelope.StartedAt},
 			},
 		})
-		return registry.Save(r, rs)
-	}); err != nil {
-		return 1, errorSignal(id, fmt.Sprintf("write registry: %v", err))
+		if err := registry.Save(r, rs); err != nil {
+			return err
+		}
+
+		spawned = spawnResult{det: det, watcherProc: watcherProc, envelope: envelope}
+		return nil
+	})
+
+	if lockErr != nil {
+		return 1, errorSignal(id, fmt.Sprintf("write registry: %v", lockErr))
+	}
+
+	if alreadyRunning {
+		sig := buildStartedSkeleton(id, sensorJSON)
+		sig["verdict"] = "error"
+		sig["severity"] = "high"
+		sig["evidence"] = []interface{}{map[string]interface{}{
+			"rationale": fmt.Sprintf("sensor %q already running with pid %d", id, alreadyRunningPID),
+		}}
+		sig["metadata"].(map[string]interface{})["kind"] = "start_rejected"
+		return 1, validateSignal(v, sig, id)
 	}
 
 	sig := buildStartedSkeleton(id, sensorJSON)
 	sig["verdict"] = "pass"
 	sig["severity"] = "info"
 	sig["evidence"] = []interface{}{map[string]interface{}{
-		"rationale": fmt.Sprintf("sensor %q started, pid=%d, watcher_pid=%d", id, det.PID, watcherProc.Pid),
+		"rationale": fmt.Sprintf("sensor %q started, pid=%d, watcher_pid=%d", id, spawned.det.PID, spawned.watcherProc.Pid),
 	}}
-	sig["run_id"] = envelope.RunID
-	sig["started_at"] = envelope.StartedAt
+	sig["run_id"] = spawned.envelope.RunID
+	sig["started_at"] = spawned.envelope.StartedAt
 	md := sig["metadata"].(map[string]interface{})
 	md["kind"] = "started"
-	md["pid"] = det.PID
-	md["watcher_pid"] = watcherProc.Pid
+	md["pid"] = spawned.det.PID
+	md["watcher_pid"] = spawned.watcherProc.Pid
 	md["log_dir"] = filepath.Join(".runtime", "sensors", id)
 	md["next_cursor"] = 0
 	return 0, validateSignal(v, sig, id)
