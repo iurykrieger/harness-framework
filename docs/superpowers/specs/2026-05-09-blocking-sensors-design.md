@@ -47,7 +47,7 @@ This spec replaces the timeout-driven model with an explicit start / observe / s
               ▼                       ▼                         ▼
    ┌─────────────────────┐ ┌────────────────────┐  ┌────────────────────┐
    │ lib/sensor/path.go  │ │ lib/registry/       │  │ lib/orchestrator/  │
-   │  resolves <id> →    │ │  state.json IO,     │  │  resolves chain,   │
+   │  resolves <id> →    │ │  registry IO,       │  │  resolves chain,   │
    │  sensors/<id>.json  │ │  flock, held_by,    │  │  starts/attaches   │
    │                     │ │  PID lifeness check │  │  blocking deps,    │
    └─────────────────────┘ └────────────────────┘  │  stops at teardown │
@@ -79,7 +79,7 @@ This spec replaces the timeout-driven model with an explicit start / observe / s
 2. `flock(.runtime/sensors/running_sensors.lock)`, read `running_sensors.json`. If `watch-logs` already present and PID alive → emit Signal `verdict=error`, `metadata.kind=start_rejected`, `evidence` references the live entry. Release lock, exit 1.
 3. Run `execution.prepare[]` fail-fast. If any step fails → emit Signal `verdict=error`, `metadata.kind=start_failed`, `metadata.lifecycle.prepare` carries per-step results. No registry entry created. Exit 1. Teardown does **not** run for a never-started subprocess (consistent with the rule "teardown is finally for the command").
 4. `os.StartProcess` the command via `sh -c`, with `Setsid: true` and `Setpgid: true` (so the watcher can SIGTERM the whole group later). Stdout and stderr redirected to `.runtime/sensors/watch-logs/raw.log` (append).
-5. Spawn the watcher binary (built from `skills/start-sensor/scripts/watcher.go` with build tag `start_watcher`) via `os.StartProcess`, detached (`Setsid: true`, `Setpgid: true`). No flag dispatch on the `start` binary itself — the watcher is its own `package main`. Pass via env vars: `HARNESS_WATCHER_RAW=<raw.log>`, `HARNESS_WATCHER_SIGNALS=<signals.log>`, `HARNESS_WATCHER_PATTERNS=<json>`, `HARNESS_WATCHER_ENVELOPE=<json>`, `HARNESS_WATCHER_SUBPROCESS_PID=<pid>`, `HARNESS_WATCHER_REGISTRY_ROOT=<.runtime/sensors/<sensor.id>/>`. Watcher uses `fsnotify` to follow `raw.log`, applies `signal.MatchLine` to each line, appends matches to `signals.log`. Reaper goroutine `wait()`s on the subprocess PID and writes the exit code into `state.json`.
+5. Spawn the watcher binary (built from `skills/start-sensor/scripts/watcher.go` with build tag `start_watcher`) via `os.StartProcess`, detached (`Setsid: true`, `Setpgid: true`). No flag dispatch on the `start` binary itself — the watcher is its own `package main`. Pass via env vars: `HARNESS_WATCHER_RAW=<raw.log>`, `HARNESS_WATCHER_SIGNALS=<signals.log>`, `HARNESS_WATCHER_PATTERNS=<json>`, `HARNESS_WATCHER_ENVELOPE=<json>`, `HARNESS_WATCHER_SUBPROCESS_PID=<pid>`, `HARNESS_WATCHER_REGISTRY_ROOT=<.runtime/sensors/>`, `HARNESS_WATCHER_SENSOR_ID=<sensor.id>`. Watcher uses `fsnotify` to follow `raw.log`, applies `signal.MatchLine` to each line, appends matches to `signals.log`. Reaper goroutine `wait()`s on the subprocess PID; on exit, it acquires the registry flock and writes `subprocess_exit` into the sensor's entry in `running_sensors.json` (single write per lifetime, no real contention).
 6. Append entry to `running_sensors.json` (sensor.id, pid, pgid, watcher_pid, started_at, command, `held_by: [{kind: "manual", attached_at: <now>}]`). Write atomically (`.tmp` + rename). Release lock.
 7. Emit Signal `verdict=pass`, `metadata.kind=started`, payload includes `pid`, `started_at`, `log_dir`, and `next_cursor: 0`. Exit 0.
 
@@ -139,7 +139,7 @@ The `--reap-dead-holders` flag is accepted **only** by `/stop-sensor`. The orche
 ### Edge cases
 
 - **Watcher crashes mid-run.** Detected at `/stop-sensor` time; inline drain recovers any unparsed lines from `raw.log`. Aggregate flagged `watcher_died=true`, severity warn, verdict not downgraded.
-- **Subprocess exits on its own before /stop-sensor.** Watcher continues tailing `raw.log` (which stops growing) and stays alive. The watcher includes a small reaper goroutine that calls `wait()` on the subprocess PID and persists the exit code into `state.json` under a new `subprocess_exit` field. `/stop-sensor` detects PID dead, drains watcher, and computes aggregate from `signals.log`. **Critically, when subprocess exited on its own (not via our SIGTERM), `/stop-sensor` calls `signal.Aggregate` with `Blocking: false`** — so `exit_code_map` (when present) drives the exit side normally and a crashed `npm run dev` aggregates as fail/error rather than pass. Aggregate carries `metadata.subprocess_self_exited=true` and `metadata.subprocess_exit_code=<int>`. Branch on sensor type:
+- **Subprocess exits on its own before /stop-sensor.** Watcher continues tailing `raw.log` (which stops growing) and stays alive. The watcher includes a small reaper goroutine that calls `wait()` on the subprocess PID and persists the exit code into the sensor's `subprocess_exit` field in `running_sensors.json` (acquiring the registry flock for that single write). `/stop-sensor` detects PID dead, drains watcher, and computes aggregate from `signals.log`. **Critically, when subprocess exited on its own (not via our SIGTERM), `/stop-sensor` calls `signal.Aggregate` with `Blocking: false`** — so `exit_code_map` (when present) drives the exit side normally and a crashed `npm run dev` aggregates as fail/error rather than pass. Aggregate carries `metadata.subprocess_self_exited=true` and `metadata.subprocess_exit_code=<int>`. Branch on sensor type:
   - **Computational blocking** — `exit_code_map` is required by schema; apply it normally.
   - **Inferential blocking** — `exit_code_map` is optional. If present, use it. If absent, fall back to stream verdict and add `metadata.exit_code_unmapped=true` warn evidence (the code is recorded but not interpreted).
 
@@ -292,7 +292,7 @@ All four skills follow CLAUDE.md rule 6 strictly: SKILL.md is orchestration pros
 
 The watcher is a separate `package main` script — not library code, not a hidden subcommand of `start.go`, and not a `--watcher-mode` flag (rule 7 forbids mode flags). It lives at:
 
-- `skills/start-sensor/scripts/watcher.go` (`//go:build start_watcher`). Distinct build tag from `start.go` so the two coexist in the same directory (CLAUDE.md regra 7 pattern). Reads env vars (`HARNESS_WATCHER_RAW`, `HARNESS_WATCHER_SIGNALS`, `HARNESS_WATCHER_PATTERNS`, `HARNESS_WATCHER_ENVELOPE`, `HARNESS_WATCHER_SUBPROCESS_PID`). Follows `raw.log` with `fsnotify`, applies `signal.MatchLine`, appends matches to `signals.log`. Reaper goroutine calls `wait()` on the subprocess PID and writes the exit code into `state.json`. Exits cleanly on SIGTERM (drains buffers, fsync, exit).
+- `skills/start-sensor/scripts/watcher.go` (`//go:build start_watcher`). Distinct build tag from `start.go` so the two coexist in the same directory (CLAUDE.md regra 7 pattern). Reads env vars (`HARNESS_WATCHER_RAW`, `HARNESS_WATCHER_SIGNALS`, `HARNESS_WATCHER_PATTERNS`, `HARNESS_WATCHER_ENVELOPE`, `HARNESS_WATCHER_SUBPROCESS_PID`, `HARNESS_WATCHER_REGISTRY_ROOT`, `HARNESS_WATCHER_SENSOR_ID`). Follows `raw.log` with `fsnotify`, applies `signal.MatchLine`, appends matches to `signals.log`. Reaper goroutine calls `wait()` on the subprocess PID and writes the exit code into the sensor's `subprocess_exit` field in `running_sensors.json` (acquires the registry flock for that single write). Exits cleanly on SIGTERM (drains buffers, fsync, exit).
 - `skills/start-sensor/scripts/watcher_test.go`: covers fsnotify lifecycle, pattern matching pipeline, SIGTERM drain, reaper exit-code capture, dead-watcher recovery.
 
 `start.go` invokes the watcher binary by name (`os.StartProcess` with the path to the built `watcher` binary), not via flag dispatch on itself.
@@ -316,11 +316,17 @@ The watcher is a separate `package main` script — not library code, not a hidd
         { "kind": "manual", "attached_at": "2026-05-09T15:30:00Z" },
         { "kind": "sensor", "id": "smoke-tests", "pid": 23456, "attached_at": "2026-05-09T15:31:12Z" }
       ],
-      "log_dir": ".runtime/sensors/run-project"
+      "log_dir": ".runtime/sensors/run-project",
+      "subprocess_exit": {
+        "code": 1,
+        "exited_at": "2026-05-09T15:42:18Z"
+      }
     }
   ]
 }
 ```
+
+`subprocess_exit` is **omitted** while the subprocess is still running. The reaper goroutine inside the watcher writes the field once `wait()` returns. The watcher acquires the registry flock for this single write; contention with other readers/writers is negligible because the field is written at most once per sensor lifetime. Readers (`/stop-sensor`, `/list-sensors`) tolerate the field's absence by treating it as "subprocess still running" (double-checked via `IsPIDAlive(pid)`).
 
 Each `held_by` entry is a discriminated record:
 
@@ -340,25 +346,6 @@ Append-only. Subprocess's stdout+stderr concatenated. No structure assumed.
 ### `.runtime/sensors/<sensor.id>/signals.log`
 
 Append-only. Each line is a complete Signal JSON. Lines are 1-based for cursor purposes (cursor=0 means "I have not read any lines yet"; first call returns lines 1..N, next_cursor=N).
-
-### `.runtime/sensors/<sensor.id>/state.json`
-
-Per-sensor mutable state, written exclusively by the watcher process (no flock needed — single writer). `/stop-sensor` and `/list-sensors` read it. Created by the watcher on first write; absent until the watcher emits its first state update.
-
-```json
-{
-  "version": 1,
-  "subprocess_exit": {
-    "code": 1,
-    "exited_at": "2026-05-09T15:42:18Z"
-  },
-  "watcher_started_at": "2026-05-09T15:30:00Z"
-}
-```
-
-`subprocess_exit` is omitted while the subprocess is still running. The reaper goroutine inside the watcher writes the field once `wait()` returns. Atomic write: marshal, write to `state.json.tmp`, `os.Rename`. The watcher is the only writer; readers tolerate a brief absence (file exists but `subprocess_exit` is missing) by treating it as "subprocess still running" (then double-checked via `IsPIDAlive`).
-
-Kept as a file separate from `running_sensors.json` so the watcher does not contend on the global registry lock for high-frequency state updates (none today, but the file is the natural extension point).
 
 ### `.gitignore`
 
