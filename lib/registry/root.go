@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // Source labels how Discover resolved the project root.
@@ -162,4 +165,37 @@ func Lookup(startDir string) (Result, error) {
 		Exists:      exists,
 		State:       state,
 	}, nil
+}
+
+// DiscoveryErrorSignal builds an error Signal describing a failed
+// registry-root discovery. The returned map satisfies signal.json
+// (verdict=error, severity=high, all required envelope fields). The
+// helper is exported for the four registry-touching skills so each
+// emits the same shape.
+//
+// sensorID is the id field carried on the signal — pass the skill's
+// fixed name (e.g., "list-sensors") for skills that don't take a
+// sensor argument, or the user-supplied sensor id for /start-sensor.
+//
+// metadata.registry_path is intentionally OMITTED: discovery failed,
+// so no path was resolved.
+func DiscoveryErrorSignal(err error, sensorID string) map[string]interface{} {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	rationale := "registry root discovery failed: <nil error>"
+	if err != nil {
+		rationale = err.Error()
+	}
+	return map[string]interface{}{
+		"sensor_id":   sensorID,
+		"version":     "0.0.0",
+		"run_id":      uuid.NewString(),
+		"started_at":  now,
+		"finished_at": now,
+		"verdict":     "error",
+		"severity":    "high",
+		"confidence":  1.0,
+		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
+		"cost_actual": map[string]interface{}{"latency_ms": 0},
+		"metadata":    map[string]interface{}{"kind": "registry_discovery_failed"},
+	}
 }

@@ -257,3 +257,59 @@ func TestLookup_MalformedJSONReturnsError(t *testing.T) {
 		t.Fatal("expected parse error")
 	}
 }
+
+func TestDiscoveryErrorSignal_Shape(t *testing.T) {
+	t.Setenv("HARNESS_REGISTRY_ROOT", "")
+	_, _, derr := registry.Discover(t.TempDir())
+	if derr == nil {
+		t.Fatal("expected discovery error")
+	}
+	sig := registry.DiscoveryErrorSignal(derr, "list-sensors")
+
+	if sig["sensor_id"] != "list-sensors" {
+		t.Errorf("sensor_id: got %v, want %q", sig["sensor_id"], "list-sensors")
+	}
+	if sig["verdict"] != "error" {
+		t.Errorf("verdict: got %v, want \"error\"", sig["verdict"])
+	}
+	if sig["severity"] != "high" {
+		t.Errorf("severity: got %v, want \"high\"", sig["severity"])
+	}
+	md, ok := sig["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("metadata: got %T", sig["metadata"])
+	}
+	if md["kind"] != "registry_discovery_failed" {
+		t.Errorf("metadata.kind: got %v", md["kind"])
+	}
+	if _, present := md["registry_path"]; present {
+		t.Errorf("metadata.registry_path should be absent on discovery failure, got %v", md["registry_path"])
+	}
+	ev, _ := sig["evidence"].([]interface{})
+	if len(ev) != 1 {
+		t.Fatalf("evidence: got %d items, want 1", len(ev))
+	}
+	rationale := ev[0].(map[string]interface{})["rationale"].(string)
+	if !strings.Contains(rationale, derr.Error()) {
+		t.Errorf("rationale should contain raw error string, got: %q", rationale)
+	}
+}
+
+func TestDiscoveryErrorSignal_ValidatesAgainstSchema(t *testing.T) {
+	t.Setenv("HARNESS_REGISTRY_ROOT", "")
+	_, _, derr := registry.Discover(t.TempDir())
+	sig := registry.DiscoveryErrorSignal(derr, "list-sensors")
+
+	for _, k := range []string{"sensor_id", "version", "run_id", "started_at", "finished_at", "verdict", "severity", "confidence", "evidence", "cost_actual", "metadata"} {
+		if _, ok := sig[k]; !ok {
+			t.Errorf("required field %q missing", k)
+		}
+	}
+	if conf, ok := sig["confidence"].(float64); !ok || conf <= 0 || conf > 1 {
+		t.Errorf("confidence: got %v", sig["confidence"])
+	}
+	cost, _ := sig["cost_actual"].(map[string]interface{})
+	if _, ok := cost["latency_ms"]; !ok {
+		t.Errorf("cost_actual.latency_ms missing")
+	}
+}
