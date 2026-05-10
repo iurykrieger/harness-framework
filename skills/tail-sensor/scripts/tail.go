@@ -3,6 +3,9 @@
 // tail returns Signals from a blocking sensor's signals.log starting
 // from a 1-based line cursor, plus a final tail-envelope Signal that
 // carries metadata.next_cursor for the agent to use on the next call.
+//
+// When the registry file does not exist, emits verdict=error /
+// metadata.kind=tail_no_registry — sensor cannot be running.
 package main
 
 import (
@@ -21,48 +24,57 @@ import (
 )
 
 func main() {
-	root, err := os.Getwd()
+	startDir, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tail: cwd:", err)
 		os.Exit(2)
 	}
-	exit := runTail(root, os.Args[1:], os.Stdout, os.Stderr)
+	res, err := registry.Lookup(startDir)
+	if err != nil {
+		_ = json.NewEncoder(os.Stdout).Encode(registry.DiscoveryErrorSignal(err, ""))
+		os.Exit(1)
+	}
+	exit := runTail(res, os.Args[1:], os.Stdout, os.Stderr)
 	os.Exit(exit)
 }
 
-func runTail(projectRoot string, args []string, stdout, stderr io.Writer) int {
+func runTail(res registry.Result, args []string, stdout, stderr io.Writer) int {
 	if len(args) < 2 {
-		_ = json.NewEncoder(stdout).Encode(simpleErrSignal("tail", "tail_invalid_args", "expected <sensor.id> <cursor>"))
+		_ = json.NewEncoder(stdout).Encode(simpleErrSignal(res, "tail", "tail_invalid_args", "expected <sensor.id> <cursor>"))
 		return 2
 	}
 	id := args[0]
 	cursor, err := strconv.Atoi(args[1])
 	if err != nil || cursor < 0 {
-		_ = json.NewEncoder(stdout).Encode(simpleErrSignal(id, "tail_invalid_cursor", fmt.Sprintf("cursor must be a non-negative integer, got %q", args[1])))
+		_ = json.NewEncoder(stdout).Encode(simpleErrSignal(res, id, "tail_invalid_cursor", fmt.Sprintf("cursor must be a non-negative integer, got %q", args[1])))
 		return 1
 	}
 
 	v, code := schema.LoadValidator("", stderr)
 	if code != 0 {
-		_ = json.NewEncoder(stdout).Encode(simpleErrSignal(id, "tail_failed", "schema validator init failed"))
+		_ = json.NewEncoder(stdout).Encode(simpleErrSignal(res, id, "tail_failed", "schema validator init failed"))
 		return code
 	}
 
-	r := registry.NewRoot(projectRoot)
-	rs, err := registry.Load(r)
-	if err != nil {
-		_ = json.NewEncoder(stdout).Encode(validateSignal(v, simpleErrSignal(id, "tail_failed", fmt.Sprintf("load registry: %v", err)), id, stderr))
+	if !res.Exists {
+		_ = json.NewEncoder(stdout).Encode(validateSignal(v,
+			simpleErrSignal(res, id, "tail_no_registry",
+				fmt.Sprintf("registry not found at %s; sensor cannot be running. /start-sensor was likely run from a different cwd, or HARNESS_REGISTRY_ROOT is misconfigured.", res.Root.RegistryFile())),
+			id, stderr))
 		return 1
 	}
+
+	r := res.Root
+	rs := res.State
 	entry := rs.FindEntry(id)
 	if entry == nil {
-		_ = json.NewEncoder(stdout).Encode(validateSignal(v, simpleErrSignal(id, "tail_not_running", fmt.Sprintf("no live entry for %q", id)), id, stderr))
+		_ = json.NewEncoder(stdout).Encode(validateSignal(v, simpleErrSignal(res, id, "tail_not_running", fmt.Sprintf("no live entry for %q", id)), id, stderr))
 		return 1
 	}
 
 	f, err := os.Open(r.SignalsLog(id))
 	if err != nil {
-		_ = json.NewEncoder(stdout).Encode(validateSignal(v, simpleErrSignal(id, "tail_failed", fmt.Sprintf("open signals.log: %v", err)), id, stderr))
+		_ = json.NewEncoder(stdout).Encode(validateSignal(v, simpleErrSignal(res, id, "tail_failed", fmt.Sprintf("open signals.log: %v", err)), id, stderr))
 		return 1
 	}
 	defer f.Close()
@@ -77,13 +89,17 @@ func runTail(projectRoot string, args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintln(stdout, sc.Text())
 	}
-	envelope := tailEnvelope(id, current)
+	envelope := tailEnvelope(res, id, current)
 	_ = json.NewEncoder(stdout).Encode(validateSignal(v, envelope, id, stderr))
 	return 0
 }
 
-func tailEnvelope(id string, nextCursor int) map[string]interface{} {
+func tailEnvelope(res registry.Result, id string, nextCursor int) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = "tail_envelope"
+	md["next_cursor"] = nextCursor
+	md["sensor_id"] = id // legacy field, do not remove
 	return map[string]interface{}{
 		"sensor_id":   id,
 		"version":     "0.0.0",
@@ -95,17 +111,10 @@ func tailEnvelope(id string, nextCursor int) map[string]interface{} {
 		"confidence":  1.0,
 		"evidence":    []interface{}{map[string]interface{}{"rationale": "tail envelope"}},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata": map[string]interface{}{
-			"kind":        "tail_envelope",
-			"next_cursor": nextCursor,
-			"sensor_id":   id,
-		},
+		"metadata":    md,
 	}
 }
 
-// validateSignal checks sig against signal.json. If validation fails it logs
-// the error to stderr and returns a minimal emergency signal so the bug
-// surfaces without recursion. On success it returns sig unchanged.
 func validateSignal(v *schema.Validator, sig map[string]interface{}, id string, stderr io.Writer) map[string]interface{} {
 	if err := v.Validate(schema.TargetSignal, sig); err != nil {
 		fmt.Fprintf(stderr, "tail: BUG: emitted signal failed signal.json validation: %v\n", err)
@@ -127,8 +136,10 @@ func validateSignal(v *schema.Validator, sig map[string]interface{}, id string, 
 	return sig
 }
 
-func simpleErrSignal(id, kind, rationale string) map[string]interface{} {
+func simpleErrSignal(res registry.Result, id, kind, rationale string) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = kind
 	return map[string]interface{}{
 		"sensor_id":   id,
 		"version":     "0.0.0",
@@ -140,6 +151,6 @@ func simpleErrSignal(id, kind, rationale string) map[string]interface{} {
 		"confidence":  1.0,
 		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata":    map[string]interface{}{"kind": kind},
+		"metadata":    md,
 	}
 }

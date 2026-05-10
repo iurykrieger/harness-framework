@@ -21,12 +21,17 @@ import (
 )
 
 func main() {
-	root, err := os.Getwd()
+	startDir, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "start: cwd:", err)
 		os.Exit(2)
 	}
-	exit, sig := runStart(root, os.Args[1:])
+	res, err := registry.Lookup(startDir)
+	if err != nil {
+		_ = json.NewEncoder(os.Stdout).Encode(registry.DiscoveryErrorSignal(err, ""))
+		os.Exit(1)
+	}
+	exit, sig := runStart(res, os.Args[1:])
 	if sig != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(sig)
 	}
@@ -40,54 +45,55 @@ func main() {
 // Note: execution.prepare[] is not yet executed for blocking sensors; this
 // is a documented follow-up. Manual /start-sensor invocation skips prepare
 // today; orchestrator-driven blocking deps don't run it either.
-func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
+func runStart(res registry.Result, args []string) (int, map[string]interface{}) {
 	if len(args) < 1 {
-		return 2, errorSignal("start", "missing sensor id argument")
+		return 2, errorSignal(res, "start", "missing sensor id argument")
 	}
 	id := args[0]
+	projectRoot := res.ProjectRoot
 
 	path, err := libsensor.ResolveByID(id, projectRoot)
 	if err != nil {
-		return 2, errorSignal(id, fmt.Sprintf("resolve: %v", err))
+		return 2, errorSignal(res, id, fmt.Sprintf("resolve: %v", err))
 	}
 
 	sensorJSON, err := loadSensorJSON(path)
 	if err != nil {
-		return 2, errorSignal(id, err.Error())
+		return 2, errorSignal(res, id, err.Error())
 	}
 
 	// 1. Schema-validate the sensor definition before any further checks.
 	v, code := schema.LoadValidator("", os.Stderr)
 	if code != 0 {
-		return code, errorSignal(id, "schema validator init failed")
+		return code, errorSignal(res, id, "schema validator init failed")
 	}
 	if err := v.Validate(schema.TargetSensor, sensorJSON); err != nil {
-		return 1, errorSignal(id, fmt.Sprintf("schema: %v", err))
+		return 1, errorSignal(res, id, fmt.Sprintf("schema: %v", err))
 	}
 
 	// 2. Reject non-blocking sensors with exit 2 (usage error).
 	execMap, _ := sensorJSON["execution"].(map[string]interface{})
 	blocking, _ := execMap["blocking"].(bool)
 	if !blocking {
-		return 2, errorSignal(id, "sensor is not blocking; use /run-sensor instead")
+		return 2, errorSignal(res, id, "sensor is not blocking; use /run-sensor instead")
 	}
 
 	command, _ := execMap["command"].(string)
-	r := registry.NewRoot(projectRoot)
+	r := res.Root
 	logDir := r.SensorDir(id)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		return 1, errorSignal(id, fmt.Sprintf("mkdir log dir: %v", err))
+		return 1, errorSignal(res, id, fmt.Sprintf("mkdir log dir: %v", err))
 	}
 	if err := os.WriteFile(r.RawLog(id), nil, 0o644); err != nil {
-		return 1, errorSignal(id, fmt.Sprintf("create raw.log: %v", err))
+		return 1, errorSignal(res, id, fmt.Sprintf("create raw.log: %v", err))
 	}
 	if err := os.WriteFile(r.SignalsLog(id), nil, 0o644); err != nil {
-		return 1, errorSignal(id, fmt.Sprintf("create signals.log: %v", err))
+		return 1, errorSignal(res, id, fmt.Sprintf("create signals.log: %v", err))
 	}
 
 	watcherPath, err := watcherBinaryPath()
 	if err != nil {
-		return 1, errorSignal(id, fmt.Sprintf("watcher binary: %v", err))
+		return 1, errorSignal(res, id, fmt.Sprintf("watcher binary: %v", err))
 	}
 
 	// 3. Serialize the entire check-then-spawn-then-write sequence under a
@@ -191,11 +197,11 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 	})
 
 	if lockErr != nil {
-		return 1, errorSignal(id, fmt.Sprintf("write registry: %v", lockErr))
+		return 1, errorSignal(res, id, fmt.Sprintf("write registry: %v", lockErr))
 	}
 
 	if alreadyRunning {
-		sig := buildStartedSkeleton(id, sensorJSON)
+		sig := buildStartedSkeleton(res, id, sensorJSON)
 		sig["verdict"] = "error"
 		sig["severity"] = "high"
 		sig["evidence"] = []interface{}{map[string]interface{}{
@@ -205,7 +211,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		return 1, validateSignal(v, sig, id)
 	}
 
-	sig := buildStartedSkeleton(id, sensorJSON)
+	sig := buildStartedSkeleton(res, id, sensorJSON)
 	sig["verdict"] = "pass"
 	sig["severity"] = "info"
 	sig["evidence"] = []interface{}{map[string]interface{}{
@@ -240,10 +246,12 @@ func stringField(m map[string]interface{}, k string) string {
 }
 
 // buildStartedSkeleton returns the envelope fields common to all started/rejected
-// signals. It does NOT set verdict, severity, or evidence — callers must set
-// those explicitly so the intent is clear at each call site.
-func buildStartedSkeleton(id string, sensorJSON map[string]interface{}) map[string]interface{} {
+// signals, including the registry diagnose metadata. Callers must set verdict,
+// severity, and evidence explicitly so the intent is clear at each call site.
+func buildStartedSkeleton(res registry.Result, id string, sensorJSON map[string]interface{}) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = "started"
 	return map[string]interface{}{
 		"sensor_id":   id,
 		"version":     stringField(sensorJSON, "version"),
@@ -252,12 +260,14 @@ func buildStartedSkeleton(id string, sensorJSON map[string]interface{}) map[stri
 		"finished_at": now,
 		"confidence":  1.0,
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata":    map[string]interface{}{"kind": "started"},
+		"metadata":    md,
 	}
 }
 
-func errorSignal(id, rationale string) map[string]interface{} {
+func errorSignal(res registry.Result, id, rationale string) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = "start_failed"
 	return map[string]interface{}{
 		"sensor_id":   id,
 		"version":     "0.0.0",
@@ -269,7 +279,7 @@ func errorSignal(id, rationale string) map[string]interface{} {
 		"confidence":  1.0,
 		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata":    map[string]interface{}{"kind": "start_failed"},
+		"metadata":    md,
 	}
 }
 

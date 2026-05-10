@@ -13,6 +13,22 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/registry"
 )
 
+func resultFor(t *testing.T, projectRoot string, exists bool) registry.Result {
+	t.Helper()
+	r := registry.NewRoot(projectRoot)
+	state, _, err := registry.LoadOrEmpty(r)
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	return registry.Result{
+		Root:        r,
+		ProjectRoot: projectRoot,
+		Source:      registry.SourceWalkUp,
+		Exists:      exists,
+		State:       state,
+	}
+}
+
 func setupRunning(t *testing.T, root, id string, signalsLines []string) {
 	t.Helper()
 	r := registry.NewRoot(root)
@@ -33,14 +49,39 @@ func setupRunning(t *testing.T, root, id string, signalsLines []string) {
 	_ = filepath.Join // keep import
 }
 
+func TestTail_RegistryFileAbsent_Error(t *testing.T) {
+	root := t.TempDir()
+	res := resultFor(t, root, false)
+	var buf bytes.Buffer
+	exit := runTail(res, []string{"missing", "0"}, &buf, os.Stderr)
+	if exit != 1 {
+		t.Fatalf("exit: got %d, want 1", exit)
+	}
+	var sig map[string]interface{}
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &sig); err != nil {
+		t.Fatal(err)
+	}
+	if sig["verdict"] != "error" {
+		t.Errorf("verdict: got %v, want \"error\"", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if md["kind"] != "tail_no_registry" {
+		t.Errorf("metadata.kind: got %v", md["kind"])
+	}
+	if md["registry_exists"] != false {
+		t.Errorf("metadata.registry_exists: got %v, want false", md["registry_exists"])
+	}
+}
+
 func TestTail_Cursor0_ReturnsAll(t *testing.T) {
 	root := t.TempDir()
 	setupRunning(t, root, "loop", []string{
 		`{"sensor_id":"loop","verdict":"pass","metadata":{"kind":"individual"}}`,
 		`{"sensor_id":"loop","verdict":"warn","metadata":{"kind":"individual"}}`,
 	})
+	res := resultFor(t, root, true)
 	var buf bytes.Buffer
-	exit := runTail(root, []string{"loop", "0"}, &buf, os.Stderr)
+	exit := runTail(res, []string{"loop", "0"}, &buf, os.Stderr)
 	if exit != 0 {
 		t.Fatalf("exit: got %d", exit)
 	}
@@ -59,6 +100,9 @@ func TestTail_Cursor0_ReturnsAll(t *testing.T) {
 	if md["next_cursor"].(float64) != 2 {
 		t.Fatalf("next_cursor: got %v", md["next_cursor"])
 	}
+	if md["registry_exists"] != true {
+		t.Errorf("metadata.registry_exists: got %v, want true", md["registry_exists"])
+	}
 }
 
 func TestTail_CursorMid_ReturnsSuffix(t *testing.T) {
@@ -68,13 +112,13 @@ func TestTail_CursorMid_ReturnsSuffix(t *testing.T) {
 		`{"sensor_id":"loop","verdict":"warn","metadata":{"kind":"individual"}}`,
 		`{"sensor_id":"loop","verdict":"fail","metadata":{"kind":"individual"}}`,
 	})
+	res := resultFor(t, root, true)
 	var buf bytes.Buffer
-	exit := runTail(root, []string{"loop", "2"}, &buf, os.Stderr)
+	exit := runTail(res, []string{"loop", "2"}, &buf, os.Stderr)
 	if exit != 0 {
 		t.Fatalf("exit: got %d", exit)
 	}
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	// 1 individual + 1 envelope
 	if len(lines) != 2 {
 		t.Fatalf("lines: got %d", len(lines))
 	}
@@ -82,13 +126,18 @@ func TestTail_CursorMid_ReturnsSuffix(t *testing.T) {
 
 func TestTail_NotRunning(t *testing.T) {
 	root := t.TempDir()
+	r := registry.NewRoot(root)
+	if err := registry.Save(r, registry.RunningSensors{Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	res := resultFor(t, root, true)
 	var buf bytes.Buffer
-	exit := runTail(root, []string{"missing", "0"}, &buf, os.Stderr)
+	exit := runTail(res, []string{"missing", "0"}, &buf, os.Stderr)
 	if exit != 1 {
 		t.Fatalf("exit: got %d", exit)
 	}
 	var sig map[string]interface{}
-	_ = json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &sig)
+	_ = json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &sig)
 	if sig["metadata"].(map[string]interface{})["kind"] != "tail_not_running" {
 		t.Fatalf("kind: got %v", sig["metadata"])
 	}
