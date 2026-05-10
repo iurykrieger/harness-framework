@@ -375,11 +375,16 @@ Singleton check passes (target not in registry, or has dead pid). `RunDeps` iter
 
 ### Re-run `/start-sensor target` while target is alive
 
-`RunDeps` runs (paying for `kind=setup` deps, idempotent in practice — `make dependencies-up` is no-op when containers are already up). Singleton check rejects after spawn-attempt. Path: `alreadyRunning=true` → `detachAll(LiveStack)` removes the holders we just added → emit `rejected`. Cost is the wasted `RunOne` cycles for setup deps; acceptable given rejection is rare.
+`RunDeps` runs first (paying for `kind=setup` deps, idempotent in practice — `make dependencies-up` is no-op when containers are already up). Then step 6 enters the flock callback; the singleton check happens **before** any spawn (lines 121–125 of current `start.go`), so no subprocess is created. Path: `alreadyRunning=true` (set inside the flock callback) → flock released → `detachAll(LiveStack)` removes the holders we just added → emit `rejected`. Cost is the wasted `RunOne` cycles for setup deps; acceptable given rejection is rare.
 
 ### Dep dies between `AttachLiveDep` and root spawn
 
-The dep is in `LiveStack` but the dep's subprocess pid is dead. `RebindDepHolderPID` still works on the holder slot regardless. The root subprocess will spawn and try to connect to the dead dep, fail on its own, and surface the failure via stream individuals or aggregate. We do not attempt mid-flight resuscitation — that would be a fragile heuristic.
+The dep is in `LiveStack` but the dep's subprocess pid is dead. Two sub-cases for `RebindDepHolderPID`:
+
+- The dep's registry entry still exists (no concurrent `/stop-sensor` reaped it). Rebind finds the holder slot and swaps pid normally; the dep entry now has a holder pointing to the live root subprocess pid, but the dep's own `pid` field is dead. `/list-sensors` will flag this with `pid_alive=false` on the dep.
+- The dep's registry entry was already reaped (concurrent `/stop-sensor` removed it because all its holders were dead, our placeholder included). Rebind's idempotent contract kicks in: no match → silent no-op, no error. The root subprocess will spawn and try to connect to the dead dep, fail on its own, and surface the failure via stream individuals or aggregate.
+
+We do not attempt mid-flight resuscitation — that would be a fragile heuristic.
 
 ### Concurrent `/start-sensor target` invocations
 
@@ -400,6 +405,16 @@ The root subprocess is already alive at this point (steps 6 → 7). We don't unw
 ### Watcher spawn fails
 
 After root subprocess is up but before registry entry is fully written. The path runs `detachAll(LiveStack)`, kills the just-spawned root subprocess (via SIGTERM on its pgid since the registry write is partial), emits `failed` with `metadata.cause=watcher_spawn_failed`. This requires `start.go` to track the `det.PGID` outside the flock callback so it can be killed on this failure — already true in current code (`spawnResult.det.PGID` is captured). The kill-on-watcher-failure logic is added to the existing post-flock error branch.
+
+### `start.go` is SIGKILL'd between `AttachLiveDep` and `RebindDepHolderPID`
+
+No defer can run on SIGKILL. The dep's `held_by` retains the entry `(kind=sensor, id=target-id, pid=os.Getpid()_of_dead_start.go)`. The pid is dead, so:
+
+- `/list-sensors` flags this holder with `pid_alive=false`.
+- The next invocation of `/start-sensor target` (re-run after target is dead) reaches `AttachLiveDep` again. The reap-on-attach behavior added to `AttachLiveDep` removes the dead `(kind=sensor, id=target-id, pid=DEAD)` entry **before** adding the new placeholder. State self-heals on the next run; no manual intervention required.
+- If the user instead does `/stop-sensor dep --reap-dead-holders` first, the dead holder is removed there.
+
+This is the reason `AttachLiveDep` reaps stale same-id holders rather than blindly appending: combined with the SIGKILL scenario, blind append would let dead holders accumulate indefinitely across crashes.
 
 ## Testing strategy
 
@@ -539,7 +554,7 @@ Steps 1–3 are zero-behavior-change (refactor). Step 4 is the issue's actual fi
 
 ## References
 
-- Issue: [#7](https://github.com/iurykrieger/issues/7) — `/start-sensor: does not resolve depends_on (orchestrator bypassed)`.
+- Issue: [#7](https://github.com/iurykrieger/harness-framework/issues/7) — `/start-sensor: does not resolve depends_on (orchestrator bypassed)`.
 - Prior art:
   - `docs/superpowers/specs/2026-05-08-sensor-dependencies-design.md` — original DAG/cascade contract.
   - `docs/superpowers/specs/2026-05-09-blocking-sensors-design.md` — blocking-sensor lifecycle and `held_by` model.
