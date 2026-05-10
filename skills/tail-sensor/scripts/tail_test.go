@@ -94,7 +94,7 @@ func TestTail_Cursor0_ReturnsAll(t *testing.T) {
 		t.Fatal(err)
 	}
 	md := envelope["metadata"].(map[string]interface{})
-	if md["kind"] != "tail_envelope" {
+	if md["kind"] != "envelope" {
 		t.Fatalf("envelope kind: got %v", md["kind"])
 	}
 	if md["next_cursor"].(float64) != 2 {
@@ -138,7 +138,7 @@ func TestTail_NotRunning(t *testing.T) {
 	}
 	var sig map[string]interface{}
 	_ = json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &sig)
-	if sig["metadata"].(map[string]interface{})["kind"] != "tail_not_running" {
+	if sig["metadata"].(map[string]interface{})["kind"] != "not_running" {
 		t.Fatalf("kind: got %v", sig["metadata"])
 	}
 }
