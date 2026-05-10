@@ -242,8 +242,11 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 
 	if lockErr != nil {
 		cause := "registry_write_failed"
-		if strings.HasPrefix(lockErr.Error(), "start watcher:") {
+		switch {
+		case strings.HasPrefix(lockErr.Error(), "start watcher:"):
 			cause = "watcher_spawn_failed"
+		case strings.HasPrefix(lockErr.Error(), "spawn:"):
+			cause = "spawn_failed"
 		}
 		detachAll()
 		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", cause,

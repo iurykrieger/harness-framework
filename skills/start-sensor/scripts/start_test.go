@@ -427,6 +427,87 @@ func TestStart_PrepareFAIL(t *testing.T) {
 	}
 }
 
+func TestStart_WithBlockingDepAttach(t *testing.T) {
+	root := t.TempDir()
+	writeBlockingDepFixtureForStart(t, root, "blocking-tick")
+	writeBlockingTarget(t, root, "target", []string{"blocking-tick"}, nil)
+
+	// Pre-populate registry with an alive blocking-tick entry so the
+	// orchestrator attaches (dep_attached) instead of starting fresh
+	// (dep_started). Hold pid is os.Getpid() — current process is alive.
+	r := registry.NewRoot(root)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	preExistingHolder := registry.HeldByEntry{
+		Kind: "sensor", ID: "pre-existing-holder", PID: os.Getpid(), AttachedAt: "2026-05-10T00:00:00Z",
+	}
+	if err := registry.Save(r, registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{{
+			SensorID:  "blocking-tick",
+			PID:       os.Getpid(),
+			PGID:      os.Getpid(),
+			StartedAt: "2026-05-10T00:00:00Z",
+			Command:   "while true; do echo TICK; sleep 0.1; done",
+			LogDir:    filepath.Join(".runtime", "sensors", "blocking-tick"),
+			HeldBy:    []registry.HeldByEntry{preExistingHolder},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	preExistingDepPID := os.Getpid()
+
+	exit, sig := runStart(root, []string{"target"})
+	defer cleanupStartedTarget(t, root, "target")
+	defer cleanupBlockingDep(t, root, "blocking-tick", "target")
+	defer cleanupBlockingDep(t, root, "blocking-tick", "pre-existing-holder")
+
+	if exit != 0 {
+		t.Fatalf("exit: got %d, want 0; sig=%+v", exit, sig)
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if md["kind"] != "started" {
+		t.Fatalf("metadata.kind: got %v, want started", md["kind"])
+	}
+
+	rs, _ := registry.Load(r)
+	depEntry := rs.FindEntry("blocking-tick")
+	if depEntry == nil {
+		t.Fatal("blocking-tick should remain in registry")
+	}
+	// Subprocess pid unchanged — we attached, not relaunched.
+	if depEntry.PID != preExistingDepPID {
+		t.Errorf("dep subprocess pid changed: got %d, want %d (should not have relaunched)",
+			depEntry.PID, preExistingDepPID)
+	}
+	// Two holders: the pre-existing one plus our target's holder.
+	if len(depEntry.HeldBy) != 2 {
+		t.Fatalf("HeldBy length: got %d, want 2 (pre-existing + new target holder)", len(depEntry.HeldBy))
+	}
+	// One holder is from "target" pointing to target's subproc pid (post-rebind).
+	targetEntry := rs.FindEntry("target")
+	if targetEntry == nil {
+		t.Fatal("target should be in registry")
+	}
+	foundTargetHolder := false
+	foundPreExistingHolder := false
+	for _, h := range depEntry.HeldBy {
+		if h.Kind == "sensor" && h.ID == "target" && h.PID == targetEntry.PID {
+			foundTargetHolder = true
+		}
+		if h.Kind == "sensor" && h.ID == "pre-existing-holder" {
+			foundPreExistingHolder = true
+		}
+	}
+	if !foundTargetHolder {
+		t.Errorf("expected target holder with pid=%d in HeldBy=%+v", targetEntry.PID, depEntry.HeldBy)
+	}
+	if !foundPreExistingHolder {
+		t.Errorf("pre-existing holder should be preserved in HeldBy=%+v", depEntry.HeldBy)
+	}
+}
+
 func TestStart_PrepareFAIL_DetachesLiveStack(t *testing.T) {
 	root := t.TempDir()
 	writeBlockingDepFixtureForStart(t, root, "blocking-tick")
