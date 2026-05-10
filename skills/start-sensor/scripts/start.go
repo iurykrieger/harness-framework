@@ -54,29 +54,29 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 
 	path, err := libsensor.ResolveByID(id, projectRoot)
 	if err != nil {
-		return 2, finalSignal(id, nil, "failed", "resolve_failed",
+		return 2, validateSignal(v, finalSignal(id, nil, "failed", "resolve_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("resolve: %v", err))
+			fmt.Sprintf("resolve: %v", err)), id)
 	}
 
 	sensorJSON, err := loadSensorJSON(path)
 	if err != nil {
-		return 2, finalSignal(id, nil, "failed", "resolve_failed",
+		return 2, validateSignal(v, finalSignal(id, nil, "failed", "resolve_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			err.Error())
+			err.Error()), id)
 	}
 
 	if err := v.Validate(schema.TargetSensor, sensorJSON); err != nil {
-		return 1, finalSignal(id, sensorJSON, "failed", "schema_invalid",
+		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "schema_invalid",
 			map[string]interface{}{"error_excerpt": fmt.Sprintf("%v", err)},
-			fmt.Sprintf("schema: %v", err))
+			fmt.Sprintf("schema: %v", err)), id)
 	}
 
 	execMap, _ := sensorJSON["execution"].(map[string]interface{})
 	blocking, _ := execMap["blocking"].(bool)
 	if !blocking {
-		return 2, finalSignal(id, sensorJSON, "failed", "not_blocking", nil,
-			"sensor is not blocking; use /run-sensor instead")
+		return 2, validateSignal(v, finalSignal(id, sensorJSON, "failed", "not_blocking", nil,
+			"sensor is not blocking; use /run-sensor instead"), id)
 	}
 
 	// Pre-flight: resolve DAG, run deps, detect cascade.
@@ -93,12 +93,8 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 
 	if pre.ExitCode != 0 {
 		detachAll()
-		exitCode := pre.ExitCode
-		if exitCode == 0 {
-			exitCode = 1
-		}
-		return exitCode, finalSignal(id, sensorJSON, "failed", "preflight_failed", nil,
-			"pre-flight failed; see earlier signals or stderr")
+		return pre.ExitCode, validateSignal(v, finalSignal(id, sensorJSON, "failed", "preflight_failed", nil,
+			"pre-flight failed; see earlier signals or stderr"), id)
 	}
 	if pre.CascadeSig != nil {
 		md, _ := pre.CascadeSig["metadata"].(map[string]interface{})
@@ -111,8 +107,8 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		failedID, _ := md["failed_dep_id"].(string)
 		failedVerdict, _ := md["failed_dep_verdict"].(string)
 		detachAll()
-		return 1, finalSignal(id, sensorJSON, "failed", "dep_cascade", aux,
-			fmt.Sprintf("dependency %q produced verdict=%s; root not started", failedID, failedVerdict))
+		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "dep_cascade", aux,
+			fmt.Sprintf("dependency %q produced verdict=%s; root not started", failedID, failedVerdict)), id)
 	}
 
 	target := pre.Order[len(pre.Order)-1]
@@ -124,8 +120,8 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		aux := map[string]interface{}{
 			"lifecycle": map[string]interface{}{"prepare": prepResults},
 		}
-		return 1, finalSignal(id, sensorJSON, "failed", "prepare_failed", aux,
-			"target prepare[] failed")
+		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "prepare_failed", aux,
+			"target prepare[] failed"), id)
 	}
 
 	// Singleton + spawn detached + watcher + registry write.
@@ -134,29 +130,29 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 	logDir := r.SensorDir(id)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		detachAll()
-		return 1, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
+		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("mkdir log dir: %v", err))
+			fmt.Sprintf("mkdir log dir: %v", err)), id)
 	}
 	if err := os.WriteFile(r.RawLog(id), nil, 0o644); err != nil {
 		detachAll()
-		return 1, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
+		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("create raw.log: %v", err))
+			fmt.Sprintf("create raw.log: %v", err)), id)
 	}
 	if err := os.WriteFile(r.SignalsLog(id), nil, 0o644); err != nil {
 		detachAll()
-		return 1, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
+		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("create signals.log: %v", err))
+			fmt.Sprintf("create signals.log: %v", err)), id)
 	}
 
 	watcherPath, err := watcherBinaryPath()
 	if err != nil {
 		detachAll()
-		return 1, finalSignal(id, sensorJSON, "failed", "watcher_spawn_failed",
+		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "watcher_spawn_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("watcher binary: %v", err))
+			fmt.Sprintf("watcher binary: %v", err)), id)
 	}
 
 	type spawnResult struct {
@@ -250,16 +246,16 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 			cause = "watcher_spawn_failed"
 		}
 		detachAll()
-		return 1, finalSignal(id, sensorJSON, "failed", cause,
+		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", cause,
 			map[string]interface{}{"error_excerpt": lockErr.Error()},
-			fmt.Sprintf("write registry: %v", lockErr))
+			fmt.Sprintf("write registry: %v", lockErr)), id)
 	}
 
 	if alreadyRunning {
 		detachAll()
-		return 1, finalSignal(id, sensorJSON, "rejected", "",
+		return 1, validateSignal(v, finalSignal(id, sensorJSON, "rejected", "",
 			map[string]interface{}{"existing_pid": alreadyRunningPID},
-			fmt.Sprintf("sensor %q already running with pid %d", id, alreadyRunningPID))
+			fmt.Sprintf("sensor %q already running with pid %d", id, alreadyRunningPID)), id)
 	}
 
 	// Rebind: dep holders go from placeholderPID to spawned.det.PID.

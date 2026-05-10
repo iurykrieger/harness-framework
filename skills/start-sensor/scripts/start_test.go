@@ -15,11 +15,6 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
-// TestMain installs a stub watcher binary (symlink to /bin/true) in the
-// test binary's directory so tests that reach the spawn-watcher step do
-// not fail with "no such file". The watcher exits immediately (pass),
-// which is acceptable for all /start-sensor tests because watcher
-// behaviour is covered by start_watcher-tagged tests independently.
 func TestMain(m *testing.M) {
 	// Install a stub watcher binary (copy of /usr/bin/true) in the test
 	// binary's directory so tests that reach the spawn-watcher step do not
