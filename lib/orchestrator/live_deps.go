@@ -30,9 +30,21 @@ func RunWithDepsRoot(ctx context.Context, id, projectRoot, schemasDir string, st
 // AttachLiveDep starts (or attaches to) a blocking dep. Emits a
 // `dep_attached` or `dep_started` Signal on stdout. Returns the dep id
 // so the caller can stack it for detach.
-func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string, v *schema.Validator, stdout, stderr io.Writer) (string, error) {
+//
+// holderPID is recorded in held_by as the holder's pid. Callers that are
+// the holder use os.Getpid(); callers that will hand the holder over to
+// a different process (notably /start-sensor, which spawns a detached
+// subprocess that becomes the holder) pass a placeholder pid and later
+// rebind via RebindDepHolderPID.
+//
+// Reap-on-attach: when the dep is alive and we are adding a new
+// (kind=sensor, id=holderID) holder, any pre-existing
+// (kind=sensor, id=holderID, pid=DEAD) entries are dropped first. This
+// prevents accumulation of dead holders across re-runs of the same
+// holder identity (e.g., /start-sensor target re-runs after start.go
+// crashes between AttachLiveDep and RebindDepHolderPID).
+func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string, holderPID int, v *schema.Validator, stdout, stderr io.Writer) (string, error) {
 	r := registry.NewRoot(projectRoot)
-	holderPID := os.Getpid()
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	holder := registry.HeldByEntry{Kind: "sensor", ID: holderID, PID: holderPID, AttachedAt: now}
 
@@ -44,7 +56,10 @@ func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string
 		}
 		existing := rs.FindEntry(dep.ID)
 		if existing != nil && registry.IsPIDAlive(existing.PID) {
-			registry.AddHolder(existing, holder)
+			reapDeadSameIDHolders(existing, holderID)
+			if !hasLiveSameIDHolder(existing, holderID) {
+				registry.AddHolder(existing, holder)
+			}
 			return registry.Save(r, rs)
 		}
 		// Not live: start it.
@@ -62,6 +77,31 @@ func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string
 	sig = validateOrFallback(v, sig, dep.ID, stderr)
 	_ = json.NewEncoder(stdout).Encode(sig)
 	return dep.ID, nil
+}
+
+// reapDeadSameIDHolders drops every (kind="sensor", id=holderID, pid=DEAD)
+// entry from entry.HeldBy in place. Live holders, manual holders, and
+// holders with different ids are preserved.
+func reapDeadSameIDHolders(entry *registry.RunningSensorEntry, holderID string) {
+	keep := entry.HeldBy[:0]
+	for _, h := range entry.HeldBy {
+		if h.Kind == "sensor" && h.ID == holderID && !registry.IsPIDAlive(h.PID) {
+			continue
+		}
+		keep = append(keep, h)
+	}
+	entry.HeldBy = keep
+}
+
+// hasLiveSameIDHolder returns true when entry.HeldBy contains at least one
+// (kind="sensor", id=holderID, pid=ALIVE) entry.
+func hasLiveSameIDHolder(entry *registry.RunningSensorEntry, holderID string) bool {
+	for _, h := range entry.HeldBy {
+		if h.Kind == "sensor" && h.ID == holderID && registry.IsPIDAlive(h.PID) {
+			return true
+		}
+	}
+	return false
 }
 
 // DetachLiveDep removes the holder from dep's HeldBy. If HeldBy becomes

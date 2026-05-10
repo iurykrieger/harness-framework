@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
@@ -69,7 +70,7 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 		execMap, _ := s.JSON["execution"].(map[string]interface{})
 		blocking, _ := execMap["blocking"].(bool)
 		if blocking && s.ID != rootID {
-			depID, err := AttachLiveDep(ctx, s, projectRoot, rootID, v, stdout, stderr)
+			depID, err := AttachLiveDep(ctx, s, projectRoot, rootID, os.Getpid(), v, stdout, stderr)
 			if err != nil {
 				cascade := buildSimpleSignal(rootID, "error", "high", "dep_start_failed", err.Error())
 				_ = json.NewEncoder(stdout).Encode(cascade)
