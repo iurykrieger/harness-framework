@@ -252,19 +252,14 @@ func RebindDepHolderPID(depID, projectRoot, holderID string, oldPID, newPID int)
 		if entry == nil {
 			return nil
 		}
-		matched := false
 		for i := range entry.HeldBy {
 			h := &entry.HeldBy[i]
 			if h.Kind == "sensor" && h.ID == holderID && h.PID == oldPID {
 				h.PID = newPID
-				matched = true
-				break
+				return registry.Save(r, rs)
 			}
 		}
-		if !matched {
-			return nil
-		}
-		return registry.Save(r, rs)
+		return nil
 	})
 }
 
