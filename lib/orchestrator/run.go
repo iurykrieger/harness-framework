@@ -22,9 +22,13 @@ import (
 //
 // Exit codes:
 //
-//	0 — every requested-or-implied sensor produced a Signal (some may be
-//	     cascade or fail/error; emission is what matters for exit 0).
-//	1 — DAG resolution failed (cycle, missing dep, malformed sensor JSON).
+//	0 — root sensor ran via RunOne and its aggregate was emitted (verdict
+//	     pass/warn/fail/error baked into the Signal — exit code reflects
+//	     emission, not verdict).
+//	1 — root sensor did not run: either DAG resolution failed (cycle,
+//	     missing dep, malformed sensor JSON), or a dep produced
+//	     fail/error and the root was cascade-skipped. A cascade Signal is
+//	     still emitted to stdout before the non-zero exit.
 //	2 — schema/io error opening the sensor or schemas.
 func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, stderr io.Writer) int {
 	abs, err := filepath.Abs(sensorPath)

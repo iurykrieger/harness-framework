@@ -174,7 +174,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		_ = json.NewEncoder(stdout).Encode(cascade)
-		return 0
+		return 1
 	}
 
 	envelope, err := sensor.BuildEnvelope(sensorJSON)
