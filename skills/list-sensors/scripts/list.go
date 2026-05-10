@@ -1,8 +1,11 @@
 //go:build list_sensors
 
-// list reads .runtime/sensors/running_sensors.json, annotates each
-// entry with PID liveness, and emits one Signal verdict=pass,
-// metadata.kind=list with the full table under metadata.entries.
+// list reads .runtime/sensors/running_sensors.json (resolved via
+// registry.Lookup, NOT os.Getwd()), annotates each entry with PID
+// liveness, and emits one Signal verdict=pass / metadata.kind=list.
+//
+// When the registry file does not exist, emits verdict=warn with
+// remediation pointing at HARNESS_REGISTRY_ROOT.
 package main
 
 import (
@@ -19,27 +22,57 @@ import (
 )
 
 func main() {
-	root, err := os.Getwd()
+	startDir, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "list: cwd:", err)
 		os.Exit(2)
 	}
-	os.Exit(runList(root, os.Stdout, os.Stderr))
+	res, err := registry.Lookup(startDir)
+	if err != nil {
+		_ = json.NewEncoder(os.Stdout).Encode(registry.DiscoveryErrorSignal(err, "list-sensors"))
+		os.Exit(1)
+	}
+	os.Exit(runList(res, os.Stdout, os.Stderr))
 }
 
-func runList(projectRoot string, stdout, stderr io.Writer) int {
+func runList(res registry.Result, stdout, stderr io.Writer) int {
 	v, code := schema.LoadValidator("", stderr)
 	if code != 0 {
-		_ = json.NewEncoder(stdout).Encode(errorListSignal("schema validator init failed"))
+		_ = json.NewEncoder(stdout).Encode(errorListSignal(res, "schema validator init failed"))
 		return code
 	}
 
-	r := registry.NewRoot(projectRoot)
-	rs, err := registry.Load(r)
-	if err != nil {
-		_ = json.NewEncoder(stdout).Encode(validateSignal(v, errorListSignal(fmt.Sprintf("load registry: %v", err)), stderr))
-		return 1
+	r := res.Root
+	rs := res.State
+
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+
+	if !res.Exists {
+		sig := map[string]interface{}{
+			"sensor_id":   "list-sensors",
+			"version":     "0.0.0",
+			"run_id":      uuid.NewString(),
+			"started_at":  now,
+			"finished_at": now,
+			"verdict":     "warn",
+			"severity":    "info",
+			"confidence":  1.0,
+			"evidence": []interface{}{
+				map[string]interface{}{
+					"rationale": fmt.Sprintf(
+						"registry not found at %s. /start-sensor was likely run from a different cwd, or this project has no live blocking sensors. "+
+							"If you expect sensors to be live, set HARNESS_REGISTRY_ROOT to the project root used at start time, or rerun /list-sensors from within that project.",
+						r.RegistryFile(),
+					),
+				},
+			},
+			"cost_actual": map[string]interface{}{"latency_ms": 0},
+			"metadata":    listMetadata(res, []interface{}{}),
+		}
+		_ = json.NewEncoder(stdout).Encode(validateSignal(v, sig, stderr))
+		return 0
 	}
+
 	entries := make([]interface{}, 0, len(rs.Entries))
 	for _, e := range rs.Entries {
 		pidAlive := registry.IsPIDAlive(e.PID)
@@ -61,7 +94,6 @@ func runList(projectRoot string, stdout, stderr io.Writer) int {
 			"state":            state,
 		})
 	}
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	sig := map[string]interface{}{
 		"sensor_id":   "list-sensors",
 		"version":     "0.0.0",
@@ -73,13 +105,23 @@ func runList(projectRoot string, stdout, stderr io.Writer) int {
 		"confidence":  1.0,
 		"evidence":    []interface{}{map[string]interface{}{"rationale": fmt.Sprintf("%d running sensor(s)", len(entries))}},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata": map[string]interface{}{
-			"kind":    "list",
-			"entries": entries,
-		},
+		"metadata":    listMetadata(res, entries),
 	}
 	_ = json.NewEncoder(stdout).Encode(validateSignal(v, sig, stderr))
 	return 0
+}
+
+// listMetadata builds the metadata map shared by both verdict branches.
+// All entries except "entries" are diagnostic (where the registry was
+// looked up and how).
+func listMetadata(res registry.Result, entries []interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"kind":            "list",
+		"entries":         entries,
+		"registry_path":   res.Root.RegistryFile(),
+		"registry_source": string(res.Source),
+		"registry_exists": res.Exists,
+	}
 }
 
 func heldBySummaries(hs []registry.HeldByEntry) []interface{} {
@@ -96,9 +138,6 @@ func heldBySummaries(hs []registry.HeldByEntry) []interface{} {
 	return out
 }
 
-// validateSignal checks sig against signal.json. If validation fails it logs
-// the error to stderr and returns a minimal emergency signal so the bug
-// surfaces without recursion. On success it returns sig unchanged.
 func validateSignal(v *schema.Validator, sig map[string]interface{}, stderr io.Writer) map[string]interface{} {
 	if err := v.Validate(schema.TargetSignal, sig); err != nil {
 		fmt.Fprintf(stderr, "list: BUG: emitted signal failed signal.json validation: %v\n", err)
@@ -120,7 +159,7 @@ func validateSignal(v *schema.Validator, sig map[string]interface{}, stderr io.W
 	return sig
 }
 
-func errorListSignal(rationale string) map[string]interface{} {
+func errorListSignal(res registry.Result, rationale string) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	return map[string]interface{}{
 		"sensor_id":   "list-sensors",
@@ -133,6 +172,11 @@ func errorListSignal(rationale string) map[string]interface{} {
 		"confidence":  1.0,
 		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata":    map[string]interface{}{"kind": "list_failed"},
+		"metadata": map[string]interface{}{
+			"kind":            "list_failed",
+			"registry_path":   res.Root.RegistryFile(),
+			"registry_source": string(res.Source),
+			"registry_exists": res.Exists,
+		},
 	}
 }
