@@ -250,6 +250,8 @@ func stringField(m map[string]interface{}, k string) string {
 // severity, and evidence explicitly so the intent is clear at each call site.
 func buildStartedSkeleton(res registry.Result, id string, sensorJSON map[string]interface{}) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = "started"
 	return map[string]interface{}{
 		"sensor_id":   id,
 		"version":     stringField(sensorJSON, "version"),
@@ -258,17 +260,14 @@ func buildStartedSkeleton(res registry.Result, id string, sensorJSON map[string]
 		"finished_at": now,
 		"confidence":  1.0,
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata": map[string]interface{}{
-			"kind":            "started",
-			"registry_path":   res.Root.RegistryFile(),
-			"registry_source": string(res.Source),
-			"registry_exists": res.Exists,
-		},
+		"metadata":    md,
 	}
 }
 
 func errorSignal(res registry.Result, id, rationale string) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = "start_failed"
 	return map[string]interface{}{
 		"sensor_id":   id,
 		"version":     "0.0.0",
@@ -280,12 +279,7 @@ func errorSignal(res registry.Result, id, rationale string) map[string]interface
 		"confidence":  1.0,
 		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata": map[string]interface{}{
-			"kind":            "start_failed",
-			"registry_path":   res.Root.RegistryFile(),
-			"registry_source": string(res.Source),
-			"registry_exists": res.Exists,
-		},
+		"metadata":    md,
 	}
 }
 

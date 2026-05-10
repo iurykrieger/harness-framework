@@ -167,6 +167,27 @@ func Lookup(startDir string) (Result, error) {
 	}, nil
 }
 
+// DiagnoseMetadata returns the standard registry-discovery diagnostic
+// fields for embedding in any Signal's metadata. Skills should use this
+// instead of inlining the three-field literal so adding or renaming a
+// diagnose field is a one-place change.
+//
+// The map contains exactly:
+//   - registry_path:   absolute path to running_sensors.json
+//   - registry_source: "env" | "walk_up"
+//   - registry_exists: bool indicating whether the file is on disk
+//
+// Callers MUST merge these into their signal's metadata map (or copy
+// the fields), not replace metadata wholesale — other fields (kind,
+// entries, counts, etc.) are owned by the caller.
+func DiagnoseMetadata(res Result) map[string]interface{} {
+	return map[string]interface{}{
+		"registry_path":   res.Root.RegistryFile(),
+		"registry_source": string(res.Source),
+		"registry_exists": res.Exists,
+	}
+}
+
 // DiscoveryErrorSignal builds an error Signal describing a failed
 // registry-root discovery. The returned map satisfies signal.json
 // (verdict=error, severity=high, all required envelope fields). The

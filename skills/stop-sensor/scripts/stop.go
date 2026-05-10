@@ -257,15 +257,11 @@ func runTeardown(sensorJSON map[string]interface{}) []map[string]interface{} {
 
 func buildAggregate(res registry.Result, id string, sensorJSON map[string]interface{}, entry *registry.RunningSensorEntry, individuals []map[string]interface{}, agg libsignal.AggregateResult, killedForcefully bool, reaped []registry.HeldByEntry, teardown []map[string]interface{}) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	md := map[string]interface{}{
-		"kind":            "aggregate",
-		"output_mode":     "stream",
-		"command":         entry.Command,
-		"counts":          libsignal.CountVerdicts(individuals),
-		"registry_path":   res.Root.RegistryFile(),
-		"registry_source": string(res.Source),
-		"registry_exists": res.Exists,
-	}
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = "aggregate"
+	md["output_mode"] = "stream"
+	md["command"] = entry.Command
+	md["counts"] = libsignal.CountVerdicts(individuals)
 	if entry.SubprocessExit != nil {
 		md["subprocess_self_exited"] = true
 		md["subprocess_exit_code"] = entry.SubprocessExit.Code
@@ -354,6 +350,8 @@ func validateSignal(v *schema.Validator, sig map[string]interface{}, id string) 
 
 func simpleSignal(res registry.Result, id, verdict, severity, kind, rationale string) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = kind
 	return map[string]interface{}{
 		"sensor_id":   id,
 		"version":     "0.0.0",
@@ -365,11 +363,6 @@ func simpleSignal(res registry.Result, id, verdict, severity, kind, rationale st
 		"confidence":  1.0,
 		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata": map[string]interface{}{
-			"kind":            kind,
-			"registry_path":   res.Root.RegistryFile(),
-			"registry_source": string(res.Source),
-			"registry_exists": res.Exists,
-		},
+		"metadata":    md,
 	}
 }

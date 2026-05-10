@@ -115,13 +115,10 @@ func runList(res registry.Result, stdout, stderr io.Writer) int {
 // All entries except "entries" are diagnostic (where the registry was
 // looked up and how).
 func listMetadata(res registry.Result, entries []interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"kind":            "list",
-		"entries":         entries,
-		"registry_path":   res.Root.RegistryFile(),
-		"registry_source": string(res.Source),
-		"registry_exists": res.Exists,
-	}
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = "list"
+	md["entries"] = entries
+	return md
 }
 
 func heldBySummaries(hs []registry.HeldByEntry) []interface{} {
@@ -161,6 +158,8 @@ func validateSignal(v *schema.Validator, sig map[string]interface{}, stderr io.W
 
 func errorListSignal(res registry.Result, rationale string) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = "list_failed"
 	return map[string]interface{}{
 		"sensor_id":   "list-sensors",
 		"version":     "0.0.0",
@@ -172,11 +171,6 @@ func errorListSignal(res registry.Result, rationale string) map[string]interface
 		"confidence":  1.0,
 		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata": map[string]interface{}{
-			"kind":            "list_failed",
-			"registry_path":   res.Root.RegistryFile(),
-			"registry_source": string(res.Source),
-			"registry_exists": res.Exists,
-		},
+		"metadata":    md,
 	}
 }

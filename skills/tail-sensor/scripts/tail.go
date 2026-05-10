@@ -96,6 +96,10 @@ func runTail(res registry.Result, args []string, stdout, stderr io.Writer) int {
 
 func tailEnvelope(res registry.Result, id string, nextCursor int) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = "tail_envelope"
+	md["next_cursor"] = nextCursor
+	md["sensor_id"] = id // legacy field, do not remove
 	return map[string]interface{}{
 		"sensor_id":   id,
 		"version":     "0.0.0",
@@ -107,14 +111,7 @@ func tailEnvelope(res registry.Result, id string, nextCursor int) map[string]int
 		"confidence":  1.0,
 		"evidence":    []interface{}{map[string]interface{}{"rationale": "tail envelope"}},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata": map[string]interface{}{
-			"kind":            "tail_envelope",
-			"next_cursor":     nextCursor,
-			"sensor_id":       id,
-			"registry_path":   res.Root.RegistryFile(),
-			"registry_source": string(res.Source),
-			"registry_exists": res.Exists,
-		},
+		"metadata":    md,
 	}
 }
 
@@ -141,6 +138,8 @@ func validateSignal(v *schema.Validator, sig map[string]interface{}, id string, 
 
 func simpleErrSignal(res registry.Result, id, kind, rationale string) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = kind
 	return map[string]interface{}{
 		"sensor_id":   id,
 		"version":     "0.0.0",
@@ -152,11 +151,6 @@ func simpleErrSignal(res registry.Result, id, kind, rationale string) map[string
 		"confidence":  1.0,
 		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata": map[string]interface{}{
-			"kind":            kind,
-			"registry_path":   res.Root.RegistryFile(),
-			"registry_source": string(res.Source),
-			"registry_exists": res.Exists,
-		},
+		"metadata":    md,
 	}
 }

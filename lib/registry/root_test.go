@@ -295,6 +295,49 @@ func TestDiscoveryErrorSignal_Shape(t *testing.T) {
 	}
 }
 
+func TestDiagnoseMetadata_Fields(t *testing.T) {
+	parent := t.TempDir()
+	proj := makeProjectTree(t, parent)
+	r := registry.NewRoot(proj)
+	res := registry.Result{
+		Root:        r,
+		ProjectRoot: proj,
+		Source:      registry.SourceWalkUp,
+		Exists:      true,
+	}
+	md := registry.DiagnoseMetadata(res)
+	if md["registry_path"] != r.RegistryFile() {
+		t.Errorf("registry_path: got %v, want %v", md["registry_path"], r.RegistryFile())
+	}
+	if md["registry_source"] != "walk_up" {
+		t.Errorf("registry_source: got %v, want \"walk_up\"", md["registry_source"])
+	}
+	if md["registry_exists"] != true {
+		t.Errorf("registry_exists: got %v, want true", md["registry_exists"])
+	}
+	if len(md) != 3 {
+		t.Errorf("expected exactly 3 fields, got %d: %+v", len(md), md)
+	}
+}
+
+func TestDiagnoseMetadata_SourceEnvAndAbsent(t *testing.T) {
+	parent := t.TempDir()
+	proj := makeProjectTree(t, parent)
+	res := registry.Result{
+		Root:        registry.NewRoot(proj),
+		ProjectRoot: proj,
+		Source:      registry.SourceEnv,
+		Exists:      false,
+	}
+	md := registry.DiagnoseMetadata(res)
+	if md["registry_source"] != "env" {
+		t.Errorf("registry_source: got %v, want \"env\"", md["registry_source"])
+	}
+	if md["registry_exists"] != false {
+		t.Errorf("registry_exists: got %v, want false", md["registry_exists"])
+	}
+}
+
 func TestDiscoveryErrorSignal_ValidatesAgainstSchema(t *testing.T) {
 	t.Setenv("HARNESS_REGISTRY_ROOT", "")
 	_, _, derr := registry.Discover(t.TempDir())
