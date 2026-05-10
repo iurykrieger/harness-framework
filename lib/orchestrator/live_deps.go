@@ -232,6 +232,42 @@ func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, v *sch
 	_ = json.NewEncoder(stdout).Encode(agg)
 }
 
+// RebindDepHolderPID atomically updates the pid of a holder in dep.HeldBy.
+// Match by (kind="sensor", id=holderID, pid=oldPID); if found, swap to
+// newPID. Idempotent: no matching holder (or no dep entry at all) →
+// silent no-op (returns nil).
+//
+// Used by /start-sensor after spawning the root subprocess to swap the
+// placeholder pid (os.Getpid() of start.go) for the actual root subproc
+// pid, so /list-sensors and /stop-sensor see a holder pid that mirrors
+// the root sensor's lifetime.
+func RebindDepHolderPID(depID, projectRoot, holderID string, oldPID, newPID int) error {
+	r := registry.NewRoot(projectRoot)
+	return registry.WithFileLock(r.LockFile(), func() error {
+		rs, err := registry.Load(r)
+		if err != nil {
+			return err
+		}
+		entry := rs.FindEntry(depID)
+		if entry == nil {
+			return nil
+		}
+		matched := false
+		for i := range entry.HeldBy {
+			h := &entry.HeldBy[i]
+			if h.Kind == "sensor" && h.ID == holderID && h.PID == oldPID {
+				h.PID = newPID
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil
+		}
+		return registry.Save(r, rs)
+	})
+}
+
 func buildSimpleSignal(id, verdict, severity, kind, rationale string) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	return map[string]interface{}{

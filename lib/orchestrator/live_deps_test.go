@@ -236,3 +236,74 @@ func TestAttachLiveDep_ReapsStaleSameHolder(t *testing.T) {
 	// Cleanup.
 	orchestrator.DetachLiveDep("blocking-tick", root, "holder-id", v, io.Discard, io.Discard)
 }
+
+func TestRebindDepHolderPID_Match(t *testing.T) {
+	root := t.TempDir()
+	writeBlockingDep(t, root, "blocking-tick")
+	dep := loadDepSensor(t, root, "blocking-tick")
+	v := loadValidator(t)
+	var out, errBuf bytes.Buffer
+
+	const oldPID = 12345
+	const newPID = 67890
+	if _, err := orchestrator.AttachLiveDep(
+		context.Background(), dep, root, "holder-id", oldPID,
+		v, &out, &errBuf,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := orchestrator.RebindDepHolderPID("blocking-tick", root, "holder-id", oldPID, newPID); err != nil {
+		t.Fatal(err)
+	}
+
+	r := registry.NewRoot(root)
+	rs, _ := registry.Load(r)
+	entry := rs.FindEntry("blocking-tick")
+	if len(entry.HeldBy) != 1 {
+		t.Fatalf("HeldBy length: got %d, want 1", len(entry.HeldBy))
+	}
+	if entry.HeldBy[0].PID != newPID {
+		t.Errorf("rebound PID: got %d, want %d", entry.HeldBy[0].PID, newPID)
+	}
+
+	orchestrator.DetachLiveDep("blocking-tick", root, "holder-id", v, io.Discard, io.Discard)
+}
+
+func TestRebindDepHolderPID_NoMatch_IsNoop(t *testing.T) {
+	root := t.TempDir()
+	writeBlockingDep(t, root, "blocking-tick")
+	dep := loadDepSensor(t, root, "blocking-tick")
+	v := loadValidator(t)
+	var out, errBuf bytes.Buffer
+
+	const realPID = 12345
+	if _, err := orchestrator.AttachLiveDep(
+		context.Background(), dep, root, "holder-id", realPID,
+		v, &out, &errBuf,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebind with non-matching oldPID — should silently succeed.
+	if err := orchestrator.RebindDepHolderPID("blocking-tick", root, "holder-id", 99999, 777); err != nil {
+		t.Errorf("RebindDepHolderPID: got error %v, want nil (idempotent no-op)", err)
+	}
+
+	r := registry.NewRoot(root)
+	rs, _ := registry.Load(r)
+	entry := rs.FindEntry("blocking-tick")
+	if entry.HeldBy[0].PID != realPID {
+		t.Errorf("PID after no-op rebind: got %d, want %d (unchanged)", entry.HeldBy[0].PID, realPID)
+	}
+
+	orchestrator.DetachLiveDep("blocking-tick", root, "holder-id", v, io.Discard, io.Discard)
+}
+
+func TestRebindDepHolderPID_DepEntryMissing_IsNoop(t *testing.T) {
+	root := t.TempDir()
+	// No registry entry exists for this id.
+	if err := orchestrator.RebindDepHolderPID("never-attached", root, "holder-id", 1, 2); err != nil {
+		t.Errorf("RebindDepHolderPID for missing dep: got error %v, want nil (idempotent no-op)", err)
+	}
+}
