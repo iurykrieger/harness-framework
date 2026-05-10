@@ -2,18 +2,23 @@
 
 // start spawns a blocking sensor's command in a detached session,
 // records it in the registry, and emits a Signal verdict=pass,
-// metadata.kind=started.
+// metadata.kind=started. Runs the full lifecycle: pre-flight (deps via
+// orchestrator.RunDeps) → prepare[] of root → spawn detached + watcher
+// + registry write → rebind dep holder pids → started.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	libsensor "github.com/iurykrieger/harness-framework/lib/sensor"
@@ -21,17 +26,12 @@ import (
 )
 
 func main() {
-	startDir, err := os.Getwd()
+	root, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "start: cwd:", err)
 		os.Exit(2)
 	}
-	res, err := registry.Lookup(startDir)
-	if err != nil {
-		_ = json.NewEncoder(os.Stdout).Encode(registry.DiscoveryErrorSignal(err, ""))
-		os.Exit(1)
-	}
-	exit, sig := runStart(res, os.Args[1:])
+	exit, sig := runStart(root, os.Args[1:])
 	if sig != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(sig)
 	}
@@ -41,96 +41,143 @@ func main() {
 // runStart performs the full /start-sensor lifecycle for sensor id given
 // in args[0]. Returns (exitCode, finalSignal). The signal is encoded by
 // the caller; tests inspect it directly.
-//
-// Note: execution.prepare[] is not yet executed for blocking sensors; this
-// is a documented follow-up. Manual /start-sensor invocation skips prepare
-// today; orchestrator-driven blocking deps don't run it either.
-func runStart(res registry.Result, args []string) (int, map[string]interface{}) {
+func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
+	v, vCode := schema.LoadValidator("", os.Stderr)
+	if vCode != 0 {
+		return vCode, finalSignal("unknown", nil, "failed", "bootstrap_failed", nil, "schema validator init failed")
+	}
+
 	if len(args) < 1 {
-		return 2, errorSignal(res, "start", "missing sensor id argument")
+		return 2, finalSignal("unknown", nil, "failed", "bootstrap_failed", nil, "missing sensor id argument")
 	}
 	id := args[0]
-	projectRoot := res.ProjectRoot
 
 	path, err := libsensor.ResolveByID(id, projectRoot)
 	if err != nil {
-		return 2, errorSignal(res, id, fmt.Sprintf("resolve: %v", err))
+		return 2, finalSignal(id, nil, "failed", "resolve_failed",
+			map[string]interface{}{"error_excerpt": err.Error()},
+			fmt.Sprintf("resolve: %v", err))
 	}
 
 	sensorJSON, err := loadSensorJSON(path)
 	if err != nil {
-		return 2, errorSignal(res, id, err.Error())
+		return 2, finalSignal(id, nil, "failed", "resolve_failed",
+			map[string]interface{}{"error_excerpt": err.Error()},
+			err.Error())
 	}
 
-	// 1. Schema-validate the sensor definition before any further checks.
-	v, code := schema.LoadValidator("", os.Stderr)
-	if code != 0 {
-		return code, errorSignal(res, id, "schema validator init failed")
-	}
 	if err := v.Validate(schema.TargetSensor, sensorJSON); err != nil {
-		return 1, errorSignal(res, id, fmt.Sprintf("schema: %v", err))
+		return 1, finalSignal(id, sensorJSON, "failed", "schema_invalid",
+			map[string]interface{}{"error_excerpt": fmt.Sprintf("%v", err)},
+			fmt.Sprintf("schema: %v", err))
 	}
 
-	// 2. Reject non-blocking sensors with exit 2 (usage error).
 	execMap, _ := sensorJSON["execution"].(map[string]interface{})
 	blocking, _ := execMap["blocking"].(bool)
 	if !blocking {
-		return 2, errorSignal(res, id, "sensor is not blocking; use /run-sensor instead")
+		return 2, finalSignal(id, sensorJSON, "failed", "not_blocking", nil,
+			"sensor is not blocking; use /run-sensor instead")
 	}
 
+	// Pre-flight: resolve DAG, run deps, detect cascade.
+	placeholderPID := os.Getpid()
+	pre := orchestrator.RunDeps(
+		context.Background(), id, projectRoot, "" /*schemasDir*/, id /*holderID*/, placeholderPID,
+		v, os.Stdout, os.Stderr,
+	)
+	detachAll := func() {
+		for i := len(pre.LiveStack) - 1; i >= 0; i-- {
+			orchestrator.DetachLiveDep(pre.LiveStack[i], projectRoot, id, v, os.Stdout, os.Stderr)
+		}
+	}
+
+	if pre.ExitCode != 0 {
+		detachAll()
+		exitCode := pre.ExitCode
+		if exitCode == 0 {
+			exitCode = 1
+		}
+		return exitCode, finalSignal(id, sensorJSON, "failed", "preflight_failed", nil,
+			"pre-flight failed; see earlier signals or stderr")
+	}
+	if pre.CascadeSig != nil {
+		md, _ := pre.CascadeSig["metadata"].(map[string]interface{})
+		aux := map[string]interface{}{
+			"failed_dep_id":       md["failed_dep_id"],
+			"failed_dep_run_id":   md["failed_dep_run_id"],
+			"failed_dep_verdict":  md["failed_dep_verdict"],
+			"failed_dep_severity": md["failed_dep_severity"],
+		}
+		failedID, _ := md["failed_dep_id"].(string)
+		failedVerdict, _ := md["failed_dep_verdict"].(string)
+		detachAll()
+		return 1, finalSignal(id, sensorJSON, "failed", "dep_cascade", aux,
+			fmt.Sprintf("dependency %q produced verdict=%s; root not started", failedID, failedVerdict))
+	}
+
+	target := pre.Order[len(pre.Order)-1]
+
+	// Run target's prepare[] fail-fast.
+	prepResults, prepFailed := orchestrator.RunPreparePhase(context.Background(), target, readTimeoutMS(target.JSON))
+	if prepFailed {
+		detachAll()
+		aux := map[string]interface{}{
+			"lifecycle": map[string]interface{}{"prepare": prepResults},
+		}
+		return 1, finalSignal(id, sensorJSON, "failed", "prepare_failed", aux,
+			"target prepare[] failed")
+	}
+
+	// Singleton + spawn detached + watcher + registry write.
 	command, _ := execMap["command"].(string)
-	r := res.Root
+	r := registry.NewRoot(projectRoot)
 	logDir := r.SensorDir(id)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		return 1, errorSignal(res, id, fmt.Sprintf("mkdir log dir: %v", err))
+		detachAll()
+		return 1, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
+			map[string]interface{}{"error_excerpt": err.Error()},
+			fmt.Sprintf("mkdir log dir: %v", err))
 	}
 	if err := os.WriteFile(r.RawLog(id), nil, 0o644); err != nil {
-		return 1, errorSignal(res, id, fmt.Sprintf("create raw.log: %v", err))
+		detachAll()
+		return 1, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
+			map[string]interface{}{"error_excerpt": err.Error()},
+			fmt.Sprintf("create raw.log: %v", err))
 	}
 	if err := os.WriteFile(r.SignalsLog(id), nil, 0o644); err != nil {
-		return 1, errorSignal(res, id, fmt.Sprintf("create signals.log: %v", err))
+		detachAll()
+		return 1, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
+			map[string]interface{}{"error_excerpt": err.Error()},
+			fmt.Sprintf("create signals.log: %v", err))
 	}
 
 	watcherPath, err := watcherBinaryPath()
 	if err != nil {
-		return 1, errorSignal(res, id, fmt.Sprintf("watcher binary: %v", err))
+		detachAll()
+		return 1, finalSignal(id, sensorJSON, "failed", "watcher_spawn_failed",
+			map[string]interface{}{"error_excerpt": err.Error()},
+			fmt.Sprintf("watcher binary: %v", err))
 	}
 
-	// 3. Serialize the entire check-then-spawn-then-write sequence under a
-	// single flock so two concurrent /start-sensor calls cannot both pass the
-	// liveness check and both spawn subprocesses (which would leak the first
-	// process when the second's lock block overwrites its registry entry).
-	//
-	// Holding the flock during fork is acceptable because:
-	//   - The flock is process-bound; the child does NOT inherit it.
-	//   - The fork itself is sub-millisecond.
-	//   - This matches the spec's intent: serialize the entire
-	//     "no-other-process-is-spawning-this-id" guarantee.
 	type spawnResult struct {
 		det         subprocess.DetachResult
 		watcherProc *os.Process
 		envelope    libsensor.Envelope
 	}
 	var spawned spawnResult
-	var lockErr error
 	var alreadyRunning bool
 	var alreadyRunningPID int
 
-	lockErr = registry.WithFileLock(r.LockFile(), func() error {
-		// 3a. Load registry inside the lock.
+	lockErr := registry.WithFileLock(r.LockFile(), func() error {
 		rs, err := registry.Load(r)
 		if err != nil {
 			return fmt.Errorf("load registry: %w", err)
 		}
-
-		// 3b. Liveness check inside the lock — early return if already alive.
 		if existing := rs.FindEntry(id); existing != nil && registry.IsPIDAlive(existing.PID) {
 			alreadyRunning = true
 			alreadyRunningPID = existing.PID
 			return nil
 		}
-
-		// 3c. Spawn the detached subprocess.
 		det, err := subprocess.SpawnDetached(subprocess.DetachConfig{
 			Command: command,
 			LogFile: r.RawLog(id),
@@ -138,7 +185,6 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 		if err != nil {
 			return fmt.Errorf("spawn: %w", err)
 		}
-
 		envelope := libsensor.Envelope{
 			SensorID:   id,
 			Version:    stringField(sensorJSON, "version"),
@@ -155,7 +201,6 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 		patternsJSON, _ := json.Marshal(patterns)
 		envelopeJSON, _ := json.Marshal(envelope)
 
-		// 3d. Spawn the watcher process.
 		watcherProc, err := os.StartProcess(watcherPath, []string{watcherPath}, &os.ProcAttr{
 			Env: []string{
 				fmt.Sprintf("HARNESS_WATCHER_RAW=%s", r.RawLog(id)),
@@ -170,11 +215,14 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 			Sys:   &watcherSysProcAttr,
 		})
 		if err != nil {
+			// Kill the just-spawned root subprocess so we don't orphan it.
+			if det.PGID > 0 {
+				_ = killGroup(det.PGID)
+			}
 			return fmt.Errorf("start watcher: %w", err)
 		}
 		_ = watcherProc.Release()
 
-		// 3e. Write the new registry entry — only reached if both spawns succeeded.
 		rs.RemoveEntry(id)
 		rs.Entries = append(rs.Entries, registry.RunningSensorEntry{
 			SensorID:   id,
@@ -197,34 +245,58 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 	})
 
 	if lockErr != nil {
-		return 1, errorSignal(res, id, fmt.Sprintf("write registry: %v", lockErr))
+		cause := "registry_write_failed"
+		if strings.HasPrefix(lockErr.Error(), "start watcher:") {
+			cause = "watcher_spawn_failed"
+		}
+		detachAll()
+		return 1, finalSignal(id, sensorJSON, "failed", cause,
+			map[string]interface{}{"error_excerpt": lockErr.Error()},
+			fmt.Sprintf("write registry: %v", lockErr))
 	}
 
 	if alreadyRunning {
-		sig := buildStartedSkeleton(res, id, sensorJSON)
-		sig["verdict"] = "error"
-		sig["severity"] = "high"
-		sig["evidence"] = []interface{}{map[string]interface{}{
-			"rationale": fmt.Sprintf("sensor %q already running with pid %d", id, alreadyRunningPID),
-		}}
-		sig["metadata"].(map[string]interface{})["kind"] = "start_rejected"
-		return 1, validateSignal(v, sig, id)
+		detachAll()
+		return 1, finalSignal(id, sensorJSON, "rejected", "",
+			map[string]interface{}{"existing_pid": alreadyRunningPID},
+			fmt.Sprintf("sensor %q already running with pid %d", id, alreadyRunningPID))
 	}
 
-	sig := buildStartedSkeleton(res, id, sensorJSON)
-	sig["verdict"] = "pass"
-	sig["severity"] = "info"
-	sig["evidence"] = []interface{}{map[string]interface{}{
-		"rationale": fmt.Sprintf("sensor %q started, pid=%d, watcher_pid=%d", id, spawned.det.PID, spawned.watcherProc.Pid),
-	}}
+	// Rebind: dep holders go from placeholderPID to spawned.det.PID.
+	var rebindWarnings []interface{}
+	for _, depID := range pre.LiveStack {
+		if err := orchestrator.RebindDepHolderPID(depID, projectRoot, id, placeholderPID, spawned.det.PID); err != nil {
+			rebindWarnings = append(rebindWarnings, map[string]interface{}{
+				"dep_id": depID,
+				"error":  err.Error(),
+			})
+		}
+	}
+
+	aux := map[string]interface{}{
+		"pid":         spawned.det.PID,
+		"watcher_pid": spawned.watcherProc.Pid,
+		"log_dir":     filepath.Join(".runtime", "sensors", id),
+		"next_cursor": 0,
+	}
+	if len(prepResults) > 0 {
+		aux["lifecycle"] = map[string]interface{}{"prepare": prepResults}
+	}
+	if len(pre.LiveStack) > 0 {
+		ds := []interface{}{}
+		for _, d := range pre.LiveStack {
+			ds = append(ds, d)
+		}
+		aux["dep_chain"] = ds
+	}
+	if len(rebindWarnings) > 0 {
+		aux["rebind_warnings"] = rebindWarnings
+	}
+
+	sig := finalSignal(id, sensorJSON, "started", "", aux,
+		fmt.Sprintf("sensor %q started, pid=%d, watcher_pid=%d", id, spawned.det.PID, spawned.watcherProc.Pid))
 	sig["run_id"] = spawned.envelope.RunID
 	sig["started_at"] = spawned.envelope.StartedAt
-	md := sig["metadata"].(map[string]interface{})
-	md["kind"] = "started"
-	md["pid"] = spawned.det.PID
-	md["watcher_pid"] = spawned.watcherProc.Pid
-	md["log_dir"] = filepath.Join(".runtime", "sensors", id)
-	md["next_cursor"] = 0
 	return 0, validateSignal(v, sig, id)
 }
 
@@ -245,47 +317,75 @@ func stringField(m map[string]interface{}, k string) string {
 	return v
 }
 
-// buildStartedSkeleton returns the envelope fields common to all started/rejected
-// signals, including the registry diagnose metadata. Callers must set verdict,
-// severity, and evidence explicitly so the intent is clear at each call site.
-func buildStartedSkeleton(res registry.Result, id string, sensorJSON map[string]interface{}) map[string]interface{} {
+func readTimeoutMS(s map[string]interface{}) int {
+	cost, _ := s["cost"].(map[string]interface{})
+	if cost == nil {
+		return 0
+	}
+	lat, _ := cost["latency"].(map[string]interface{})
+	if lat == nil {
+		return 0
+	}
+	if v, ok := lat["timeout_ms"].(float64); ok {
+		return int(v)
+	}
+	return 0
+}
+
+// finalSignal builds the terminal signal of /start-sensor. cause is
+// required for kind="failed" and ignored for "started"/"rejected".
+// aux is merged into metadata, carrying kind-specific fields per the
+// design spec's table.
+func finalSignal(
+	id string,
+	sensorJSON map[string]interface{},
+	kind string,
+	cause string,
+	aux map[string]interface{},
+	rationale string,
+) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	md := registry.DiagnoseMetadata(res)
-	md["kind"] = "started"
+	verdict := "error"
+	severity := "high"
+	if kind == "started" {
+		verdict = "pass"
+		severity = "info"
+	}
+	version := "0.0.0"
+	if sensorJSON != nil {
+		version = stringField(sensorJSON, "version")
+		if version == "" {
+			version = "0.0.0"
+		}
+	}
+	md := map[string]interface{}{"kind": kind}
+	if kind == "failed" && cause != "" {
+		md["cause"] = cause
+	}
+	for k, val := range aux {
+		md[k] = val
+	}
 	return map[string]interface{}{
 		"sensor_id":   id,
-		"version":     stringField(sensorJSON, "version"),
+		"version":     version,
 		"run_id":      uuid.NewString(),
 		"started_at":  now,
 		"finished_at": now,
+		"verdict":     verdict,
+		"severity":    severity,
 		"confidence":  1.0,
+		"evidence": []interface{}{
+			map[string]interface{}{"rationale": rationale},
+		},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
 		"metadata":    md,
 	}
 }
 
-func errorSignal(res registry.Result, id, rationale string) map[string]interface{} {
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	md := registry.DiagnoseMetadata(res)
-	md["kind"] = "start_failed"
-	return map[string]interface{}{
-		"sensor_id":   id,
-		"version":     "0.0.0",
-		"run_id":      uuid.NewString(),
-		"started_at":  now,
-		"finished_at": now,
-		"verdict":     "error",
-		"severity":    "high",
-		"confidence":  1.0,
-		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
-		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata":    md,
-	}
-}
-
-// validateSignal checks sig against signal.json. If validation fails it logs
-// the error to stderr and returns a minimal emergency signal so the bug
-// surfaces without recursion. On success it returns sig unchanged.
+// validateSignal checks sig against signal.json. If validation fails it
+// logs the error to stderr and returns a minimal emergency signal so
+// the bug surfaces without recursion. On success it returns sig
+// unchanged.
 func validateSignal(v *schema.Validator, sig map[string]interface{}, id string) map[string]interface{} {
 	if err := v.Validate(schema.TargetSignal, sig); err != nil {
 		fmt.Fprintf(os.Stderr, "start: BUG: emitted signal failed signal.json validation: %v\n", err)
