@@ -1,0 +1,130 @@
+package registry
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+// Source labels how Discover resolved the project root.
+type Source string
+
+const (
+	// SourceEnv means HARNESS_REGISTRY_ROOT was honored.
+	SourceEnv Source = "env"
+	// SourceWalkUp means the sensors/ marker was found by walking up
+	// from startDir.
+	SourceWalkUp Source = "walk_up"
+)
+
+// envVarName is the env var Discover honors first.
+const envVarName = "HARNESS_REGISTRY_ROOT"
+
+// markerDir is the directory name Discover walks up looking for.
+const markerDir = "sensors"
+
+// DiscoveryError is returned when neither HARNESS_REGISTRY_ROOT nor a
+// sensors/ marker resolved a project root. Callers can use errors.As to
+// distinguish discovery errors from parse or I/O failures.
+type DiscoveryError struct {
+	StartDir string
+	EnvValue string // raw env var contents, may be empty
+	Reason   string // brief reason ("env not absolute", "marker not found", ...)
+}
+
+func (e *DiscoveryError) Error() string {
+	return fmt.Sprintf(
+		"registry root discovery failed: %s. HARNESS_REGISTRY_ROOT=%q, started walk-up from %q. "+
+			"Either run from a directory inside a project that contains %q/, or set HARNESS_REGISTRY_ROOT to the project's absolute path.",
+		e.Reason, e.EnvValue, e.StartDir, markerDir,
+	)
+}
+
+// Discover resolves the project root using HARNESS_REGISTRY_ROOT first,
+// then walking up from startDir looking for a sensors/ directory.
+//
+// HARNESS_REGISTRY_ROOT takes precedence because it is the operator's
+// explicit override — useful when invoking skills from outside the project
+// tree (CI, shell scripts). When unset, the walk-up mirrors the schema
+// discovery pattern in lib/schema, but looks for sensors/ (the user-project
+// tree) rather than schemas/ (the plugin tree).
+//
+// EvalSymlinks is applied to the env-var path so that a symlink pointing
+// to a directory is treated as a valid directory root; the resolved path
+// is returned so all downstream callers see a stable canonical path.
+//
+// Errors:
+//   - HARNESS_REGISTRY_ROOT is set but not absolute, not an existing
+//     directory, or otherwise unreachable.
+//   - Walk-up reached the filesystem root with no sensors/ found.
+//
+// startDir is the caller's anchor (typically os.Getwd()). It is only
+// consulted when HARNESS_REGISTRY_ROOT is unset/empty.
+func Discover(startDir string) (string, Source, error) {
+	if env := os.Getenv(envVarName); env != "" {
+		root, err := validateEnvRoot(env)
+		if err != nil {
+			return "", "", &DiscoveryError{
+				StartDir: startDir,
+				EnvValue: env,
+				Reason:   err.Error(),
+			}
+		}
+		return root, SourceEnv, nil
+	}
+	root, err := walkUpForMarker(startDir)
+	if err != nil {
+		return "", "", &DiscoveryError{
+			StartDir: startDir,
+			EnvValue: "",
+			Reason:   err.Error(),
+		}
+	}
+	return root, SourceWalkUp, nil
+}
+
+// validateEnvRoot enforces the env-var contract: absolute, EvalSymlinks
+// resolves, and the resolved path is an existing directory.
+func validateEnvRoot(env string) (string, error) {
+	if !filepath.IsAbs(env) {
+		return "", fmt.Errorf("HARNESS_REGISTRY_ROOT must be an absolute path, got %q", env)
+	}
+	resolved, err := filepath.EvalSymlinks(env)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("HARNESS_REGISTRY_ROOT path does not exist: %q", env)
+		}
+		return "", fmt.Errorf("HARNESS_REGISTRY_ROOT eval symlinks: %w", err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("HARNESS_REGISTRY_ROOT stat: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("HARNESS_REGISTRY_ROOT is not a directory: %q", env)
+	}
+	return resolved, nil
+}
+
+// walkUpForMarker walks parent-by-parent from startDir looking for a
+// directory whose sensors/ child is itself a directory (symlinks to dirs
+// accepted via os.Stat; emptiness allowed). Returns the absolute path of
+// the matched ancestor, or an error when the filesystem root is reached.
+func walkUpForMarker(startDir string) (string, error) {
+	abs, err := filepath.Abs(startDir)
+	if err != nil {
+		return "", fmt.Errorf("abs(%q): %w", startDir, err)
+	}
+	for {
+		candidate := filepath.Join(abs, markerDir)
+		info, err := os.Stat(candidate) // os.Stat follows symlinks
+		if err == nil && info.IsDir() {
+			return abs, nil
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return "", fmt.Errorf("%s/ marker not found walking up from %q", markerDir, startDir)
+		}
+		abs = parent
+	}
+}
