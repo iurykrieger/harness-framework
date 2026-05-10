@@ -128,3 +128,38 @@ func walkUpForMarker(startDir string) (string, error) {
 		abs = parent
 	}
 }
+
+// Result aggregates discovery and state load in one return value so
+// each skill needs a single call.
+type Result struct {
+	Root        Root           // ready-to-use, anchored at ProjectRoot
+	ProjectRoot string         // absolute path
+	Source      Source         // SourceEnv or SourceWalkUp
+	Exists      bool           // running_sensors.json present on disk
+	State       RunningSensors // {Version: 1, Entries: nil} if !Exists
+}
+
+// Lookup resolves the project root, builds a Root, and loads the
+// registry state. "Registry file does not exist" is NOT an error — it
+// is reported as Result.Exists == false with an empty State.
+//
+// Errors mirror Discover (returns *DiscoveryError) plus parse failures
+// from a malformed running_sensors.json on disk.
+func Lookup(startDir string) (Result, error) {
+	root, source, err := Discover(startDir)
+	if err != nil {
+		return Result{}, err
+	}
+	r := NewRoot(root)
+	state, exists, err := LoadOrEmpty(r)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{
+		Root:        r,
+		ProjectRoot: root,
+		Source:      source,
+		Exists:      exists,
+		State:       state,
+	}, nil
+}

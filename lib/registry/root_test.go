@@ -173,3 +173,87 @@ func TestDiscover_DiscoveryError_IsTyped(t *testing.T) {
 		t.Errorf("error should be *registry.DiscoveryError, got %T: %v", err, err)
 	}
 }
+
+func TestLookup_FileAbsent(t *testing.T) {
+	parent := t.TempDir()
+	proj := makeProjectTree(t, parent)
+	t.Setenv("HARNESS_REGISTRY_ROOT", "")
+	res, err := registry.Lookup(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Exists {
+		t.Errorf("Exists: got true, want false")
+	}
+	if res.ProjectRoot != proj {
+		t.Errorf("ProjectRoot: got %q, want %q", res.ProjectRoot, proj)
+	}
+	if res.Source != registry.SourceWalkUp {
+		t.Errorf("Source: got %q, want %q", res.Source, registry.SourceWalkUp)
+	}
+	if res.State.Version != 1 {
+		t.Errorf("State.Version: got %d, want 1", res.State.Version)
+	}
+	if len(res.State.Entries) != 0 {
+		t.Errorf("State.Entries: got %d, want 0", len(res.State.Entries))
+	}
+	if res.Root.RegistryFile() == "" {
+		t.Error("Root unwired")
+	}
+}
+
+func TestLookup_FilePresentWithEntries(t *testing.T) {
+	parent := t.TempDir()
+	proj := makeProjectTree(t, parent)
+	r := registry.NewRoot(proj)
+	want := registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{
+			{SensorID: "loop", PID: 1234, StartedAt: "2026-05-10T00:00:00Z"},
+		},
+	}
+	if err := registry.Save(r, want); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HARNESS_REGISTRY_ROOT", "")
+	res, err := registry.Lookup(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Exists {
+		t.Errorf("Exists: got false, want true")
+	}
+	if len(res.State.Entries) != 1 || res.State.Entries[0].SensorID != "loop" {
+		t.Errorf("State.Entries: got %+v", res.State.Entries)
+	}
+}
+
+func TestLookup_DiscoveryFailurePropagates(t *testing.T) {
+	parent := t.TempDir() // no sensors/ marker anywhere
+	t.Setenv("HARNESS_REGISTRY_ROOT", "")
+	_, err := registry.Lookup(parent)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var de *registry.DiscoveryError
+	if !errors.As(err, &de) {
+		t.Errorf("expected DiscoveryError, got %T: %v", err, err)
+	}
+}
+
+func TestLookup_MalformedJSONReturnsError(t *testing.T) {
+	parent := t.TempDir()
+	proj := makeProjectTree(t, parent)
+	r := registry.NewRoot(proj)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.RegistryFile(), []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HARNESS_REGISTRY_ROOT", "")
+	_, err := registry.Lookup(proj)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+}
