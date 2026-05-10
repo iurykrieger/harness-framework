@@ -82,6 +82,11 @@ func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string
 // reapDeadSameIDHolders drops every (kind="sensor", id=holderID, pid=DEAD)
 // entry from entry.HeldBy in place. Live holders, manual holders, and
 // holders with different ids are preserved.
+//
+// Similar to registry.ReapDead but scoped to holders that match a
+// specific holderID. Used by AttachLiveDep to clean stale entries left
+// over from a previous run of the same holder (e.g., a /start-sensor
+// that crashed after AttachLiveDep but before RebindDepHolderPID).
 func reapDeadSameIDHolders(entry *registry.RunningSensorEntry, holderID string) {
 	keep := entry.HeldBy[:0]
 	for _, h := range entry.HeldBy {
@@ -95,6 +100,12 @@ func reapDeadSameIDHolders(entry *registry.RunningSensorEntry, holderID string) 
 
 // hasLiveSameIDHolder returns true when entry.HeldBy contains at least one
 // (kind="sensor", id=holderID, pid=ALIVE) entry.
+//
+// Used by AttachLiveDep to make re-attach idempotent: if a live holder
+// with the same id already exists, skip adding a duplicate. Combined
+// with reapDeadSameIDHolders, this keeps held_by free of duplicates
+// per logical (id, lifetime) pair without requiring the caller to
+// pre-check.
 func hasLiveSameIDHolder(entry *registry.RunningSensorEntry, holderID string) bool {
 	for _, h := range entry.HeldBy {
 		if h.Kind == "sensor" && h.ID == holderID && registry.IsPIDAlive(h.PID) {

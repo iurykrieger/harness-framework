@@ -139,7 +139,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		depExecMap, _ := dep.JSON["execution"].(map[string]interface{})
 		blocking, _ := depExecMap["blocking"].(bool)
 		if blocking {
-			depID, aerr := orchestrator.AttachLiveDep(context.Background(), dep, projectRoot, rootID, v, stdout, stderr)
+			depID, aerr := orchestrator.AttachLiveDep(context.Background(), dep, projectRoot, rootID, os.Getpid(), v, stdout, stderr)
 			if aerr != nil {
 				fmt.Fprintln(stderr, "error: attach live dep:", aerr)
 				return 1
