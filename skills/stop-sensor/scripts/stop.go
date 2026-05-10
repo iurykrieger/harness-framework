@@ -293,8 +293,11 @@ func buildAggregate(res registry.Result, id string, sensorJSON map[string]interf
 // deadHolderSummaries returns the subset of holders with kind=sensor and
 // pid no longer alive. Empty slice (not nil) when none. Allows callers
 // to distinguish "no dead holders" from "no holders at all".
-func deadHolderSummaries(holders []registry.HeldByEntry) []map[string]interface{} {
-	out := []map[string]interface{}{}
+//
+// Return type matches holderSummaries so consumers can type-assert
+// metadata.dead_holders and metadata.holders the same way.
+func deadHolderSummaries(holders []registry.HeldByEntry) []interface{} {
+	out := []interface{}{}
 	for _, h := range holders {
 		if h.Kind != "sensor" {
 			continue
