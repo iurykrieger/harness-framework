@@ -56,6 +56,22 @@ func TestRunPreparePhase_AllPass(t *testing.T) {
 	}
 }
 
+func TestRunPreparePhase_NoExecution(t *testing.T) {
+	target := orchestrator.Sensor{
+		ID: "no-execution",
+		JSON: map[string]interface{}{
+			"id": "no-execution",
+		},
+	}
+	results, failed := orchestrator.RunPreparePhase(context.Background(), target, 1000)
+	if failed {
+		t.Errorf("failed: got true, want false (no execution map)")
+	}
+	if results != nil {
+		t.Errorf("results: got %v, want nil", results)
+	}
+}
+
 func TestRunPreparePhase_FirstFails_FailFast(t *testing.T) {
 	target := orchestrator.Sensor{
 		ID: "first-fails",
