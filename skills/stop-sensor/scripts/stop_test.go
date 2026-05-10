@@ -57,7 +57,7 @@ func TestStop_NotRunning_ReturnsWarn(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("exit: got %d, want 0", exit)
 	}
-	if sig["verdict"] != "warn" || sig["metadata"].(map[string]interface{})["kind"] != "stop_not_running" {
+	if sig["verdict"] != "warn" || sig["metadata"].(map[string]interface{})["kind"] != "not_running" {
 		t.Fatalf("got: %+v", sig)
 	}
 	md := sig["metadata"].(map[string]interface{})
@@ -92,7 +92,7 @@ func TestStop_HoldByDependent_RefusesStop(t *testing.T) {
 		t.Fatalf("exit: got %d, want 0", exit)
 	}
 	md := sig["metadata"].(map[string]interface{})
-	if md["kind"] != "stop_held" {
+	if md["kind"] != "held" {
 		t.Fatalf("kind: got %v", md["kind"])
 	}
 	rs2, _ := registry.Load(r)

@@ -50,13 +50,13 @@ func main() {
 
 func runStop(res registry.Result, args []string, reap bool) (int, map[string]interface{}) {
 	if len(args) < 1 {
-		return 2, simpleSignal(res, "stop", "warn", "low", "stop_not_running", "missing sensor id")
+		return 2, simpleSignal(res, "stop", "warn", "low", "not_running", "missing sensor id")
 	}
 	id := args[0]
 
 	v, code := schema.LoadValidator("", os.Stderr)
 	if code != 0 {
-		return code, simpleSignal(res, id, "error", "high", "stop_failed", "schema validator init failed")
+		return code, simpleSignal(res, id, "error", "high", "failed", "schema validator init failed")
 	}
 
 	if !res.Exists {
@@ -87,21 +87,18 @@ func runStop(res registry.Result, args []string, reap bool) (int, map[string]int
 		// doesn't leave a stale "manual" hold.
 		return registry.Save(r, rs)
 	}); err != nil {
-		return 1, validateSignal(v, simpleSignal(res, id, "error", "high", "stop_failed", fmt.Sprintf("registry: %v", err)), id)
+		return 1, validateSignal(v, simpleSignal(res, id, "error", "high", "failed", fmt.Sprintf("registry: %v", err)), id)
 	}
 
 	if entry == nil {
-		return 0, validateSignal(v, simpleSignal(res, id, "warn", "low", "stop_not_running", fmt.Sprintf("no live entry for %q", id)), id)
+		return 0, validateSignal(v, simpleSignal(res, id, "warn", "low", "not_running", fmt.Sprintf("no live entry for %q", id)), id)
 	}
 
 	if registry.IsHeld(entry) {
-		kind := "stop_held"
-		if hasDeadHolder(entry) {
-			kind = "stop_held_with_dead_holders"
-		}
-		sig := simpleSignal(res, id, "warn", "low", kind, fmt.Sprintf("sensor %q still held by %d holders", id, len(entry.HeldBy)))
+		sig := simpleSignal(res, id, "warn", "low", "held", fmt.Sprintf("sensor %q still held by %d holders", id, len(entry.HeldBy)))
 		md := sig["metadata"].(map[string]interface{})
 		md["holders"] = holderSummaries(entry.HeldBy)
+		md["dead_holders"] = deadHolderSummaries(entry.HeldBy)
 		if len(reaped) > 0 {
 			md["reaped_holders"] = holderSummaries(reaped)
 		}
@@ -139,7 +136,7 @@ func runStop(res registry.Result, args []string, reap bool) (int, map[string]int
 		rs.RemoveEntry(id)
 		return registry.Save(r, rs)
 	}); err != nil {
-		return 1, validateSignal(v, simpleSignal(res, id, "error", "high", "stop_failed", fmt.Sprintf("registry: %v", err)), id)
+		return 1, validateSignal(v, simpleSignal(res, id, "error", "high", "failed", fmt.Sprintf("registry: %v", err)), id)
 	}
 	return 0, validateSignal(v, sig, id)
 }
@@ -293,13 +290,26 @@ func buildAggregate(res registry.Result, id string, sensorJSON map[string]interf
 	}
 }
 
-func hasDeadHolder(entry *registry.RunningSensorEntry) bool {
-	for _, h := range entry.HeldBy {
-		if h.Kind == "sensor" && !registry.IsPIDAlive(h.PID) {
-			return true
+// deadHolderSummaries returns the subset of holders with kind=sensor and
+// pid no longer alive. Empty slice (not nil) when none. Allows callers
+// to distinguish "no dead holders" from "no holders at all".
+func deadHolderSummaries(holders []registry.HeldByEntry) []map[string]interface{} {
+	out := []map[string]interface{}{}
+	for _, h := range holders {
+		if h.Kind != "sensor" {
+			continue
 		}
+		if registry.IsPIDAlive(h.PID) {
+			continue
+		}
+		out = append(out, map[string]interface{}{
+			"kind":        h.Kind,
+			"id":          h.ID,
+			"pid":         h.PID,
+			"attached_at": h.AttachedAt,
+		})
 	}
-	return false
+	return out
 }
 
 func holderSummaries(hs []registry.HeldByEntry) []interface{} {
