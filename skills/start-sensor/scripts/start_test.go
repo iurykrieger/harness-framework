@@ -26,6 +26,22 @@ func writeFixtureSensor(t *testing.T, projectRoot, id string, body map[string]in
 	return path
 }
 
+func resultFor(t *testing.T, projectRoot string, exists bool) registry.Result {
+	t.Helper()
+	r := registry.NewRoot(projectRoot)
+	state, _, err := registry.LoadOrEmpty(r)
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	return registry.Result{
+		Root:        r,
+		ProjectRoot: projectRoot,
+		Source:      registry.SourceWalkUp,
+		Exists:      exists,
+		State:       state,
+	}
+}
+
 func TestStart_RejectsNonBlocking(t *testing.T) {
 	root := t.TempDir()
 	writeFixtureSensor(t, root, "not-blocking", map[string]interface{}{
@@ -62,7 +78,8 @@ func TestStart_RejectsNonBlocking(t *testing.T) {
 			},
 		},
 	})
-	exit, _ := runStart(root, []string{"not-blocking"})
+	res := resultFor(t, root, false)
+	exit, _ := runStart(res, []string{"not-blocking"})
 	if exit != 2 {
 		t.Fatalf("expected exit 2, got %d", exit)
 	}
@@ -83,12 +100,24 @@ func TestStart_RejectsAlreadyRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFixtureSensor(t, root, "loop", blockingFixtureBody())
-	exit, sig := runStart(root, []string{"loop"})
+	res := resultFor(t, root, true)
+	exit, sig := runStart(res, []string{"loop"})
 	if exit != 1 {
 		t.Fatalf("expected exit 1, got %d", exit)
 	}
-	if sig["metadata"].(map[string]interface{})["kind"] != "start_rejected" {
-		t.Fatalf("metadata.kind: got %v", sig["metadata"])
+	md := sig["metadata"].(map[string]interface{})
+	if md["kind"] != "start_rejected" {
+		t.Fatalf("metadata.kind: got %v", md["kind"])
+	}
+	if md["registry_exists"] != true {
+		t.Errorf("metadata.registry_exists: got %v, want true", md["registry_exists"])
+	}
+	if md["registry_source"] != "walk_up" {
+		t.Errorf("metadata.registry_source: got %v", md["registry_source"])
+	}
+	wantPath := filepath.Join(root, ".runtime", "sensors", "running_sensors.json")
+	if md["registry_path"] != wantPath {
+		t.Errorf("metadata.registry_path: got %v, want %v", md["registry_path"], wantPath)
 	}
 }
 
