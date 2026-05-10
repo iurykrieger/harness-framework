@@ -102,3 +102,29 @@ func (rs *RunningSensors) RemoveEntry(id string) {
 	}
 	rs.Entries = out
 }
+
+// LoadOrEmpty reads running_sensors.json and reports existence
+// explicitly:
+//   - file present and parseable → (state, true, nil)
+//   - file absent                → (RunningSensors{Version: 1}, false, nil)
+//   - file present but malformed → (zero, false, parse error)
+//
+// Load is preserved unchanged for callers that do not care about
+// existence (orchestrator, watcher).
+func LoadOrEmpty(r Root) (RunningSensors, bool, error) {
+	data, err := os.ReadFile(r.RegistryFile())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return RunningSensors{Version: 1}, false, nil
+		}
+		return RunningSensors{}, false, fmt.Errorf("read registry: %w", err)
+	}
+	var rs RunningSensors
+	if err := json.Unmarshal(data, &rs); err != nil {
+		return RunningSensors{}, false, fmt.Errorf("parse registry: %w", err)
+	}
+	if rs.Version == 0 {
+		rs.Version = 1
+	}
+	return rs, true, nil
+}

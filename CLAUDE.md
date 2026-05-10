@@ -79,6 +79,27 @@ Per-step lifecycle results fold into the aggregate Signal under `metadata.lifecy
 
 The orchestrator lives in `lib/orchestrator/` (DAG resolution + lifecycle execution + cascade construction) and is reused by both `run-computational` and `run-inferential` runner scripts.
 
+### Registry root discovery
+
+The blocking-sensor registry (`<projectRoot>/.runtime/sensors/running_sensors.json`) lives in the user's project tree, NOT in the plugin tree. To make this resolution deterministic and cwd-independent, the four registry-touching skills (`/start-sensor`, `/list-sensors`, `/stop-sensor`, `/tail-sensor`) call `lib/registry/Lookup(cwd)` which resolves the project root in this order:
+
+1. **`HARNESS_REGISTRY_ROOT` env var.** Must be an absolute path to an existing directory. The env var names the **project root** — i.e., the directory that contains `sensors/`, not `sensors/` itself. Symlinks are resolved via `EvalSymlinks`.
+2. **Walk-up from `cwd` looking for `sensors/`.** The first ancestor whose `sensors/` child is itself a directory is the project root. Empty `sensors/` is acceptable.
+3. **Failure.** No fallback to `cwd`. The skill emits an error Signal `metadata.kind=registry_discovery_failed` whose evidence names both strategies tried.
+
+Every signal emitted by the four skills carries `metadata.{registry_path, registry_source, registry_exists}` for diagnose. `registry_source` is `"env"` or `"walk_up"`; `registry_exists` is `true` only when `running_sensors.json` is on disk.
+
+Verdict semantics by skill when the registry file is absent (`registry_exists: false`):
+
+| Skill | Verdict on missing file | Why |
+| --- | --- | --- |
+| `/start-sensor` | `pass` (canonical first-start) | Creating a registry is the point of `/start-sensor`. |
+| `/list-sensors` | `warn` | Likely "wrong cwd" or no live sensors yet. |
+| `/stop-sensor` | `error` | A sensor cannot be running if there is no registry file. |
+| `/tail-sensor` | `error` | Same reasoning as `/stop-sensor`. |
+
+The watcher subprocess inherits the resolved root via `HARNESS_WATCHER_REGISTRY_ROOT` (set by `/start-sensor` from `Result.ProjectRoot`); that env var is a precise absolute path, not a discovery hint.
+
 ## Build, validate, test
 
 Single Go module at the repo root: `module github.com/iurykrieger/harness-framework` (Go 1.25). Per-skill modules only if a skill needs an isolated dependency graph.

@@ -31,30 +31,41 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	root, err := os.Getwd()
+	startDir, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "stop: cwd:", err)
 		os.Exit(2)
 	}
-	exit, sig := runStop(root, fs.Args(), reap)
+	res, err := registry.Lookup(startDir)
+	if err != nil {
+		_ = json.NewEncoder(os.Stdout).Encode(registry.DiscoveryErrorSignal(err, ""))
+		os.Exit(1)
+	}
+	exit, sig := runStop(res, fs.Args(), reap)
 	if sig != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(sig)
 	}
 	os.Exit(exit)
 }
 
-func runStop(projectRoot string, args []string, reap bool) (int, map[string]interface{}) {
+func runStop(res registry.Result, args []string, reap bool) (int, map[string]interface{}) {
 	if len(args) < 1 {
-		return 2, simpleSignal("stop", "warn", "low", "stop_not_running", "missing sensor id")
+		return 2, simpleSignal(res, "stop", "warn", "low", "stop_not_running", "missing sensor id")
 	}
 	id := args[0]
 
 	v, code := schema.LoadValidator("", os.Stderr)
 	if code != 0 {
-		return code, simpleSignal(id, "error", "high", "stop_failed", "schema validator init failed")
+		return code, simpleSignal(res, id, "error", "high", "stop_failed", "schema validator init failed")
 	}
 
-	r := registry.NewRoot(projectRoot)
+	if !res.Exists {
+		return 1, validateSignal(v, simpleSignal(res, id, "error", "high", "stop_no_registry",
+			fmt.Sprintf("registry not found at %s; sensor cannot be running. /start-sensor was likely run from a different cwd, or HARNESS_REGISTRY_ROOT is misconfigured.", res.Root.RegistryFile())), id)
+	}
+
+	r := res.Root
+	projectRoot := res.ProjectRoot
 
 	var entry *registry.RunningSensorEntry
 	var reaped []registry.HeldByEntry
@@ -76,11 +87,11 @@ func runStop(projectRoot string, args []string, reap bool) (int, map[string]inte
 		// doesn't leave a stale "manual" hold.
 		return registry.Save(r, rs)
 	}); err != nil {
-		return 1, validateSignal(v, simpleSignal(id, "error", "high", "stop_failed", fmt.Sprintf("registry: %v", err)), id)
+		return 1, validateSignal(v, simpleSignal(res, id, "error", "high", "stop_failed", fmt.Sprintf("registry: %v", err)), id)
 	}
 
 	if entry == nil {
-		return 0, validateSignal(v, simpleSignal(id, "warn", "low", "stop_not_running", fmt.Sprintf("no live entry for %q", id)), id)
+		return 0, validateSignal(v, simpleSignal(res, id, "warn", "low", "stop_not_running", fmt.Sprintf("no live entry for %q", id)), id)
 	}
 
 	if registry.IsHeld(entry) {
@@ -88,7 +99,7 @@ func runStop(projectRoot string, args []string, reap bool) (int, map[string]inte
 		if hasDeadHolder(entry) {
 			kind = "stop_held_with_dead_holders"
 		}
-		sig := simpleSignal(id, "warn", "low", kind, fmt.Sprintf("sensor %q still held by %d holders", id, len(entry.HeldBy)))
+		sig := simpleSignal(res, id, "warn", "low", kind, fmt.Sprintf("sensor %q still held by %d holders", id, len(entry.HeldBy)))
 		md := sig["metadata"].(map[string]interface{})
 		md["holders"] = holderSummaries(entry.HeldBy)
 		if len(reaped) > 0 {
@@ -118,7 +129,7 @@ func runStop(projectRoot string, args []string, reap bool) (int, map[string]inte
 		Blocking:       !subprocessSelfExited,
 	})
 
-	sig := buildAggregate(id, sensorJSON, entry, individuals, agg, killedForcefully, reaped, teardownResults)
+	sig := buildAggregate(res, id, sensorJSON, entry, individuals, agg, killedForcefully, reaped, teardownResults)
 
 	if err := registry.WithFileLock(r.LockFile(), func() error {
 		rs, err := registry.Load(r)
@@ -128,7 +139,7 @@ func runStop(projectRoot string, args []string, reap bool) (int, map[string]inte
 		rs.RemoveEntry(id)
 		return registry.Save(r, rs)
 	}); err != nil {
-		return 1, validateSignal(v, simpleSignal(id, "error", "high", "stop_failed", fmt.Sprintf("registry: %v", err)), id)
+		return 1, validateSignal(v, simpleSignal(res, id, "error", "high", "stop_failed", fmt.Sprintf("registry: %v", err)), id)
 	}
 	return 0, validateSignal(v, sig, id)
 }
@@ -244,14 +255,13 @@ func runTeardown(sensorJSON map[string]interface{}) []map[string]interface{} {
 	return nil
 }
 
-func buildAggregate(id string, sensorJSON map[string]interface{}, entry *registry.RunningSensorEntry, individuals []map[string]interface{}, agg libsignal.AggregateResult, killedForcefully bool, reaped []registry.HeldByEntry, teardown []map[string]interface{}) map[string]interface{} {
+func buildAggregate(res registry.Result, id string, sensorJSON map[string]interface{}, entry *registry.RunningSensorEntry, individuals []map[string]interface{}, agg libsignal.AggregateResult, killedForcefully bool, reaped []registry.HeldByEntry, teardown []map[string]interface{}) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	md := map[string]interface{}{
-		"kind":        "aggregate",
-		"output_mode": "stream",
-		"command":     entry.Command,
-		"counts":      libsignal.CountVerdicts(individuals),
-	}
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = "aggregate"
+	md["output_mode"] = "stream"
+	md["command"] = entry.Command
+	md["counts"] = libsignal.CountVerdicts(individuals)
 	if entry.SubprocessExit != nil {
 		md["subprocess_self_exited"] = true
 		md["subprocess_exit_code"] = entry.SubprocessExit.Code
@@ -338,8 +348,10 @@ func validateSignal(v *schema.Validator, sig map[string]interface{}, id string) 
 	return sig
 }
 
-func simpleSignal(id, verdict, severity, kind, rationale string) map[string]interface{} {
+func simpleSignal(res registry.Result, id, verdict, severity, kind, rationale string) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = kind
 	return map[string]interface{}{
 		"sensor_id":   id,
 		"version":     "0.0.0",
@@ -351,6 +363,6 @@ func simpleSignal(id, verdict, severity, kind, rationale string) map[string]inte
 		"confidence":  1.0,
 		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata":    map[string]interface{}{"kind": kind},
+		"metadata":    md,
 	}
 }

@@ -85,3 +85,84 @@ func TestLoad_RejectsCorrupt(t *testing.T) {
 		t.Fatal("expected error on corrupt file")
 	}
 }
+
+func TestLoadOrEmpty_FileAbsent(t *testing.T) {
+	dir := t.TempDir()
+	r := registry.NewRoot(dir)
+	rs, exists, err := registry.LoadOrEmpty(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Errorf("exists: got true, want false")
+	}
+	if rs.Version != 1 {
+		t.Errorf("Version: got %d, want 1", rs.Version)
+	}
+	if len(rs.Entries) != 0 {
+		t.Errorf("Entries: got %d, want 0", len(rs.Entries))
+	}
+}
+
+func TestLoadOrEmpty_FilePresentEmpty(t *testing.T) {
+	dir := t.TempDir()
+	r := registry.NewRoot(dir)
+	if err := registry.Save(r, registry.RunningSensors{Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	rs, exists, err := registry.LoadOrEmpty(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Errorf("exists: got false, want true")
+	}
+	if rs.Version != 1 {
+		t.Errorf("Version: got %d, want 1", rs.Version)
+	}
+	if len(rs.Entries) != 0 {
+		t.Errorf("Entries: got %d, want 0", len(rs.Entries))
+	}
+}
+
+func TestLoadOrEmpty_FilePresentWithEntries(t *testing.T) {
+	dir := t.TempDir()
+	r := registry.NewRoot(dir)
+	want := registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{
+			{SensorID: "loop", PID: 1234, StartedAt: "2026-05-10T00:00:00Z"},
+		},
+	}
+	if err := registry.Save(r, want); err != nil {
+		t.Fatal(err)
+	}
+	rs, exists, err := registry.LoadOrEmpty(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Errorf("exists: got false, want true")
+	}
+	if !reflect.DeepEqual(want, rs) {
+		t.Fatalf("state mismatch\nwant %+v\ngot  %+v", want, rs)
+	}
+}
+
+func TestLoadOrEmpty_FileMalformed(t *testing.T) {
+	dir := t.TempDir()
+	r := registry.NewRoot(dir)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.RegistryFile(), []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, exists, err := registry.LoadOrEmpty(r)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if exists {
+		t.Errorf("exists: got true on parse error, want false")
+	}
+}
