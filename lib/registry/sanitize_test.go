@@ -86,3 +86,98 @@ func TestValidateEntry_RejectsNegative(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitizeAll_RewritesWatcherPID(t *testing.T) {
+	rs := &registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{
+			{SensorID: "x", PID: 10, PGID: 10, WatcherPID: -1, StartedAt: "t", Command: "c", LogDir: "d"},
+		},
+	}
+	reports := registry.SanitizeAll(rs)
+	if len(reports) != 1 {
+		t.Fatalf("reports: got %d, want 1", len(reports))
+	}
+	r := reports[0]
+	if r.SensorID != "x" || r.Field != "watcher_pid" || r.OldValue != -1 || r.Dropped {
+		t.Errorf("unexpected report: %+v", r)
+	}
+	if rs.Entries[0].WatcherPID != 0 {
+		t.Errorf("WatcherPID: got %d, want 0", rs.Entries[0].WatcherPID)
+	}
+}
+
+func TestSanitizeAll_DropsHolderWithBadSensorPID(t *testing.T) {
+	rs := &registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{
+			{
+				SensorID: "x", PID: 10, PGID: 10, WatcherPID: 11,
+				StartedAt: "t", Command: "c", LogDir: "d",
+				HeldBy: []registry.HeldByEntry{
+					{Kind: "sensor", ID: "dep", PID: -1, AttachedAt: "t"},
+					{Kind: "manual", AttachedAt: "t"},
+				},
+			},
+		},
+	}
+	reports := registry.SanitizeAll(rs)
+	if len(reports) != 1 {
+		t.Fatalf("reports: got %d, want 1", len(reports))
+	}
+	r := reports[0]
+	if r.Field != "held_by[0].pid" || !r.Dropped || r.OldValue != -1 {
+		t.Errorf("unexpected report: %+v", r)
+	}
+	if len(rs.Entries[0].HeldBy) != 1 || rs.Entries[0].HeldBy[0].Kind != "manual" {
+		t.Errorf("HeldBy after drop: %+v", rs.Entries[0].HeldBy)
+	}
+}
+
+func TestSanitizeAll_DropsEntryWithBadPID(t *testing.T) {
+	rs := &registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{
+			{SensorID: "bad", PID: -1, PGID: 10, WatcherPID: 11, StartedAt: "t", Command: "c", LogDir: "d"},
+			{SensorID: "good", PID: 10, PGID: 10, WatcherPID: 11, StartedAt: "t", Command: "c", LogDir: "d"},
+		},
+	}
+	reports := registry.SanitizeAll(rs)
+	if len(reports) != 1 {
+		t.Fatalf("reports: got %d, want 1", len(reports))
+	}
+	r := reports[0]
+	if r.SensorID != "bad" || r.Field != "pid" || !r.Dropped || r.OldValue != -1 {
+		t.Errorf("unexpected report: %+v", r)
+	}
+	if len(rs.Entries) != 1 || rs.Entries[0].SensorID != "good" {
+		t.Errorf("Entries after drop: %+v", rs.Entries)
+	}
+}
+
+func TestSanitizeAll_Idempotent(t *testing.T) {
+	rs := &registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{
+			{SensorID: "x", PID: 10, PGID: 10, WatcherPID: -1, StartedAt: "t", Command: "c", LogDir: "d"},
+		},
+	}
+	if got := registry.SanitizeAll(rs); len(got) != 1 {
+		t.Fatalf("first call: got %d reports, want 1", len(got))
+	}
+	if got := registry.SanitizeAll(rs); len(got) != 0 {
+		t.Fatalf("second call: got %d reports, want 0", len(got))
+	}
+}
+
+func TestSanitizeAll_NoOpOnHealthy(t *testing.T) {
+	rs := &registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{
+			{SensorID: "x", PID: 10, PGID: 10, WatcherPID: 11, StartedAt: "t", Command: "c", LogDir: "d"},
+		},
+	}
+	if got := registry.SanitizeAll(rs); len(got) != 0 {
+		t.Fatalf("got %d reports, want 0", len(got))
+	}
+}

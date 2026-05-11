@@ -44,3 +44,70 @@ func ValidateEntry(e RunningSensorEntry) error {
 	}
 	return nil
 }
+
+// SanitizeReport records one mutation performed by SanitizeAll.
+type SanitizeReport struct {
+	SensorID string `json:"sensor_id"`
+	Field    string `json:"field"`   // "watcher_pid" | "held_by[i].pid" | "pid" | "pgid"
+	OldValue int    `json:"old_value"`
+	Dropped  bool   `json:"dropped"` // entry or holder discarded entirely
+}
+
+// SanitizeAll rewrites legacy invalid PID fields in rs to safe values.
+// Mutation is in-memory; caller persists via Save (which will succeed
+// because ValidateEntry passes on the sanitized state).
+//
+// Rules, applied per entry:
+//   - WatcherPID < 0       → rewrite to 0, report (Dropped: false).
+//   - HeldByEntry.PID < 0 with Kind == "manual" → rewrite to 0, report (Dropped: false).
+//   - HeldByEntry.PID < 1 with Kind == "sensor" → drop the holder, report (Dropped: true).
+//   - PID < 1 or PGID < 1  → drop the entire entry, report (Dropped: true).
+//
+// Returns an empty slice when nothing changed.
+func SanitizeAll(rs *RunningSensors) []SanitizeReport {
+	if rs == nil {
+		return nil
+	}
+	reports := make([]SanitizeReport, 0)
+	keep := rs.Entries[:0]
+	for _, e := range rs.Entries {
+		if e.PID < 1 {
+			reports = append(reports, SanitizeReport{SensorID: e.SensorID, Field: "pid", OldValue: e.PID, Dropped: true})
+			continue
+		}
+		if e.PGID < 1 {
+			reports = append(reports, SanitizeReport{SensorID: e.SensorID, Field: "pgid", OldValue: e.PGID, Dropped: true})
+			continue
+		}
+		if e.WatcherPID < 0 {
+			reports = append(reports, SanitizeReport{SensorID: e.SensorID, Field: "watcher_pid", OldValue: e.WatcherPID, Dropped: false})
+			e.WatcherPID = 0
+		}
+		newHolders := e.HeldBy[:0]
+		for i, h := range e.HeldBy {
+			switch {
+			case h.Kind == "sensor" && h.PID < 1:
+				reports = append(reports, SanitizeReport{
+					SensorID: e.SensorID,
+					Field:    fmt.Sprintf("held_by[%d].pid", i),
+					OldValue: h.PID,
+					Dropped:  true,
+				})
+				continue
+			case h.PID < 0:
+				reports = append(reports, SanitizeReport{
+					SensorID: e.SensorID,
+					Field:    fmt.Sprintf("held_by[%d].pid", i),
+					OldValue: h.PID,
+					Dropped:  false,
+				})
+				h.PID = 0
+			}
+			newHolders = append(newHolders, h)
+		}
+		e.HeldBy = newHolders
+		keep = append(keep, e)
+	}
+	rs.Entries = keep
+	return reports
+}
