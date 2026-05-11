@@ -136,3 +136,24 @@ func LoadOrEmpty(r Root) (RunningSensors, bool, error) {
 	}
 	return rs, true, nil
 }
+
+// LoadSanitized loads running_sensors.json, applies SanitizeAll, and
+// best-effort re-persists when any mutation occurred. Returns the
+// sanitized in-memory state plus the migration reports so callers can
+// surface a warn Signal.
+//
+// A failure to re-Save the sanitized state is silenced: the in-memory
+// state is still correct, persistence retries on the next invocation.
+// A Load failure (parse error, I/O error) returns (zero, nil, err)
+// untouched.
+func LoadSanitized(r Root) (RunningSensors, []SanitizeReport, error) {
+	rs, err := Load(r)
+	if err != nil {
+		return rs, nil, err
+	}
+	reports := SanitizeAll(&rs)
+	if len(reports) > 0 {
+		_ = WithFileLock(r.LockFile(), func() error { return Save(r, rs) })
+	}
+	return rs, reports, nil
+}

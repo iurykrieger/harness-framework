@@ -202,3 +202,94 @@ func TestLoadOrEmpty_FileMalformed(t *testing.T) {
 		t.Errorf("exists: got true on parse error, want false")
 	}
 }
+
+func TestLoadSanitized_MigratesLegacy(t *testing.T) {
+	dir := t.TempDir()
+	r := registry.NewRoot(dir)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{
+  "version": 1,
+  "entries": [
+    {
+      "sensor_id": "run-api-local",
+      "pid": 90006,
+      "pgid": 90006,
+      "watcher_pid": -1,
+      "started_at": "2026-05-09T13:51:38Z",
+      "command": "docker compose up",
+      "log_dir": ".runtime/sensors/run-api-local",
+      "held_by": [{"kind": "manual", "attached_at": "2026-05-09T13:51:38Z"}]
+    }
+  ]
+}`)
+	if err := os.WriteFile(r.RegistryFile(), legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rs, reports, err := registry.LoadSanitized(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 1 || reports[0].Field != "watcher_pid" {
+		t.Errorf("reports: %+v", reports)
+	}
+	if rs.Entries[0].WatcherPID != 0 {
+		t.Errorf("WatcherPID in memory: got %d, want 0", rs.Entries[0].WatcherPID)
+	}
+	// Re-Save persisted on disk:
+	rs2, err := registry.Load(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs2.Entries[0].WatcherPID != 0 {
+		t.Errorf("WatcherPID on disk: got %d, want 0", rs2.Entries[0].WatcherPID)
+	}
+}
+
+func TestLoadSanitized_NoOpOnHealthy(t *testing.T) {
+	dir := t.TempDir()
+	r := registry.NewRoot(dir)
+	healthy := registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{
+			{SensorID: "ok", PID: 100, PGID: 100, WatcherPID: 101,
+				StartedAt: "t", Command: "c", LogDir: "d",
+				HeldBy: []registry.HeldByEntry{{Kind: "manual", AttachedAt: "t"}}},
+		},
+	}
+	if err := registry.Save(r, healthy); err != nil {
+		t.Fatal(err)
+	}
+	statBefore, _ := os.Stat(r.RegistryFile())
+
+	rs, reports, err := registry.LoadSanitized(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 0 {
+		t.Errorf("reports: got %d, want 0", len(reports))
+	}
+	if len(rs.Entries) != 1 || rs.Entries[0].WatcherPID != 101 {
+		t.Errorf("Entries: %+v", rs.Entries)
+	}
+	statAfter, _ := os.Stat(r.RegistryFile())
+	if statBefore != nil && statAfter != nil && !statBefore.ModTime().Equal(statAfter.ModTime()) {
+		t.Errorf("mtime changed on no-op LoadSanitized")
+	}
+}
+
+func TestLoadSanitized_ReturnsEmptyOnMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	r := registry.NewRoot(dir)
+	rs, reports, err := registry.LoadSanitized(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Version != 1 || len(rs.Entries) != 0 {
+		t.Errorf("rs: got %+v", rs)
+	}
+	if len(reports) != 0 {
+		t.Errorf("reports: got %d, want 0", len(reports))
+	}
+}
