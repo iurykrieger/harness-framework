@@ -91,7 +91,7 @@ func TestCheckTool_PresentTool(t *testing.T) {
 func TestCheckTool_NonErrNotFoundStillRegistersFailure(t *testing.T) {
 	sensor := map[string]interface{}{
 		"requires": []interface{}{
-			map[string]interface{}{"kind": "tool", "name": "mybin"},
+			map[string]interface{}{"kind": "tool", "name": "docker"},
 		},
 	}
 	opts := GateOpts{
@@ -105,6 +105,10 @@ func TestCheckTool_NonErrNotFoundStillRegistersFailure(t *testing.T) {
 	}
 	if g.Failures[0].Kind != "tool" {
 		t.Errorf("Kind = %q, want %q", g.Failures[0].Kind, "tool")
+	}
+	want := `Required tool "docker" is not on PATH`
+	if g.Failures[0].Rationale != want {
+		t.Errorf("Rationale = %q, want %q", g.Failures[0].Rationale, want)
 	}
 }
 
@@ -395,5 +399,25 @@ func TestBuildRequiresGateSignal_EmptyGate(t *testing.T) {
 	}
 	if _, hasRem := sig["remediation"]; hasRem {
 		t.Errorf("remediation should be absent for empty gate")
+	}
+}
+
+func TestBuildRequiresGateSignal_UnknownKindsProduceNoRemediation(t *testing.T) {
+	prev := NowFn
+	defer func() { NowFn = prev }()
+	NowFn = stableNow
+
+	env := Envelope{SensorID: "x", Version: "0.1.0", RunID: "r", StartedAt: "2026-05-08T00:00:00Z"}
+	gate := Gate{Failures: []Failure{
+		{Kind: "permission", Identifier: "Bash(rm)", Rationale: "ignored", HealShape: "n/a"},
+	}}
+	sig := BuildRequiresGateSignal(env, "single", gate)
+	if _, has := sig["remediation"]; has {
+		t.Errorf("expected no remediation key when no known-kind failures, got %v", sig["remediation"])
+	}
+	// metadata.heal_hint should still be present (it's derived from gate.Failures[0] regardless of Kind).
+	md := sig["metadata"].(map[string]interface{})
+	if md["heal_hint"] != "n/a:Bash(rm)" {
+		t.Errorf("heal_hint = %v", md["heal_hint"])
 	}
 }

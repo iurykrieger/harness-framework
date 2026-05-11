@@ -207,5 +207,8 @@ func buildRequiresGateRemediation(gate Gate) string {
 			parts = append(parts, fmt.Sprintf(`set env %s`, f.Identifier))
 		}
 	}
+	if len(parts) == 0 {
+		return ""
+	}
 	return "Resolve the following preconditions before re-running: " + strings.Join(parts, "; ") + "."
 }
