@@ -55,7 +55,8 @@ func main() {
 	go func() {
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
-		<-ch
+		s := <-ch
+		fmt.Fprintf(os.Stderr, "watcher: %s received, draining\n", s)
 		close(stop)
 	}()
 

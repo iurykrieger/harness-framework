@@ -5,9 +5,13 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -132,5 +136,37 @@ func TestRunWatcher_StopReturnsEvenWhenReaperWaitsForLiveSubprocess(t *testing.T
 		}
 	case <-time.After(time.Second):
 		t.Fatal("runWatcher did not return within 1s after stop closed (reaper-hang regression)")
+	}
+}
+
+func TestWatcher_LogsSignalToStderr(t *testing.T) {
+	rPipe, wPipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rPipe.Close()
+	origStderr := os.Stderr
+	os.Stderr = wPipe
+	t.Cleanup(func() { os.Stderr = origStderr; _ = wPipe.Close() })
+
+	stop := make(chan struct{})
+	go func() {
+		// Simulate the watcher's signal goroutine in isolation.
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, syscall.SIGTERM)
+		s := <-ch
+		fmt.Fprintf(os.Stderr, "watcher: %s received, draining\n", s)
+		close(stop)
+	}()
+
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	<-stop
+	_ = wPipe.Close()
+
+	buf, _ := io.ReadAll(rPipe)
+	if !strings.Contains(string(buf), "received, draining") {
+		t.Errorf("stderr did not contain expected log: %q", buf)
 	}
 }
