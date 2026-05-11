@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
@@ -546,5 +547,60 @@ func TestStart_PrepareFAIL_DetachesLiveStack(t *testing.T) {
 	}
 	if rs.FindEntry("target") != nil {
 		t.Error("target should NOT be in registry after prepare fail")
+	}
+}
+
+// TestStart_WritesNewRunIDLayout asserts that /start-sensor places
+// raw.log / signals.log under <SensorDir>/<runID>/ where runID matches
+// the composite <pid>-<short-uuid8> shape. Also verifies the started
+// Signal's metadata.run_id, the registry entry's RunID, Blocking:true,
+// and LogDir all carry the same composite value.
+func TestStart_WritesNewRunIDLayout(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureSensor(t, root, "longrun", blockingFixtureBody())
+
+	exit, sig := runStart(testResult(root), []string{"longrun"})
+	defer cleanupStartedTarget(t, root, "longrun")
+
+	if exit != 0 {
+		t.Fatalf("exit=%d sig=%+v", exit, sig)
+	}
+	md, _ := sig["metadata"].(map[string]interface{})
+	if md == nil {
+		t.Fatalf("missing metadata: %+v", sig)
+	}
+	if md["kind"] != "started" {
+		t.Fatalf("metadata.kind: got %v, want started", md["kind"])
+	}
+	runID, _ := sig["run_id"].(string)
+	composite := regexp.MustCompile(`^\d+-[0-9a-f]{8}$`)
+	if !composite.MatchString(runID) {
+		t.Fatalf("run_id %q does not match <pid>-<short-uuid8> shape", runID)
+	}
+
+	r := registry.NewRoot(root)
+	rawPath := r.RawLogRun("longrun", runID)
+	if _, err := os.Stat(rawPath); err != nil {
+		t.Fatalf("raw.log not at new path %s: %v", rawPath, err)
+	}
+	sigsPath := r.SignalsLogRun("longrun", runID)
+	if _, err := os.Stat(sigsPath); err != nil {
+		t.Fatalf("signals.log not at new path %s: %v", sigsPath, err)
+	}
+
+	rs, _ := registry.Load(r)
+	entry := rs.FindEntry("longrun")
+	if entry == nil {
+		t.Fatal("longrun should be in registry after started")
+	}
+	if entry.RunID != runID {
+		t.Errorf("entry.RunID: got %q, want %q", entry.RunID, runID)
+	}
+	if !entry.Blocking {
+		t.Errorf("entry.Blocking: got false, want true")
+	}
+	wantLogDir := filepath.Join(".runtime", "sensors", "longrun", runID)
+	if entry.LogDir != wantLogDir {
+		t.Errorf("entry.LogDir: got %q, want %q", entry.LogDir, wantLogDir)
 	}
 }
