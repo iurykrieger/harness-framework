@@ -167,3 +167,29 @@ func TestExtractSkill(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalize(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_ROOT", "/abs/path/to/harness-framework")
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"PID=12345", "pid=n"},
+		{"some pid=7 here", "some pid=n here"},
+		{"2026-05-11T10:00:00Z occurred", "t occurred"},
+		{"at 2026-05-11T10:00:00.123Z indeed", "at t indeed"},
+		{"/abs/path/to/harness-framework/lib/registry/state.go:47", "<plugin>/lib/registry/state.go"},
+		{"  multiple   spaces\there  ", "multiple spaces here"},
+		{"trailing colon line :42:8", "trailing colon line"},
+		{"runtime: index out of range [0] with length 0", "runtime: index out of range [0] with length 0"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			got := normalize(tc.in)
+			if got != tc.want {
+				t.Fatalf("in=%q: got %q want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

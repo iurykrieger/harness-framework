@@ -169,6 +169,32 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+var (
+	rePID         = regexp.MustCompile(`(?i)pid=\d+`)
+	reTimestamp   = regexp.MustCompile(`(?i)\d{4}-\d{2}-\d{2}t\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:z|[+-]\d{2}:\d{2})`)
+	reTrailingPos = regexp.MustCompile(`\s*:\d+(?::\d+)?\s*$`)
+	reWhitespace  = regexp.MustCompile(`\s+`)
+)
+
+// normalize produces a stable lower-case form of an error/output line
+// for use in fingerprint canonical strings. Strips PIDs, ISO/RFC3339
+// timestamps, absolute plugin paths (replaced with <plugin>), trailing
+// :line:col suffixes, and collapses whitespace.
+func normalize(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = strings.ToLower(s)
+	s = rePID.ReplaceAllString(s, "pid=n")
+	s = reTimestamp.ReplaceAllString(s, "t")
+	if root := os.Getenv("CLAUDE_PLUGIN_ROOT"); root != "" {
+		s = strings.ReplaceAll(s, strings.ToLower(root), "<plugin>")
+	}
+	s = reTrailingPos.ReplaceAllString(s, "")
+	s = reWhitespace.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
+}
+
 // killSwitchEnabled returns true when the hook should be a no-op.
 // Disabled values: unset, "", "0", "false" (any case), "off" (any case).
 // Default-on: any other value (including "1", "true", "on", "yes")
