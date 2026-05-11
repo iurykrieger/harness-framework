@@ -100,6 +100,12 @@ Verdict semantics by skill when the registry file is absent (`registry_exists: f
 
 The watcher subprocess inherits the resolved root via `HARNESS_WATCHER_REGISTRY_ROOT` (set by `/start-sensor` from `Result.ProjectRoot`); that env var is a precise absolute path, not a discovery hint.
 
+### Auto issue opening
+
+A `PostToolUse(Bash)` hook (`hooks/error-issue-autofiler.go`, build tag `error_autofiler`) observes every Bash invocation and opens a GitHub issue when a framework Go script panics, fails to compile, or emits a Signal with `verdict=error` plus an internal `metadata.kind`. Per-fingerprint dedup uses a 3-layer cascade: local `<projectRoot>/.runtime/auto-issues.json` cache, then `gh issue list --search "harness-fp:<fingerprint>"`, then `gh issue create`. The hook always exits 0 — internal failures (no `gh` auth, no GitHub remote, unparseable cache, …) degrade silently to stderr.
+
+Disable per-shell with `HARNESS_AUTOFILE_ISSUES=0`. The repo it files against is derived from `git remote get-url origin` of the project root resolved by `lib/registry.Lookup(cwd)`; the framework expects a label `auto-filed` to exist on that repo (create once).
+
 ## Build, validate, test
 
 Single Go module at the repo root: `module github.com/iurykrieger/harness-framework` (Go 1.25). Per-skill modules only if a skill needs an isolated dependency graph.
