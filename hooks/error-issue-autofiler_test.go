@@ -4,10 +4,13 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestRun_MalformedStdin_Returns2(t *testing.T) {
@@ -479,5 +482,102 @@ func TestRenderOccurrenceComment(t *testing.T) {
 				t.Fatalf("command line too long: %d chars: %q", len(line), line)
 			}
 		}
+	}
+}
+
+func TestCache_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+
+	c, err := loadCache(cachePath)
+	if err != nil {
+		t.Fatalf("loadCache empty: %v", err)
+	}
+	if len(c.Entries) != 0 {
+		t.Fatalf("expected empty cache, got %d entries", len(c.Entries))
+	}
+
+	now := time.Now().UTC()
+	c.put("fp1", cacheEntry{
+		IssueURL:        "https://github.com/x/y/issues/1",
+		FirstSeen:       now,
+		LastSeen:        now,
+		OccurrenceCount: 1,
+		Skill:           "run-sensor",
+		Type:            "panic",
+	})
+	if err := c.save(cachePath); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	c2, err := loadCache(cachePath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(c2.Entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(c2.Entries))
+	}
+	got := c2.Entries["fp1"]
+	if got.IssueURL != "https://github.com/x/y/issues/1" {
+		t.Fatalf("IssueURL=%q", got.IssueURL)
+	}
+	if got.OccurrenceCount != 1 {
+		t.Fatalf("OccurrenceCount=%d", got.OccurrenceCount)
+	}
+}
+
+func TestCache_CorruptFile_TreatedAsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+	if err := os.WriteFile(cachePath, []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := loadCache(cachePath)
+	if err == nil {
+		t.Fatal("expected error on corrupt file")
+	}
+	if c == nil {
+		t.Fatal("loadCache must return a usable fresh cache even on parse error")
+	}
+	if len(c.Entries) != 0 {
+		t.Fatalf("fresh cache must have 0 entries; got %d", len(c.Entries))
+	}
+	// And the corrupt file is NOT overwritten just by loading.
+	data, _ := os.ReadFile(cachePath)
+	if string(data) != "not json" {
+		t.Fatalf("corrupt file overwritten on load: %q", data)
+	}
+}
+
+func TestCache_ConcurrentPut_Serializes(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		fp := fmt.Sprintf("fp%d", i)
+		go func() {
+			defer wg.Done()
+			if err := updateCacheLocked(cachePath, func(c *cache) {
+				c.put(fp, cacheEntry{
+					IssueURL:        "url-" + fp,
+					FirstSeen:       time.Now().UTC(),
+					LastSeen:        time.Now().UTC(),
+					OccurrenceCount: 1,
+				})
+			}); err != nil {
+				t.Errorf("updateCacheLocked: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	c, err := loadCache(cachePath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(c.Entries) != 10 {
+		t.Fatalf("expected 10 concurrent entries, got %d", len(c.Entries))
 	}
 }

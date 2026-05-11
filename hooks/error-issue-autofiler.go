@@ -28,12 +28,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/iurykrieger/harness-framework/lib/registry"
 )
 
 const (
@@ -501,4 +505,94 @@ func fingerprint(evt *classifiedEvent) string {
 	}
 	sum := sha256.Sum256([]byte(canonical))
 	return hex.EncodeToString(sum[:])[:12]
+}
+
+type cacheEntry struct {
+	IssueURL        string    `json:"issue_url"`
+	FirstSeen       time.Time `json:"first_seen"`
+	LastSeen        time.Time `json:"last_seen"`
+	OccurrenceCount int       `json:"occurrence_count"`
+	Skill           string    `json:"skill"`
+	Type            string    `json:"type"`
+}
+
+type cache struct {
+	Version int                   `json:"version"`
+	Entries map[string]cacheEntry `json:"entries"`
+}
+
+// newCache returns a fresh empty v1 cache.
+func newCache() *cache {
+	return &cache{Version: 1, Entries: map[string]cacheEntry{}}
+}
+
+// loadCache reads cachePath. Returns:
+//   - (empty cache, nil)        when the file does not exist
+//   - (loaded cache, nil)       when the file exists and parses
+//   - (empty cache, err)        when the file exists but is malformed —
+//     the malformed file is NOT overwritten.
+func loadCache(cachePath string) (*cache, error) {
+	data, err := os.ReadFile(cachePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return newCache(), nil
+	}
+	if err != nil {
+		return newCache(), err
+	}
+	c := newCache()
+	if err := json.Unmarshal(data, c); err != nil {
+		return newCache(), fmt.Errorf("parse cache %s: %w", cachePath, err)
+	}
+	if c.Entries == nil {
+		c.Entries = map[string]cacheEntry{}
+	}
+	return c, nil
+}
+
+// put inserts or replaces fp's entry.
+func (c *cache) put(fp string, e cacheEntry) {
+	if c.Entries == nil {
+		c.Entries = map[string]cacheEntry{}
+	}
+	c.Entries[fp] = e
+}
+
+// save writes the cache atomically (write to .tmp, fsync, rename).
+func (c *cache) save(cachePath string) error {
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		return fmt.Errorf("mkdir cache dir: %w", err)
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal cache: %w", err)
+	}
+	tmp := cachePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return fmt.Errorf("write tmp: %w", err)
+	}
+	if err := os.Rename(tmp, cachePath); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
+}
+
+// updateCacheLocked runs fn(c) under an exclusive flock on
+// cachePath+".lock", saving the result. Use it for any
+// read-modify-write op on the cache.
+func updateCacheLocked(cachePath string, fn func(*cache)) error {
+	lockPath := cachePath + ".lock"
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return err
+	}
+	return registry.WithFileLock(lockPath, func() error {
+		c, err := loadCache(cachePath)
+		if err != nil {
+			// Continue with a fresh cache so the very first successful
+			// write doesn't get blocked by a one-off parse error, but
+			// preserve the error for caller's logs.
+			fmt.Fprintln(os.Stderr, "cache load error (treating as empty):", err)
+		}
+		fn(c)
+		return c.save(cachePath)
+	})
 }
