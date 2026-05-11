@@ -1,3 +1,5 @@
+//go:build !error_autofiler
+
 // hooks/setup-failure-detector.go
 //
 // Claude Code Stop hook that classifies the most-recent

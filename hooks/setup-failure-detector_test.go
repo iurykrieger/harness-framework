@@ -1,3 +1,5 @@
+//go:build !error_autofiler
+
 // hooks/setup-failure-detector_test.go
 package main
 
