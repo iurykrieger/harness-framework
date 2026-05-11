@@ -175,6 +175,15 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 		aggregateMD["lifecycle"] = lc
 	}
 
+	// External termination: when ctx was cancelled (SIGINT/SIGTERM via
+	// the runner script's signal handler, or any other caller-initiated
+	// cancellation), exec.CommandContext will have SIGKILLed the
+	// subprocess. Surface this on the aggregate so downstream agents
+	// can distinguish a clean failure from a forced shutdown.
+	if ctx.Err() != nil {
+		aggregateMD["terminated_externally"] = true
+	}
+
 	finished := sensor.NowFn().Format("2006-01-02T15:04:05Z")
 	sig := map[string]interface{}{
 		"sensor_id":   envelope.SensorID,
@@ -435,6 +444,11 @@ func runOneWithPersistence(
 			lc["teardown"] = tdResults
 		}
 		aggregateMD["lifecycle"] = lc
+	}
+
+	// External termination: see RunOne for rationale.
+	if ctx.Err() != nil {
+		aggregateMD["terminated_externally"] = true
 	}
 
 	finished := sensor.NowFn().Format("2006-01-02T15:04:05Z")

@@ -21,9 +21,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	ossignal "os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/iurykrieger/harness-framework/lib/cli"
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
@@ -33,6 +35,25 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/subprocess"
 	"github.com/iurykrieger/harness-framework/lib/template"
 )
+
+// signalCancellableContext returns a context that is cancelled on SIGINT
+// or SIGTERM. See run-computational.go for rationale; the inferential
+// runner needs the same shutdown behaviour because its subprocesses
+// (LLM CLIs) are typically long-running and must be terminated cleanly
+// to flush their output and release any persistence state.
+func signalCancellableContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan os.Signal, 1)
+	ossignal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-ch:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
 
 const harnessConfidencePrefix = "HARNESS_AGGREGATE_CONFIDENCE="
 
@@ -126,6 +147,9 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	ctx, cancel := signalCancellableContext()
+	defer cancel()
+
 	depSignals := map[string]map[string]interface{}{}
 	var liveStack []string
 
@@ -139,7 +163,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		depExecMap, _ := dep.JSON["execution"].(map[string]interface{})
 		blocking, _ := depExecMap["blocking"].(bool)
 		if blocking {
-			depID, aerr := orchestrator.AttachLiveDep(context.Background(), dep, projectRoot, rootID, os.Getpid(), v, stdout, stderr)
+			depID, aerr := orchestrator.AttachLiveDep(ctx, dep, projectRoot, rootID, os.Getpid(), v, stdout, stderr)
 			if aerr != nil {
 				fmt.Fprintln(stderr, "error: attach live dep:", aerr)
 				return 1
@@ -158,7 +182,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 			depSignals[dep.ID] = cascade
 			continue
 		}
-		sig, depCode := orchestrator.RunOne(context.Background(), dep, schemasDir, v, stdout, stderr)
+		sig, depCode := orchestrator.RunOne(ctx, dep, schemasDir, v, stdout, stderr)
 		if depCode != 0 {
 			return depCode
 		}
@@ -209,7 +233,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 
 	timeoutMS := int(asNumber(sensorJSON["cost"].(map[string]interface{})["latency"].(map[string]interface{})["timeout_ms"]))
 
-	res, _ := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
+	res, _ := subprocess.StreamSubprocess(ctx, subprocess.StreamConfig{
 		Command:   command,
 		Env:       map[string]string{"HARNESS_PROMPT": rendered},
 		TimeoutMS: timeoutMS,
@@ -254,6 +278,20 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	}
 
 	sig := buildAggregateSignal(envelope, res, individuals, agg, command, output, confidence, downgrade)
+	// External termination: when ctx was cancelled (SIGINT/SIGTERM via the
+	// runner's signal handler, or any other caller-initiated cancellation),
+	// exec.CommandContext SIGKILLed the subprocess. Surface the flag on the
+	// aggregate so downstream agents can distinguish a clean failure from a
+	// forced shutdown. metadata is free-form per signal.json — adding a
+	// boolean here does not affect schema validation.
+	if ctx.Err() != nil {
+		md, _ := sig["metadata"].(map[string]interface{})
+		if md == nil {
+			md = map[string]interface{}{}
+			sig["metadata"] = md
+		}
+		md["terminated_externally"] = true
+	}
 	if err := v.Validate(schema.TargetSignal, sig); err != nil {
 		schema.PrintValidationOrPlain(err, stderr)
 		return 1
