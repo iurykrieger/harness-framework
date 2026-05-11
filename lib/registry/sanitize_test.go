@@ -96,7 +96,7 @@ func TestSanitizeAll_RewritesWatcherPID(t *testing.T) {
 	rs := &registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "x", PID: 10, PGID: 10, WatcherPID: -1, StartedAt: "t", Command: "c", LogDir: "d"},
+			{SensorID: "x", RunID: "10-abc", PID: 10, PGID: 10, WatcherPID: -1, StartedAt: "t", Command: "c", LogDir: "d"},
 		},
 	}
 	reports := registry.SanitizeAll(rs)
@@ -117,7 +117,7 @@ func TestSanitizeAll_DropsHolderWithBadSensorPID(t *testing.T) {
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
 			{
-				SensorID: "x", PID: 10, PGID: 10, WatcherPID: 11,
+				SensorID: "x", RunID: "10-abc", PID: 10, PGID: 10, WatcherPID: 11,
 				StartedAt: "t", Command: "c", LogDir: "d",
 				HeldBy: []registry.HeldByEntry{
 					{Kind: "sensor", ID: "dep", PID: -1, AttachedAt: "t"},
@@ -143,8 +143,8 @@ func TestSanitizeAll_DropsEntryWithBadPID(t *testing.T) {
 	rs := &registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "bad", PID: -1, PGID: 10, WatcherPID: 11, StartedAt: "t", Command: "c", LogDir: "d"},
-			{SensorID: "good", PID: 10, PGID: 10, WatcherPID: 11, StartedAt: "t", Command: "c", LogDir: "d"},
+			{SensorID: "bad", RunID: "99-xyz", PID: -1, PGID: 10, WatcherPID: 11, StartedAt: "t", Command: "c", LogDir: "d"},
+			{SensorID: "good", RunID: "10-abc", PID: 10, PGID: 10, WatcherPID: 11, StartedAt: "t", Command: "c", LogDir: "d"},
 		},
 	}
 	reports := registry.SanitizeAll(rs)
@@ -164,7 +164,7 @@ func TestSanitizeAll_Idempotent(t *testing.T) {
 	rs := &registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "x", PID: 10, PGID: 10, WatcherPID: -1, StartedAt: "t", Command: "c", LogDir: "d"},
+			{SensorID: "x", RunID: "10-abc", PID: 10, PGID: 10, WatcherPID: -1, StartedAt: "t", Command: "c", LogDir: "d"},
 		},
 	}
 	if got := registry.SanitizeAll(rs); len(got) != 1 {
@@ -179,7 +179,7 @@ func TestSanitizeAll_NoOpOnHealthy(t *testing.T) {
 	rs := &registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "x", PID: 10, PGID: 10, WatcherPID: 11, StartedAt: "t", Command: "c", LogDir: "d"},
+			{SensorID: "x", RunID: "10-abc", PID: 10, PGID: 10, WatcherPID: 11, StartedAt: "t", Command: "c", LogDir: "d"},
 		},
 	}
 	if got := registry.SanitizeAll(rs); len(got) != 0 {
@@ -239,6 +239,44 @@ func TestRegistryMigratedSignal_Shape(t *testing.T) {
 	}
 	if err := v.Validate(schema.TargetSignal, decoded); err != nil {
 		t.Fatalf("signal failed schema validation: %v", err)
+	}
+}
+
+func TestSanitizeAll_LegacyEntryMigration(t *testing.T) {
+	rs := &registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{SensorID: "alpha", PID: 4242, PGID: 4242, StartedAt: "2026-01-01T00:00:00Z",
+			Command: "old-cmd", LogDir: ".runtime/sensors/alpha"}, // no run_id, no blocking
+	}}
+	reports := registry.SanitizeAll(rs)
+	if len(rs.Entries) != 1 {
+		t.Fatalf("expected 1 entry kept, got %d", len(rs.Entries))
+	}
+	got := rs.Entries[0]
+	if got.RunID != "4242-legacy" {
+		t.Errorf("RunID = %q, want %q", got.RunID, "4242-legacy")
+	}
+	if !got.Blocking {
+		t.Error("Blocking = false, want true (legacy entries are blocking=true)")
+	}
+	var found bool
+	for _, r := range reports {
+		if r.Field == "run_id" && r.SensorID == "alpha" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a run_id migration report; got %+v", reports)
+	}
+}
+
+func TestSanitizeAll_DoesNotTouchEntriesWithRunID(t *testing.T) {
+	rs := &registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{SensorID: "alpha", RunID: "100-abc", Blocking: true,
+			PID: 100, PGID: 100, StartedAt: "2026-01-01T00:00:00Z"},
+	}}
+	_ = registry.SanitizeAll(rs)
+	if rs.Entries[0].RunID != "100-abc" {
+		t.Errorf("RunID overwritten: %q", rs.Entries[0].RunID)
 	}
 }
 

@@ -231,11 +231,24 @@ func TestLoadSanitized_MigratesLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reports) != 1 || reports[0].Field != "watcher_pid" {
-		t.Errorf("reports: %+v", reports)
+	// Legacy entry has no run_id → expect watcher_pid + run_id reports.
+	var foundWatcherPID, foundRunID bool
+	for _, rpt := range reports {
+		if rpt.Field == "watcher_pid" {
+			foundWatcherPID = true
+		}
+		if rpt.Field == "run_id" {
+			foundRunID = true
+		}
+	}
+	if !foundWatcherPID || !foundRunID {
+		t.Errorf("reports: expected watcher_pid and run_id reports; got %+v", reports)
 	}
 	if rs.Entries[0].WatcherPID != 0 {
 		t.Errorf("WatcherPID in memory: got %d, want 0", rs.Entries[0].WatcherPID)
+	}
+	if rs.Entries[0].RunID != "90006-legacy" {
+		t.Errorf("RunID in memory: got %q, want %q", rs.Entries[0].RunID, "90006-legacy")
 	}
 	// Re-Save persisted on disk:
 	rs2, err := registry.Load(r)
@@ -253,7 +266,7 @@ func TestLoadSanitized_NoOpOnHealthy(t *testing.T) {
 	healthy := registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "ok", PID: 100, PGID: 100, WatcherPID: 101,
+			{SensorID: "ok", RunID: "100-xyz", Blocking: true, PID: 100, PGID: 100, WatcherPID: 101,
 				StartedAt: "t", Command: "c", LogDir: "d",
 				HeldBy: []registry.HeldByEntry{{Kind: "manual", AttachedAt: "t"}}},
 		},
