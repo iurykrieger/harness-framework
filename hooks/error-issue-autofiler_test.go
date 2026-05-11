@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -689,4 +690,298 @@ func TestParseGitRemote(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunFlow_NewError_CreatesIssue(t *testing.T) {
+	t.Setenv("HARNESS_AUTOFILE_ISSUES", "1")
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+	gh := &fakeGhClient{
+		createResp: issueRef{Number: 42, URL: "https://github.com/o/r/issues/42"},
+	}
+	in := buildHookInput("go run ./skills/run-sensor/scripts foo",
+		"", "panic: boom\n\ngoroutine 1 [running]:\nmain.main()\n\t/abs/harness-framework/hooks/x.go:1\n", 2)
+	var stderr bytes.Buffer
+	code := runWith(in, &stderr, runOpts{gh: gh, cachePath: cachePath, repo: "o/r"})
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	if len(gh.creates) != 1 {
+		t.Fatalf("expected 1 create, got %d", len(gh.creates))
+	}
+	if !strings.HasPrefix(gh.creates[0].title, "[auto] run-sensor:") {
+		t.Fatalf("title=%q", gh.creates[0].title)
+	}
+	if !contains(gh.creates[0].labels, "auto-filed") || !contains(gh.creates[0].labels, "bug") {
+		t.Fatalf("labels=%v", gh.creates[0].labels)
+	}
+	c, _ := loadCache(cachePath)
+	if len(c.Entries) != 1 {
+		t.Fatalf("cache size=%d", len(c.Entries))
+	}
+}
+
+func TestRunFlow_CachedRecent_ShortCircuits(t *testing.T) {
+	t.Setenv("HARNESS_AUTOFILE_ISSUES", "1")
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+
+	in := buildHookInput("go run ./skills/run-sensor/scripts foo",
+		"", "panic: boom\n\ngoroutine 1 [running]:\nmain.main()\n\t/abs/harness-framework/hooks/x.go:1\n", 2)
+	evt := classify(in.ToolResponse.Stdout, in.ToolResponse.Stderr, in.ToolResponse.ExitCode)
+	if evt == nil {
+		t.Fatal("classify returned nil")
+	}
+	evt.Skill = extractSkill(in.ToolInput.Command)
+	fp := fingerprint(evt)
+	if err := updateCacheLocked(cachePath, func(c *cache) {
+		c.put(fp, cacheEntry{
+			IssueURL:        "https://github.com/o/r/issues/1",
+			FirstSeen:       time.Now().UTC().Add(-1 * time.Hour),
+			LastSeen:        time.Now().UTC().Add(-1 * time.Hour),
+			OccurrenceCount: 1,
+			Skill:           evt.Skill,
+			Type:            evt.Type,
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	gh := &fakeGhClient{}
+	var stderr bytes.Buffer
+	code := runWith(in, &stderr, runOpts{gh: gh, cachePath: cachePath, repo: "o/r"})
+	if code != 0 {
+		t.Fatal(code)
+	}
+	if len(gh.creates)+len(gh.searches)+len(gh.comments) != 0 {
+		t.Fatalf("no gh calls expected; creates=%d searches=%d comments=%d",
+			len(gh.creates), len(gh.searches), len(gh.comments))
+	}
+	c, _ := loadCache(cachePath)
+	if c.Entries[fp].OccurrenceCount != 2 {
+		t.Fatalf("OccurrenceCount=%d want 2", c.Entries[fp].OccurrenceCount)
+	}
+}
+
+func TestRunFlow_CachedStale_RechecksGitHub(t *testing.T) {
+	t.Setenv("HARNESS_AUTOFILE_ISSUES", "1")
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+	in := buildHookInput("go run ./skills/run-sensor/scripts foo",
+		"", "panic: stale\n\ngoroutine 1 [running]:\nmain.main()\n\t/abs/harness-framework/hooks/x.go:1\n", 2)
+	evt := classify(in.ToolResponse.Stdout, in.ToolResponse.Stderr, in.ToolResponse.ExitCode)
+	evt.Skill = extractSkill(in.ToolInput.Command)
+	fp := fingerprint(evt)
+	staleTime := time.Now().UTC().Add(-8 * 24 * time.Hour)
+	if err := updateCacheLocked(cachePath, func(c *cache) {
+		c.put(fp, cacheEntry{IssueURL: "url-old", FirstSeen: staleTime, LastSeen: staleTime, OccurrenceCount: 1})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeGhClient{searchResp: issueRef{Number: 7, URL: "https://github.com/o/r/issues/7"}}
+	var stderr bytes.Buffer
+	code := runWith(in, &stderr, runOpts{gh: gh, cachePath: cachePath, repo: "o/r"})
+	if code != 0 {
+		t.Fatal(code)
+	}
+	if len(gh.searches) != 1 {
+		t.Fatalf("expected 1 search, got %d", len(gh.searches))
+	}
+	if len(gh.comments) != 1 {
+		t.Fatalf("expected 1 comment on the stale-but-still-open issue, got %d", len(gh.comments))
+	}
+}
+
+func TestRunFlow_GHFound_CommentsNotCreates(t *testing.T) {
+	t.Setenv("HARNESS_AUTOFILE_ISSUES", "1")
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+	in := buildHookInput("go run ./skills/run-sensor/scripts foo",
+		"", "panic: found\n\ngoroutine 1 [running]:\nmain.main()\n\t/abs/harness-framework/hooks/x.go:1\n", 2)
+	gh := &fakeGhClient{searchResp: issueRef{Number: 99, URL: "https://github.com/o/r/issues/99"}}
+	var stderr bytes.Buffer
+	code := runWith(in, &stderr, runOpts{gh: gh, cachePath: cachePath, repo: "o/r"})
+	if code != 0 {
+		t.Fatal(code)
+	}
+	if len(gh.creates) != 0 {
+		t.Fatalf("expected no create, got %d", len(gh.creates))
+	}
+	if len(gh.comments) != 1 {
+		t.Fatalf("expected 1 comment, got %d", len(gh.comments))
+	}
+	c, _ := loadCache(cachePath)
+	if len(c.Entries) != 1 {
+		t.Fatal("cache should have the found URL")
+	}
+}
+
+func TestRunFlow_KillSwitch_NoOp(t *testing.T) {
+	t.Setenv("HARNESS_AUTOFILE_ISSUES", "0")
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+	in := buildHookInput("go run ./skills/run-sensor/scripts foo",
+		"", "panic: boom\ngoroutine 1 [running]:\n", 2)
+	gh := &fakeGhClient{}
+	var stderr bytes.Buffer
+	code := runWith(in, &stderr, runOpts{gh: gh, cachePath: cachePath, repo: "o/r"})
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("kill switch must be silent; exit=%d stderr=%s", code, stderr.String())
+	}
+	if len(gh.creates) != 0 || len(gh.searches) != 0 {
+		t.Fatalf("no gh calls expected")
+	}
+	if _, err := os.Stat(cachePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("no cache file expected; stat err=%v", err)
+	}
+}
+
+func TestRunFlow_NonFrameworkCommand_NoOp(t *testing.T) {
+	t.Setenv("HARNESS_AUTOFILE_ISSUES", "1")
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+	in := buildHookInput("ls -la", "", "no such file\n", 1)
+	gh := &fakeGhClient{}
+	var stderr bytes.Buffer
+	code := runWith(in, &stderr, runOpts{gh: gh, cachePath: cachePath, repo: "o/r"})
+	if code != 0 {
+		t.Fatal(code)
+	}
+	if len(gh.creates)+len(gh.searches)+len(gh.comments) != 0 {
+		t.Fatal("no gh calls expected")
+	}
+	if _, err := os.Stat(cachePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("cache file should not exist")
+	}
+}
+
+func TestRunFlow_GHCreateFails_DoesNotMutateCache(t *testing.T) {
+	t.Setenv("HARNESS_AUTOFILE_ISSUES", "1")
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+	in := buildHookInput("go run ./skills/run-sensor/scripts foo",
+		"", "panic: boom\n\ngoroutine 1 [running]:\nmain.main()\n\t/abs/harness-framework/hooks/x.go:1\n", 2)
+	gh := &fakeGhClient{createErr: fmt.Errorf("gh: not authenticated")}
+	var stderr bytes.Buffer
+	code := runWith(in, &stderr, runOpts{gh: gh, cachePath: cachePath, repo: "o/r"})
+	if code != 0 {
+		t.Fatal(code)
+	}
+	if _, err := os.Stat(cachePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cache file should not be created on gh failure; stat err=%v", err)
+	}
+	if !strings.Contains(stderr.String(), "not authenticated") {
+		t.Fatalf("expected gh error in stderr; got %q", stderr.String())
+	}
+}
+
+func TestRunFlow_GHCreate422_RetriesWithSearch(t *testing.T) {
+	t.Setenv("HARNESS_AUTOFILE_ISSUES", "1")
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+	in := buildHookInput("go run ./skills/run-sensor/scripts foo",
+		"", "panic: dupe\n\ngoroutine 1 [running]:\nmain.main()\n\t/abs/harness-framework/hooks/x.go:1\n", 2)
+
+	gh := &raceGhClient{
+		createErr:      fmt.Errorf("gh: HTTP 422 already_exists: validation failed"),
+		searchAfterDup: issueRef{Number: 88, URL: "https://github.com/o/r/issues/88"},
+	}
+	var stderr bytes.Buffer
+	code := runWith(in, &stderr, runOpts{gh: gh, cachePath: cachePath, repo: "o/r"})
+	if code != 0 {
+		t.Fatal(code)
+	}
+	if gh.createCalls != 1 {
+		t.Fatalf("create called %d times", gh.createCalls)
+	}
+	if gh.searchCalls != 2 {
+		t.Fatalf("search called %d times", gh.searchCalls)
+	}
+	if gh.commentCalls != 1 {
+		t.Fatalf("comment called %d times", gh.commentCalls)
+	}
+}
+
+func TestRunFlow_NoFrameworkInOutput_ButCommandMatches(t *testing.T) {
+	t.Setenv("HARNESS_AUTOFILE_ISSUES", "1")
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+	in := buildHookInput("go run ./skills/run-sensor/scripts foo", "ok\n", "", 0)
+	gh := &fakeGhClient{}
+	var stderr bytes.Buffer
+	code := runWith(in, &stderr, runOpts{gh: gh, cachePath: cachePath, repo: "o/r"})
+	if code != 0 {
+		t.Fatal(code)
+	}
+	if len(gh.creates)+len(gh.searches) != 0 {
+		t.Fatal("clean output must not trigger gh")
+	}
+}
+
+func TestRunFlow_NoGHRemote_LogsAndExits(t *testing.T) {
+	t.Setenv("HARNESS_AUTOFILE_ISSUES", "1")
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "auto-issues.json")
+	in := buildHookInput("go run ./skills/run-sensor/scripts foo",
+		"", "panic: x\n\ngoroutine 1 [running]:\nmain.main()\n\t/abs/harness-framework/hooks/x.go:1\n", 2)
+	gh := &fakeGhClient{}
+	var stderr bytes.Buffer
+	code := runWith(in, &stderr, runOpts{
+		gh: gh, cachePath: cachePath,
+		repo: "", repoErr: fmt.Errorf("no github remote"),
+	})
+	if code != 0 {
+		t.Fatal(code)
+	}
+	if !strings.Contains(stderr.String(), "no github remote") {
+		t.Fatalf("expected 'no github remote' in stderr; got %q", stderr.String())
+	}
+	if len(gh.creates)+len(gh.searches) != 0 {
+		t.Fatal("no gh calls when repo unresolved")
+	}
+}
+
+// raceGhClient simulates the 422 already_exists path: first Create fails;
+// second Search succeeds; Comment then posts.
+type raceGhClient struct {
+	createCalls     int
+	searchCalls     int
+	commentCalls    int
+	createErr       error
+	searchBeforeDup issueRef
+	searchAfterDup  issueRef
+}
+
+func (r *raceGhClient) Search(repo, fp string) (issueRef, error) {
+	r.searchCalls++
+	if r.searchCalls == 1 {
+		return r.searchBeforeDup, nil
+	}
+	return r.searchAfterDup, nil
+}
+func (r *raceGhClient) Comment(repo string, n int, body string) error {
+	r.commentCalls++
+	return nil
+}
+func (r *raceGhClient) Create(repo, title, body string, labels []string) (issueRef, error) {
+	r.createCalls++
+	return issueRef{}, r.createErr
+}
+
+func buildHookInput(cmd, stdout, stderr string, exit int) hookInput {
+	return hookInput{
+		HookEventName: "PostToolUse",
+		ToolName:      "Bash",
+		ToolInput:     toolInputBsh{Command: cmd},
+		ToolResponse:  toolResponse{Stdout: stdout, Stderr: stderr, ExitCode: exit},
+	}
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }

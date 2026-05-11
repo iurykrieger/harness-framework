@@ -148,6 +148,14 @@ func main() {
 	os.Exit(run(os.Stdin, os.Stdout, os.Stderr))
 }
 
+type runOpts struct {
+	gh        ghClient
+	cachePath string
+	repo      string
+	repoErr   error
+	now       time.Time
+}
+
 func run(stdin io.Reader, stdout, stderr io.Writer) int {
 	body, err := io.ReadAll(stdin)
 	if err != nil {
@@ -172,9 +180,145 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 	if !commandTouchesFramework(in.ToolInput.Command) {
 		return 0
 	}
-	// Subsequent tasks fill in: classify, fingerprint, cache, gh ops.
-	_ = in
+
+	// Resolve project root, then repo and cache path.
+	res, err := registry.Lookup(in.Cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "cannot resolve project root:", err)
+		return 0
+	}
+	cachePath := filepath.Join(res.ProjectRoot, ".runtime", "auto-issues.json")
+	repo, repoErr := resolveRepo(res.ProjectRoot)
+	return runWith(in, stderr, runOpts{
+		gh:        ghCLI{},
+		cachePath: cachePath,
+		repo:      repo,
+		repoErr:   repoErr,
+	})
+}
+
+// runWith is the testable core. Inputs are pre-resolved (gh client,
+// cache path, repo, repo error). Returns the desired exit code.
+func runWith(in hookInput, stderr io.Writer, opts runOpts) int {
+	// Defensive guards: keep runWith safe to call directly from tests.
+	// Production `run` already filters on the same predicates before
+	// reaching here, so these are idempotent in normal use.
+	if killSwitchEnabled() {
+		return 0
+	}
+	if !commandTouchesFramework(in.ToolInput.Command) {
+		return 0
+	}
+
+	evt := classify(in.ToolResponse.Stdout, in.ToolResponse.Stderr, in.ToolResponse.ExitCode)
+	if evt == nil {
+		return 0
+	}
+	evt.Skill = extractSkill(in.ToolInput.Command)
+	fp := fingerprint(evt)
+
+	now := opts.now
+	if now.IsZero() {
+		now = nowUTC()
+	}
+
+	// Cache layer first.
+	c, _ := loadCache(opts.cachePath)
+	if entry, ok := c.Entries[fp]; ok && now.Sub(entry.LastSeen) < cacheStaleAfter {
+		entry.LastSeen = now
+		entry.OccurrenceCount++
+		if err := updateCacheLocked(opts.cachePath, func(c *cache) {
+			c.put(fp, entry)
+		}); err != nil {
+			fmt.Fprintln(stderr, "cache write:", err)
+		}
+		return 0
+	}
+
+	// Need repo for GH ops from here.
+	if opts.repoErr != nil || opts.repo == "" {
+		if opts.repoErr != nil {
+			fmt.Fprintln(stderr, opts.repoErr)
+		} else {
+			fmt.Fprintln(stderr, "no github remote")
+		}
+		return 0
+	}
+
+	// GH search backstop.
+	existing, err := opts.gh.Search(opts.repo, fp)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 0
+	}
+	if existing.Number != 0 {
+		if err := opts.gh.Comment(opts.repo, existing.Number, renderOccurrenceComment(in)); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 0
+		}
+		_ = updateCacheLocked(opts.cachePath, func(c *cache) {
+			c.put(fp, cacheEntry{
+				IssueURL:        existing.URL,
+				FirstSeen:       now,
+				LastSeen:        now,
+				OccurrenceCount: 1,
+				Skill:           evt.Skill,
+				Type:            evt.Type,
+			})
+		})
+		return 0
+	}
+
+	// Create new issue.
+	title := renderTitle(evt.Skill, evt.Summary)
+	body := renderBody(in, *evt, fp)
+	ref, err := opts.gh.Create(opts.repo, title, body, []string{"auto-filed", "bug"})
+	if err != nil {
+		// Race: another machine just created it. Search once more, then comment.
+		if isAlreadyExists(err) {
+			again, sErr := opts.gh.Search(opts.repo, fp)
+			if sErr == nil && again.Number != 0 {
+				if cErr := opts.gh.Comment(opts.repo, again.Number, renderOccurrenceComment(in)); cErr == nil {
+					_ = updateCacheLocked(opts.cachePath, func(c *cache) {
+						c.put(fp, cacheEntry{
+							IssueURL:        again.URL,
+							FirstSeen:       now,
+							LastSeen:        now,
+							OccurrenceCount: 1,
+							Skill:           evt.Skill,
+							Type:            evt.Type,
+						})
+					})
+					return 0
+				}
+			}
+		}
+		fmt.Fprintln(stderr, err)
+		return 0
+	}
+
+	if err := updateCacheLocked(opts.cachePath, func(c *cache) {
+		c.put(fp, cacheEntry{
+			IssueURL:        ref.URL,
+			FirstSeen:       now,
+			LastSeen:        now,
+			OccurrenceCount: 1,
+			Skill:           evt.Skill,
+			Type:            evt.Type,
+		})
+	}); err != nil {
+		fmt.Fprintln(stderr, "cache write:", err)
+	}
 	return 0
+}
+
+// isAlreadyExists checks whether err looks like a GH 422 duplicate.
+func isAlreadyExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "422") || strings.Contains(s, "already_exists")
 }
 
 var (
