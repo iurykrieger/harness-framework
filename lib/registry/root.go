@@ -177,9 +177,9 @@ func Lookup(startDir string) (Result, error) {
 //   - registry_source: "env" | "walk_up"
 //   - registry_exists: bool indicating whether the file is on disk
 //
-// Callers MUST merge these into their signal's metadata map (or copy
-// the fields), not replace metadata wholesale — other fields (kind,
-// entries, counts, etc.) are owned by the caller.
+// The returned map is freshly allocated on each call; callers may
+// augment it in place (adding kind, reports, entries, etc.) or merge
+// it into a separate metadata map — both patterns are safe.
 func DiagnoseMetadata(res Result) map[string]interface{} {
 	return map[string]interface{}{
 		"registry_path":   res.Root.RegistryFile(),

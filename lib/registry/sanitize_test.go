@@ -1,10 +1,15 @@
 package registry_test
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
 func validEntry() registry.RunningSensorEntry {
@@ -215,5 +220,60 @@ func TestRegistryMigratedSignal_Shape(t *testing.T) {
 	rpts, ok := md["reports"].([]registry.SanitizeReport)
 	if !ok || len(rpts) != 1 || rpts[0].Field != "watcher_pid" {
 		t.Errorf("metadata.reports: got %v", md["reports"])
+	}
+
+	// Round-trip via JSON to confirm the envelope marshals and the
+	// declared "passes signal.json validation" contract holds.
+	encoded, err := json.Marshal(sig)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	v, vCode := schema.LoadValidator(testfixtures.RepoSchemasDir(t), io.Discard)
+	if vCode != 0 {
+		t.Fatalf("schema validator init failed (code %d)", vCode)
+	}
+	if err := v.Validate(schema.TargetSignal, decoded); err != nil {
+		t.Fatalf("signal failed schema validation: %v", err)
+	}
+}
+
+func TestRegistryMigratedSignal_DroppedReport(t *testing.T) {
+	res := registry.Result{
+		Root:        registry.NewRoot("/tmp/proj"),
+		ProjectRoot: "/tmp/proj",
+		Source:      registry.SourceWalkUp,
+		Exists:      true,
+	}
+	reports := []registry.SanitizeReport{
+		{SensorID: "bad", Field: "pid", OldValue: -1, Dropped: true},
+		{SensorID: "ok", Field: "watcher_pid", OldValue: -1, Dropped: false},
+	}
+	sig := registry.RegistryMigratedSignal(res, reports, "start-sensor")
+
+	ev, _ := sig["evidence"].([]interface{})
+	if len(ev) != 1 {
+		t.Fatalf("evidence: got %d, want 1", len(ev))
+	}
+	first, _ := ev[0].(map[string]interface{})
+	rationale, _ := first["rationale"].(string)
+	if !strings.Contains(rationale, "rewrote 1") {
+		t.Errorf("rationale missing rewrite count: %q", rationale)
+	}
+	if !strings.Contains(rationale, "dropped 1") {
+		t.Errorf("rationale missing drop count: %q", rationale)
+	}
+
+	md, _ := sig["metadata"].(map[string]interface{})
+	rpts, _ := md["reports"].([]registry.SanitizeReport)
+	if len(rpts) != 2 {
+		t.Fatalf("reports: got %d, want 2", len(rpts))
+	}
+	if !rpts[0].Dropped || rpts[1].Dropped {
+		t.Errorf("dropped flags lost in passthrough: %+v", rpts)
 	}
 }
