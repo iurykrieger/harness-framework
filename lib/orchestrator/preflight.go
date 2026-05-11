@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -88,7 +87,7 @@ func RunDeps(
 			depID, attachErr := AttachLiveDep(ctx, s, projectRoot, holderID, holderPID, v, stdout, stderr)
 			if attachErr != nil {
 				cascade := buildSimpleSignal(targetID, "error", "high", "dep_start_failed", attachErr.Error())
-				_ = json.NewEncoder(stdout).Encode(cascade)
+				_ = emitSignalWithPersistence(cascade, stdout, projectRoot, targetID, stderr)
 				res.ExitCode = 1
 				return res
 			}
@@ -103,7 +102,7 @@ func RunDeps(
 				res.ExitCode = 1
 				return res
 			}
-			_ = json.NewEncoder(stdout).Encode(cascade)
+			_ = emitSignalWithPersistence(cascade, stdout, projectRoot, s.ID, stderr)
 			res.Signals[s.ID] = cascade
 			continue
 		}

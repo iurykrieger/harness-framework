@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -61,7 +60,7 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 			schema.PrintValidationOrPlain(err, stderr)
 			return 1
 		}
-		_ = json.NewEncoder(stdout).Encode(pre.CascadeSig)
+		_ = emitSignalWithPersistence(pre.CascadeSig, stdout, projectRoot, rootID, stderr)
 		return 1
 	}
 

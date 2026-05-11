@@ -77,7 +77,7 @@ func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string
 	}
 	sig := buildSimpleSignal(dep.ID, "pass", "info", kind, fmt.Sprintf("blocking dep %q held by %q", dep.ID, holderID))
 	sig = validateOrFallback(v, sig, dep.ID, stderr)
-	_ = json.NewEncoder(stdout).Encode(sig)
+	_ = emitSignalWithPersistence(sig, stdout, projectRoot, dep.ID, stderr)
 	return dep.ID, nil
 }
 
@@ -148,7 +148,7 @@ func DetachLiveDep(depID, projectRoot, holderID string, v *schema.Validator, std
 	if !stopNow {
 		sig := buildSimpleSignal(depID, "pass", "info", "dep_detached", fmt.Sprintf("blocking dep %q remains held", depID))
 		sig = validateOrFallback(v, sig, depID, stderr)
-		_ = json.NewEncoder(stdout).Encode(sig)
+		_ = emitSignalWithPersistence(sig, stdout, projectRoot, depID, stderr)
 		return
 	}
 	stopBlockingDep(r, entry, v, stdout, stderr)
@@ -272,7 +272,7 @@ func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, v *sch
 		"metadata":    map[string]interface{}{"kind": "aggregate", "command": entry.Command, "output_mode": "stream", "counts": map[string]int{"pass": 0, "warn": 0, "fail": 0, "error": 0}},
 	}
 	agg = validateOrFallback(v, agg, entry.SensorID, stderr)
-	_ = json.NewEncoder(stdout).Encode(agg)
+	_ = emitSignalWithPersistence(agg, stdout, r.ProjectRoot(), entry.SensorID, stderr)
 }
 
 // RebindDepHolderPID atomically updates the pid of a holder in dep.HeldBy.
