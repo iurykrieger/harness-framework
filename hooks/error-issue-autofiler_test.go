@@ -129,3 +129,41 @@ func TestCommandTouchesFramework(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractSkill(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want string
+	}{
+		// Scripts-path form
+		{"go run ./skills/run-sensor/scripts foo", "run-sensor"},
+		{"go run -tags=start_sensor ./skills/start-sensor/scripts foo", "start-sensor"},
+		{"go run ./skills/stop-sensor/scripts run-api-local", "stop-sensor"},
+		{"go run ./skills/tail-sensor/scripts run-api-local 0", "tail-sensor"},
+		{"go run ./skills/list-sensors/scripts", "list-sensors"},
+		{"go run ./skills/heal-sensor/scripts foo", "heal-sensor"},
+		{"go run ./skills/detect-sensors/scripts", "detect-sensors"},
+
+		// Installed-binary form
+		{"harness-run-sensor foo", "run-sensor"},
+		{"/usr/local/bin/harness-start-sensor foo", "start-sensor"},
+		{"harness-detect-sensors", "detect-sensors"},
+
+		// Fallbacks
+		{"go run ./hooks", "hook"},
+		{"go run -tags=error_autofiler ./hooks", "hook"},
+		{"go test ./lib/registry", "test"},
+		{"go vet ./skills/...", "test"},
+		{"harness-watcher", "watcher"},
+		{"completely unrelated", "unknown"},
+		{"", "unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			got := extractSkill(tc.cmd)
+			if got != tc.want {
+				t.Fatalf("cmd=%q: got %q want %q", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}

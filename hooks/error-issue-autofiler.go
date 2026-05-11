@@ -78,6 +78,32 @@ func commandTouchesFramework(cmd string) bool {
 	return false
 }
 
+// skillExtractRe captures the sensor skill name from either scripts
+// path or installed binary form. Built from sensorSkills.
+var skillExtractRe = func() *regexp.Regexp {
+	skills := strings.Join(sensorSkills, "|")
+	return regexp.MustCompile(`(?:skills/|harness-)((?:` + skills + `)-sensors?)`)
+}()
+
+func extractSkill(cmd string) string {
+	if m := skillExtractRe.FindStringSubmatch(cmd); m != nil {
+		return m[1]
+	}
+	// Fallback: harness-watcher binary
+	if regexp.MustCompile(`\bharness-watcher\b`).MatchString(cmd) {
+		return "watcher"
+	}
+	// Fallback: hooks
+	if regexp.MustCompile(`go\s+run\s+(?:-tags=\S+\s+)?\./hooks\b`).MatchString(cmd) {
+		return "hook"
+	}
+	// Fallback: go test/vet/build
+	if regexp.MustCompile(`go\s+(?:test|vet|build)\b`).MatchString(cmd) {
+		return "test"
+	}
+	return "unknown"
+}
+
 type hookInput struct {
 	SessionID      string       `json:"session_id"`
 	TranscriptPath string       `json:"transcript_path"`
