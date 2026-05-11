@@ -16,6 +16,8 @@ type RunningSensors struct {
 // RunningSensorEntry is one live blocking sensor's state.
 type RunningSensorEntry struct {
 	SensorID       string          `json:"sensor_id"`
+	RunID          string          `json:"run_id"`
+	Blocking       bool            `json:"blocking"`
 	PID            int             `json:"pid"`
 	PGID           int             `json:"pgid"`
 	WatcherPID     int             `json:"watcher_pid"`
@@ -105,6 +107,49 @@ func (rs *RunningSensors) RemoveEntry(id string) {
 	out := rs.Entries[:0]
 	for _, e := range rs.Entries {
 		if e.SensorID != id {
+			out = append(out, e)
+		}
+	}
+	rs.Entries = out
+}
+
+// FindBlockingEntry returns the single blocking:true entry for id, or nil.
+// Non-blocking entries are ignored.
+func (rs *RunningSensors) FindBlockingEntry(id string) *RunningSensorEntry {
+	for i := range rs.Entries {
+		if rs.Entries[i].SensorID == id && rs.Entries[i].Blocking {
+			return &rs.Entries[i]
+		}
+	}
+	return nil
+}
+
+// FindEntries returns all entries for id (any blocking value).
+func (rs *RunningSensors) FindEntries(id string) []*RunningSensorEntry {
+	var out []*RunningSensorEntry
+	for i := range rs.Entries {
+		if rs.Entries[i].SensorID == id {
+			out = append(out, &rs.Entries[i])
+		}
+	}
+	return out
+}
+
+// FindEntryByRunID returns the unique entry with the given run_id, or nil.
+func (rs *RunningSensors) FindEntryByRunID(runID string) *RunningSensorEntry {
+	for i := range rs.Entries {
+		if rs.Entries[i].RunID == runID {
+			return &rs.Entries[i]
+		}
+	}
+	return nil
+}
+
+// RemoveEntryByRunID deletes the entry matching run_id (no-op if absent).
+func (rs *RunningSensors) RemoveEntryByRunID(runID string) {
+	out := rs.Entries[:0]
+	for _, e := range rs.Entries {
+		if e.RunID != runID {
 			out = append(out, e)
 		}
 	}

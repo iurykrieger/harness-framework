@@ -47,3 +47,30 @@ func (r Root) RawLog(id string) string {
 func (r Root) SignalsLog(id string) string {
 	return filepath.Join(r.SensorDir(id), "signals.log")
 }
+
+// RunDir returns the per-run directory under .runtime/sensors/<id>/<runID>/.
+func (r Root) RunDir(id, runID string) string {
+	return filepath.Join(r.SensorDir(id), runID)
+}
+
+// RawLogRun is the raw subprocess output file for one run.
+func (r Root) RawLogRun(id, runID string) string {
+	return filepath.Join(r.RunDir(id, runID), "raw.log")
+}
+
+// SignalsLogRun is the parsed JSONL signals file for one run.
+func (r Root) SignalsLogRun(id, runID string) string {
+	return filepath.Join(r.RunDir(id, runID), "signals.log")
+}
+
+// LegacyRawLog is the flat (pre-runID) raw.log path. Read-only fallback
+// for entries migrated from before run-id-aware layouts existed.
+func (r Root) LegacyRawLog(id string) string {
+	return filepath.Join(r.SensorDir(id), "raw.log")
+}
+
+// LegacySignalsLog is the flat (pre-runID) signals.log path. Read-only
+// fallback; mirrors LegacyRawLog.
+func (r Root) LegacySignalsLog(id string) string {
+	return filepath.Join(r.SensorDir(id), "signals.log")
+}

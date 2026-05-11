@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
@@ -121,4 +122,44 @@ func decode(t *testing.T, s string) map[string]interface{} {
 		t.Fatalf("invalid JSON %q: %v", s, err)
 	}
 	return m
+}
+
+func TestRunWithDepsRoot_CascadeSkip_DoesNotTouchRegistryOrDir(t *testing.T) {
+	proj := t.TempDir()
+	sensorsDir := filepath.Join(proj, "sensors")
+	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Dep fails (exit 1).
+	_ = os.WriteFile(filepath.Join(sensorsDir, "dep.json"), []byte(`{
+      "id": "dep", "version": "0.0.0", "kind": "observation",
+      "type": "computational", "output": "single",
+      "cost": {"compute": "low"},
+      "execution": {"command": "exit 1", "exit_code_map": [{"exit_code": 1, "verdict": "fail", "severity": "high"}]}
+    }`), 0o644)
+	_ = os.WriteFile(filepath.Join(sensorsDir, "target.json"), []byte(`{
+      "id": "target", "version": "0.0.0", "kind": "observation",
+      "type": "computational", "output": "single",
+      "cost": {"compute": "low"},
+      "requires": [{"kind": "sensor", "id": "dep"}],
+      "execution": {"command": "echo never-runs", "exit_code_map": [{"exit_code": 0, "verdict": "pass", "severity": "info"}]}
+    }`), 0o644)
+
+	var stdout, stderr bytes.Buffer
+	code := RunWithDepsRoot(context.Background(), "target", proj, "", &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for cascade")
+	}
+
+	targetDir := filepath.Join(proj, ".runtime", "sensors", "target")
+	if entries, _ := os.ReadDir(targetDir); len(entries) != 0 {
+		t.Errorf("target run dir was created during cascade: %+v", entries)
+	}
+
+	rs, _ := registry.Load(registry.NewRoot(proj))
+	for _, e := range rs.Entries {
+		if e.SensorID == "target" {
+			t.Errorf("target entry exists despite cascade: %+v", e)
+		}
+	}
 }

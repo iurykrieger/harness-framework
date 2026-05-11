@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -55,16 +56,24 @@ func runStop(res registry.Result, args []string, reap bool) (int, map[string]int
 	if len(args) < 1 {
 		return 2, simpleSignal(res, "stop", "warn", "low", "not_running", "missing sensor id")
 	}
-	id := args[0]
+
+	// Parse first arg as sensorID[/runID].
+	arg := args[0]
+	var sensorID, runID string
+	if i := strings.IndexByte(arg, '/'); i >= 0 {
+		sensorID, runID = arg[:i], arg[i+1:]
+	} else {
+		sensorID = arg
+	}
 
 	v, code := schema.LoadValidator("", os.Stderr)
 	if code != 0 {
-		return code, simpleSignal(res, id, "error", "high", "failed", "schema validator init failed")
+		return code, simpleSignal(res, sensorID, "error", "high", "failed", "schema validator init failed")
 	}
 
 	if !res.Exists {
-		return 1, validateSignal(v, simpleSignal(res, id, "error", "high", "stop_no_registry",
-			fmt.Sprintf("registry not found at %s; sensor cannot be running. /start-sensor was likely run from a different cwd, or HARNESS_REGISTRY_ROOT is misconfigured.", res.Root.RegistryFile())), id)
+		return 1, validateSignal(v, simpleSignal(res, sensorID, "error", "high", "stop_no_registry",
+			fmt.Sprintf("registry not found at %s; sensor cannot be running. /start-sensor was likely run from a different cwd, or HARNESS_REGISTRY_ROOT is misconfigured.", res.Root.RegistryFile())), sensorID)
 	}
 
 	r := res.Root
@@ -78,34 +87,86 @@ func runStop(res registry.Result, args []string, reap bool) (int, map[string]int
 		if err != nil {
 			return err
 		}
-		entry = rs.FindEntry(id)
-		if entry == nil {
-			return nil
+		// Resolve target entry.
+		if runID != "" {
+			// Explicit run_id: look up directly.
+			entry = rs.FindEntryByRunID(runID)
+			if entry == nil {
+				return nil // signal "not_running" below
+			}
+			if entry.SensorID != sensorID {
+				// Mismatch — surface a distinct error after release of the lock.
+				entry = nil
+				return mismatchErr{wantSensor: sensorID, runID: runID}
+			}
+		} else {
+			entries := rs.FindEntries(sensorID)
+			switch len(entries) {
+			case 0:
+				return nil // signal "not_running" below
+			case 1:
+				entry = entries[0]
+			default:
+				// Prefer the unique blocking:true entry if present.
+				blocking := make([]*registry.RunningSensorEntry, 0, 1)
+				for _, e := range entries {
+					if e.Blocking {
+						blocking = append(blocking, e)
+					}
+				}
+				if len(blocking) == 1 {
+					entry = blocking[0]
+				} else {
+					// Truly ambiguous: surface ambiguous_run.
+					return ambiguousErr{entries: entries}
+				}
+			}
 		}
+		// Only blocking entries carry "manual" holds; the blocking:false
+		// path's entry is owned by the runner and has empty HeldBy. The
+		// RemoveHolder call is a no-op in that case.
 		registry.RemoveHolder(entry, registry.HeldByEntry{Kind: "manual"})
-		if reap {
+		if reap && entry.Blocking {
 			reaped = registry.ReapDead(entry)
 		}
 		// Persist removal of "manual" + reaped early so a crash here
 		// doesn't leave a stale "manual" hold.
 		return registry.Save(r, rs)
 	}); err != nil {
-		return 1, validateSignal(v, simpleSignal(res, id, "error", "high", "failed", fmt.Sprintf("registry: %v", err)), id)
+		switch e := err.(type) {
+		case mismatchErr:
+			return 1, validateSignal(v, simpleSignal(res, sensorID, "error", "high", "run_id_sensor_mismatch",
+				fmt.Sprintf("run_id %q does not belong to sensor %q", e.runID, e.wantSensor)), sensorID)
+		case ambiguousErr:
+			return 1, ambiguousSignal(v, res, sensorID, e.entries)
+		default:
+			return 1, validateSignal(v, simpleSignal(res, sensorID, "error", "high", "failed", fmt.Sprintf("registry: %v", err)), sensorID)
+		}
 	}
 
 	if entry == nil {
-		return 0, validateSignal(v, simpleSignal(res, id, "warn", "low", "not_running", fmt.Sprintf("no live entry for %q", id)), id)
+		if runID != "" {
+			return 0, validateSignal(v, simpleSignal(res, sensorID, "warn", "low", "not_running", fmt.Sprintf("no live entry for sensor %q run_id %q", sensorID, runID)), sensorID)
+		}
+		return 0, validateSignal(v, simpleSignal(res, sensorID, "warn", "low", "not_running", fmt.Sprintf("no live entry for %q", sensorID)), sensorID)
 	}
 
-	if registry.IsHeld(entry) {
-		sig := simpleSignal(res, id, "warn", "low", "held", fmt.Sprintf("sensor %q still held by %d holders", id, len(entry.HeldBy)))
+	// blocking:true is the only branch that honors "held_by". For
+	// blocking:false the entry is owned by the runner subprocess and
+	// nothing else can hold it.
+	if entry.Blocking && registry.IsHeld(entry) {
+		sig := simpleSignal(res, sensorID, "warn", "low", "held", fmt.Sprintf("sensor %q still held by %d holders", sensorID, len(entry.HeldBy)))
 		md := sig["metadata"].(map[string]interface{})
 		md["holders"] = holderSummaries(entry.HeldBy)
 		md["dead_holders"] = deadHolderSummaries(entry.HeldBy)
 		if len(reaped) > 0 {
 			md["reaped_holders"] = holderSummaries(reaped)
 		}
-		return 0, validateSignal(v, sig, id)
+		return 0, validateSignal(v, sig, sensorID)
+	}
+
+	if !entry.Blocking {
+		return stopNonBlocking(res, v, r, projectRoot, entry, sensorID)
 	}
 
 	// We are clear to stop. Send SIGTERM to the process group.
@@ -113,10 +174,10 @@ func runStop(res registry.Result, args []string, reap bool) (int, map[string]int
 	killedForcefully := terminateWithGrace(entry.PGID, gracefulMS)
 	watcherKillForced, watcherKillLatencyMS := stopWatcher(entry.WatcherPID)
 
-	sensorJSON := loadSensorJSONForStop(projectRoot, id)
+	sensorJSON := loadSensorJSONForStop(projectRoot, sensorID)
 	teardownResults := runTeardown(sensorJSON)
 
-	individuals := readSignals(r.SignalsLog(id))
+	individuals := readSignals(r.SignalsLog(sensorID))
 	exitVerd, exitSev := exitMappingFromSensor(sensorJSON, entry)
 	streamVerd, streamSev := libsignal.MaxStreamVerdict(individuals)
 
@@ -129,7 +190,7 @@ func runStop(res registry.Result, args []string, reap bool) (int, map[string]int
 		Blocking:       !subprocessSelfExited,
 	})
 
-	sig := buildAggregate(res, id, sensorJSON, entry, individuals, agg, killedForcefully, reaped, teardownResults)
+	sig := buildAggregate(res, sensorID, sensorJSON, entry, individuals, agg, killedForcefully, reaped, teardownResults)
 	if md, ok := sig["metadata"].(map[string]interface{}); ok {
 		md["watcher_kill_forced"] = watcherKillForced
 		md["watcher_kill_latency_ms"] = watcherKillLatencyMS
@@ -140,12 +201,83 @@ func runStop(res registry.Result, args []string, reap bool) (int, map[string]int
 		if err != nil {
 			return err
 		}
-		rs.RemoveEntry(id)
+		rs.RemoveEntryByRunID(entry.RunID)
 		return registry.Save(r, rs)
 	}); err != nil {
-		return 1, validateSignal(v, simpleSignal(res, id, "error", "high", "failed", fmt.Sprintf("registry: %v", err)), id)
+		return 1, validateSignal(v, simpleSignal(res, sensorID, "error", "high", "failed", fmt.Sprintf("registry: %v", err)), sensorID)
 	}
-	return 0, validateSignal(v, sig, id)
+	return 0, validateSignal(v, sig, sensorID)
+}
+
+// stopNonBlocking handles entries with Blocking=false. The runner
+// subprocess is alive and owns its own teardown/aggregate emission
+// (driven by the SIGINT/SIGTERM handler installed in /run-sensor); the
+// only job here is to terminate the runner's process group cleanly and
+// remove the registry entry.
+func stopNonBlocking(res registry.Result, v *schema.Validator, r registry.Root, projectRoot string, entry *registry.RunningSensorEntry, sensorID string) (int, map[string]interface{}) {
+	gracefulMS := readGracefulMS(entry, projectRoot)
+	killedForcefully := terminateWithGrace(entry.PGID, gracefulMS)
+
+	if err := registry.WithFileLock(r.LockFile(), func() error {
+		rs, err := registry.Load(r)
+		if err != nil {
+			return err
+		}
+		rs.RemoveEntryByRunID(entry.RunID)
+		return registry.Save(r, rs)
+	}); err != nil {
+		return 1, validateSignal(v, simpleSignal(res, sensorID, "error", "high", "failed", fmt.Sprintf("registry: %v", err)), sensorID)
+	}
+
+	sig := simpleSignal(res, sensorID, "pass", "info", "stopped", fmt.Sprintf("non-blocking sensor %q (run %q) terminated", sensorID, entry.RunID))
+	md := sig["metadata"].(map[string]interface{})
+	md["blocking"] = false
+	md["run_id"] = entry.RunID
+	md["killed_forcefully"] = killedForcefully
+	return 0, validateSignal(v, sig, sensorID)
+}
+
+// mismatchErr signals that a run_id was found but belongs to a
+// different sensor than the one requested. Surfaced as
+// metadata.kind=run_id_sensor_mismatch.
+type mismatchErr struct {
+	wantSensor string
+	runID      string
+}
+
+func (mismatchErr) Error() string { return "run_id sensor mismatch" }
+
+// ambiguousErr signals that a bare sensor_id matches multiple active
+// non-blocking runs. Surfaced as metadata.kind=ambiguous_run with one
+// evidence record per active run_id.
+type ambiguousErr struct {
+	entries []*registry.RunningSensorEntry
+}
+
+func (ambiguousErr) Error() string { return "ambiguous run" }
+
+func ambiguousSignal(v *schema.Validator, res registry.Result, sensorID string, entries []*registry.RunningSensorEntry) map[string]interface{} {
+	runIDs := make([]interface{}, len(entries))
+	for i, e := range entries {
+		runIDs[i] = map[string]interface{}{"rationale": fmt.Sprintf("active run_id: %s", e.RunID)}
+	}
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := registry.DiagnoseMetadata(res)
+	md["kind"] = "ambiguous_run"
+	sig := map[string]interface{}{
+		"sensor_id":   sensorID,
+		"version":     "0.0.0",
+		"run_id":      uuid.NewString(),
+		"started_at":  now,
+		"finished_at": now,
+		"verdict":     "error",
+		"severity":    "high",
+		"confidence":  1.0,
+		"evidence":    runIDs,
+		"cost_actual": map[string]interface{}{"latency_ms": 0},
+		"metadata":    md,
+	}
+	return validateSignal(v, sig, sensorID)
 }
 
 func terminateWithGrace(pgid int, gracefulMS int) bool {

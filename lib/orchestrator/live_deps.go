@@ -17,6 +17,16 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/subprocess"
 )
 
+// LiveDep identifies a single live blocking-dep entry that
+// AttachLiveDep attached to. The pair (ID, RunID) is the unique key
+// that DetachLiveDep uses to address exactly the registry entry we
+// hold — never a non-blocking entry that happens to share the same
+// sensor id.
+type LiveDep struct {
+	ID    string
+	RunID string
+}
+
 // RunWithDepsRoot is the id-resolving variant of RunWithDeps. The
 // requested sensor is identified by id (resolved to <root>/sensors/<id>.json),
 // schemasDir is resolved by the schema package's discovery if empty.
@@ -24,12 +34,15 @@ import (
 // requested sensor runs and stopped/detached after.
 func RunWithDepsRoot(ctx context.Context, id, projectRoot, schemasDir string, stdout, stderr io.Writer) int {
 	path := filepath.Join(projectRoot, "sensors", id+".json")
-	return RunWithDeps(ctx, path, schemasDir, stdout, stderr)
+	root := registry.NewRoot(projectRoot)
+	return runWithDepsImpl(ctx, path, schemasDir, &root, stdout, stderr)
 }
 
 // AttachLiveDep starts (or attaches to) a blocking dep. Emits a
-// `dep_attached` or `dep_started` Signal on stdout. Returns the dep id
-// so the caller can stack it for detach.
+// `dep_attached` or `dep_started` Signal on stdout. Returns a LiveDep
+// carrying the dep's id and run_id so the caller can stack it for
+// detach by exact run_id (never by id, which could match a sibling
+// non-blocking entry of the same sensor).
 //
 // holderPID is recorded in held_by as the holder's pid. Callers that are
 // the holder use os.Getpid(); callers that will hand the holder over to
@@ -43,30 +56,37 @@ func RunWithDepsRoot(ctx context.Context, id, projectRoot, schemasDir string, st
 // prevents accumulation of dead holders across re-runs of the same
 // holder identity (e.g., /start-sensor target re-runs after start.go
 // crashes between AttachLiveDep and RebindDepHolderPID).
-func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string, holderPID int, v *schema.Validator, stdout, stderr io.Writer) (string, error) {
+func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string, holderPID int, v *schema.Validator, stdout, stderr io.Writer) (LiveDep, error) {
 	r := registry.NewRoot(projectRoot)
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	holder := registry.HeldByEntry{Kind: "sensor", ID: holderID, PID: holderPID, AttachedAt: now}
 
 	startedFresh := false
+	var runID string
 	if err := registry.WithFileLock(r.LockFile(), func() error {
 		rs, err := registry.Load(r)
 		if err != nil {
 			return err
 		}
-		existing := rs.FindEntry(dep.ID)
+		existing := rs.FindBlockingEntry(dep.ID)
 		if existing != nil && registry.IsPIDAlive(existing.PID) {
 			reapDeadSameIDHolders(existing, holderID)
 			if !hasLiveSameIDHolder(existing, holderID) {
 				registry.AddHolder(existing, holder)
 			}
+			runID = existing.RunID
 			return registry.Save(r, rs)
 		}
 		// Not live: start it.
 		startedFresh = true
-		return startBlockingDep(&rs, r, dep, holder)
+		newID, startErr := startBlockingDep(&rs, r, dep, holder)
+		if startErr != nil {
+			return startErr
+		}
+		runID = newID
+		return nil
 	}); err != nil {
-		return "", err
+		return LiveDep{}, err
 	}
 
 	kind := "dep_attached"
@@ -76,7 +96,7 @@ func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string
 	sig := buildSimpleSignal(dep.ID, "pass", "info", kind, fmt.Sprintf("blocking dep %q held by %q", dep.ID, holderID))
 	sig = validateOrFallback(v, sig, dep.ID, stderr)
 	_ = json.NewEncoder(stdout).Encode(sig)
-	return dep.ID, nil
+	return LiveDep{ID: dep.ID, RunID: runID}, nil
 }
 
 // reapDeadSameIDHolders drops every (kind="sensor", id=holderID, pid=DEAD)
@@ -118,7 +138,12 @@ func hasLiveSameIDHolder(entry *registry.RunningSensorEntry, holderID string) bo
 // DetachLiveDep removes the holder from dep's HeldBy. If HeldBy becomes
 // empty, the dep is stopped (SIGTERM/SIGKILL, registry cleanup) and an
 // aggregate Signal is emitted on stdout. Otherwise emits dep_detached.
-func DetachLiveDep(depID, projectRoot, holderID string, v *schema.Validator, stdout, stderr io.Writer) {
+//
+// The dep is addressed by (ID, RunID): RunID disambiguates the blocking
+// entry we attached to from any sibling non-blocking entries of the
+// same sensor id, so detach never accidentally tears down work the
+// orchestrator does not own.
+func DetachLiveDep(dep LiveDep, projectRoot, holderID string, v *schema.Validator, stdout, stderr io.Writer) {
 	r := registry.NewRoot(projectRoot)
 	var entry *registry.RunningSensorEntry
 	stopNow := false
@@ -127,15 +152,15 @@ func DetachLiveDep(depID, projectRoot, holderID string, v *schema.Validator, std
 		if err != nil {
 			return err
 		}
-		entry = rs.FindEntry(depID)
+		entry = rs.FindEntryByRunID(dep.RunID)
 		if entry == nil {
 			return nil
 		}
 		// Copy entry before removing so we can reference it after.
 		entryCopy := *entry
 		entry = &entryCopy
-		registry.RemoveHolder(rs.FindEntry(depID), registry.HeldByEntry{Kind: "sensor", ID: holderID, PID: os.Getpid()})
-		if !registry.IsHeld(rs.FindEntry(depID)) {
+		registry.RemoveHolder(rs.FindEntryByRunID(dep.RunID), registry.HeldByEntry{Kind: "sensor", ID: holderID, PID: os.Getpid()})
+		if !registry.IsHeld(rs.FindEntryByRunID(dep.RunID)) {
 			stopNow = true
 		}
 		return registry.Save(r, rs)
@@ -144,8 +169,8 @@ func DetachLiveDep(depID, projectRoot, holderID string, v *schema.Validator, std
 		return
 	}
 	if !stopNow {
-		sig := buildSimpleSignal(depID, "pass", "info", "dep_detached", fmt.Sprintf("blocking dep %q remains held", depID))
-		sig = validateOrFallback(v, sig, depID, stderr)
+		sig := buildSimpleSignal(dep.ID, "pass", "info", "dep_detached", fmt.Sprintf("blocking dep %q remains held", dep.ID))
+		sig = validateOrFallback(v, sig, dep.ID, stderr)
 		_ = json.NewEncoder(stdout).Encode(sig)
 		return
 	}
@@ -153,31 +178,40 @@ func DetachLiveDep(depID, projectRoot, holderID string, v *schema.Validator, std
 }
 
 // startBlockingDep is called from AttachLiveDep under flock. It spawns
-// the dep's command detached and writes a registry entry with the given
-// holder. No watcher process is spawned for orchestrator-managed deps —
-// the dep runs unobserved (signals.log stays empty); /stop-sensor of
-// dep would also see no individuals, which is intentional for the
+// the dep's command detached and writes a registry entry with the
+// given holder. Returns the freshly-minted run_id so the caller can
+// thread it into LiveDep.
+//
+// No watcher process is spawned for orchestrator-managed deps — the
+// dep runs unobserved (signals.log stays empty); /stop-sensor of dep
+// would also see no individuals, which is intentional for the
 // orchestrator path (the dependent's aggregate is what matters).
-func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, holder registry.HeldByEntry) error {
+func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, holder registry.HeldByEntry) (string, error) {
 	execMap, _ := dep.JSON["execution"].(map[string]interface{})
 	command, _ := execMap["command"].(string)
 	if err := os.MkdirAll(r.SensorDir(dep.ID), 0o755); err != nil {
-		return fmt.Errorf("mkdir log dir: %w", err)
+		return "", fmt.Errorf("mkdir log dir: %w", err)
 	}
 	if err := os.WriteFile(r.RawLog(dep.ID), nil, 0o644); err != nil {
-		return fmt.Errorf("create raw.log: %w", err)
+		return "", fmt.Errorf("create raw.log: %w", err)
 	}
 	if err := os.WriteFile(r.SignalsLog(dep.ID), nil, 0o644); err != nil {
-		return fmt.Errorf("create signals.log: %w", err)
+		return "", fmt.Errorf("create signals.log: %w", err)
 	}
 	det, err := subprocess.SpawnDetached(subprocess.DetachConfig{Command: command, LogFile: r.RawLog(dep.ID)})
 	if err != nil {
-		return fmt.Errorf("spawn: %w", err)
+		return "", fmt.Errorf("spawn: %w", err)
 	}
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	rs.RemoveEntry(dep.ID)
+	shortUUID := uuid.NewString()
+	if len(shortUUID) >= 8 {
+		shortUUID = shortUUID[:8]
+	}
+	runID := fmt.Sprintf("%d-%s", det.PID, shortUUID)
 	rs.Entries = append(rs.Entries, registry.RunningSensorEntry{
 		SensorID:   dep.ID,
+		RunID:      runID,
+		Blocking:   true,
 		PID:        det.PID,
 		PGID:       det.PGID,
 		WatcherPID: 0,
@@ -186,7 +220,10 @@ func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, 
 		LogDir:     filepath.Join(".runtime", "sensors", dep.ID),
 		HeldBy:     []registry.HeldByEntry{holder},
 	})
-	return registry.Save(r, *rs)
+	if err := registry.Save(r, *rs); err != nil {
+		return "", err
+	}
+	return runID, nil
 }
 
 // stopBlockingDep terminates the dep's process group and removes its
@@ -211,7 +248,7 @@ func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, v *sch
 		if err != nil {
 			return err
 		}
-		rs.RemoveEntry(entry.SensorID)
+		rs.RemoveEntryByRunID(entry.RunID)
 		return registry.Save(r, rs)
 	})
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
@@ -248,7 +285,7 @@ func RebindDepHolderPID(depID, projectRoot, holderID string, oldPID, newPID int)
 		if err != nil {
 			return err
 		}
-		entry := rs.FindEntry(depID)
+		entry := rs.FindBlockingEntry(depID)
 		if entry == nil {
 			return nil
 		}

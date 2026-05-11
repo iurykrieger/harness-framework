@@ -34,6 +34,7 @@ type watcherConfig struct {
 	SubprocessPID int
 	RegistryRoot  string
 	SensorID      string
+	RunID         string // resolved from HARNESS_WATCHER_RUN_ID
 }
 
 func main() {
@@ -44,6 +45,7 @@ func main() {
 		EnvelopeJSON: os.Getenv("HARNESS_WATCHER_ENVELOPE"),
 		RegistryRoot: os.Getenv("HARNESS_WATCHER_REGISTRY_ROOT"),
 		SensorID:     os.Getenv("HARNESS_WATCHER_SENSOR_ID"),
+		RunID:        os.Getenv("HARNESS_WATCHER_RUN_ID"),
 	}
 	if pidStr := os.Getenv("HARNESS_WATCHER_SUBPROCESS_PID"); pidStr != "" {
 		if pid, err := strconv.Atoi(pidStr); err == nil {
@@ -222,17 +224,24 @@ func runReaper(cfg watcherConfig, stop <-chan struct{}) {
 	}
 	root := registry.NewRoot(cfg.RegistryRoot)
 	exitCode := -1 // we cannot recover the exact code without ptrace
-	_ = registry.WithFileLock(root.LockFile(), func() error {
-		rs, err := registry.Load(root)
+	_ = recordSubprocessExit(root, cfg.RunID, &registry.SubprocessExit{
+		Code:     exitCode,
+		ExitedAt: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+	})
+}
+
+// recordSubprocessExit looks up the entry by run_id and stamps its
+// SubprocessExit field. Returns nil on success or no-op (entry absent);
+// returns an error on registry load/save failure.
+func recordSubprocessExit(r registry.Root, runID string, exit *registry.SubprocessExit) error {
+	return registry.WithFileLock(r.LockFile(), func() error {
+		rs, err := registry.Load(r)
 		if err != nil {
 			return err
 		}
-		if e := rs.FindEntry(cfg.SensorID); e != nil {
-			e.SubprocessExit = &registry.SubprocessExit{
-				Code:     exitCode,
-				ExitedAt: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-			}
+		if e := rs.FindEntryByRunID(runID); e != nil {
+			e.SubprocessExit = exit
 		}
-		return registry.Save(root, rs)
+		return registry.Save(r, rs)
 	})
 }
