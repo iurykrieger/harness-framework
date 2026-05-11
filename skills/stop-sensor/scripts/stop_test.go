@@ -76,7 +76,7 @@ func TestStop_HoldByDependent_RefusesStop(t *testing.T) {
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
 			{
-				SensorID: "live", PID: registry.SelfPID(), HeldBy: []registry.HeldByEntry{
+				SensorID: "live", PID: registry.SelfPID(), PGID: registry.SelfPID(), HeldBy: []registry.HeldByEntry{
 					{Kind: "manual"},
 					{Kind: "sensor", ID: "B", PID: registry.SelfPID()},
 				},
@@ -112,7 +112,8 @@ func TestStop_ReapsDeadHolders_WhenFlagSet(t *testing.T) {
 		Entries: []registry.RunningSensorEntry{
 			{
 				SensorID: "live",
-				PID:      0,
+				PID:      3_999_998,
+				PGID:     3_999_998,
 				HeldBy: []registry.HeldByEntry{
 					{Kind: "manual"},
 					{Kind: "sensor", ID: "C", PID: 3_999_999},

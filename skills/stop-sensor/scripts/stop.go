@@ -36,10 +36,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "stop: cwd:", err)
 		os.Exit(2)
 	}
-	res, err := registry.Lookup(startDir)
+	res, reports, err := registry.LookupSanitized(startDir)
 	if err != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(registry.DiscoveryErrorSignal(err, ""))
 		os.Exit(1)
+	}
+	if len(reports) > 0 {
+		_ = json.NewEncoder(os.Stdout).Encode(registry.RegistryMigratedSignal(res, reports, "stop-sensor"))
 	}
 	exit, sig := runStop(res, fs.Args(), reap)
 	if sig != nil {
