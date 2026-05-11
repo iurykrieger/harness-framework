@@ -496,6 +496,50 @@ func TestRunOne_PersistsAggregateAndStdoutMatchesSignalsLog(t *testing.T) {
 	}
 }
 
+func TestRunOne_RuntimeDirFailed_EmitsErrorSignalToStdoutOnly(t *testing.T) {
+	// /dev/null is not a directory, so MkdirAll under it fails. This
+	// forces prepareRuntimeDir into the error path that emits a
+	// runtime_dir_failed signal to stdout only (no signals.log).
+	s := Sensor{
+		ID:   "rt-fail",
+		Path: "/dev/null/sensors/rt-fail.json",
+		JSON: map[string]interface{}{
+			"id":      "rt-fail",
+			"version": "0.0.1",
+			"type":    "computational",
+			"output":  "stream",
+			"execution": map[string]interface{}{
+				"command":       "echo never",
+				"exit_code_map": []interface{}{},
+				"output_parsing": map[string]interface{}{
+					"patterns": []interface{}{
+						map[string]interface{}{"regex": "x", "verdict": "pass", "severity": "info"},
+					},
+				},
+			},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	sig, code := RunOne(context.Background(), s, "", nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if sig["verdict"] != "error" {
+		t.Fatalf("verdict = %v, want error", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if md["kind"] != "runtime_dir_failed" {
+		t.Errorf("metadata.kind = %v, want runtime_dir_failed", md["kind"])
+	}
+	if _, ok := md["error_excerpt"].(string); !ok {
+		t.Errorf("metadata.error_excerpt missing or non-string: %v", md["error_excerpt"])
+	}
+	// Stdout must have exactly one JSONL line.
+	if strings.Count(stdout.String(), "\n") != 1 {
+		t.Errorf("expected 1 stdout line, got %d (%q)", strings.Count(stdout.String(), "\n"), stdout.String())
+	}
+}
+
 // The aggregate Signal emitted on stdout is valid JSON and the LAST line.
 func TestRunOne_OutputIsValidJSON(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
