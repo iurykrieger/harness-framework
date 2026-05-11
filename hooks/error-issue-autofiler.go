@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -45,6 +46,37 @@ const (
 // declared once and reused by commandTouchesFramework and
 // extractSkill regex builders.
 var sensorSkills = []string{"run", "start", "stop", "tail", "list", "heal", "detect"}
+
+// frameworkCommandPatterns flags Bash commands worth inspecting for
+// framework crashes. Built lazily from sensorSkills to avoid hardcoding
+// the seven names twice.
+var frameworkCommandPatterns = buildFrameworkCommandPatterns()
+
+func buildFrameworkCommandPatterns() []*regexp.Regexp {
+	skills := strings.Join(sensorSkills, "|")
+	return []*regexp.Regexp{
+		// go run direct from the scripts directory
+		regexp.MustCompile(`go\s+run\s+(?:-tags=\S+\s+)?\./skills/(?:` + skills + `)-sensors?/scripts\b`),
+		// go run from hooks
+		regexp.MustCompile(`go\s+run\s+(?:-tags=\S+\s+)?\./hooks\b`),
+		// installed binaries on PATH
+		regexp.MustCompile(`\bharness-(?:(?:` + skills + `)-sensors?|watcher)\b`),
+		// go test/vet/build of the framework's own packages
+		regexp.MustCompile(`go\s+(?:test|vet|build)\s+(?:-tags=\S+\s+)?\./(?:skills|lib|hooks)\b`),
+	}
+}
+
+func commandTouchesFramework(cmd string) bool {
+	if cmd == "" {
+		return false
+	}
+	for _, re := range frameworkCommandPatterns {
+		if re.MatchString(cmd) {
+			return true
+		}
+	}
+	return false
+}
 
 type hookInput struct {
 	SessionID      string       `json:"session_id"`
@@ -100,8 +132,13 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 	if killSwitchEnabled() {
 		return 0
 	}
-	// Subsequent tasks fill in: commandTouchesFramework,
-	// classify, fingerprint, cache, gh ops. For now: parse-only → exit 0.
+	if in.ToolName != "Bash" {
+		return 0
+	}
+	if !commandTouchesFramework(in.ToolInput.Command) {
+		return 0
+	}
+	// Subsequent tasks fill in: classify, fingerprint, cache, gh ops.
 	_ = in
 	return 0
 }

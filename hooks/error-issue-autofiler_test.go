@@ -77,3 +77,55 @@ func TestRun_KillSwitch_ShortCircuits(t *testing.T) {
 		t.Fatalf("kill switch must be silent; stderr=%q", stderr.String())
 	}
 }
+
+func TestCommandTouchesFramework(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want bool
+	}{
+		// Positive: go run from skills
+		{"go run ./skills/run-sensor/scripts foo", true},
+		{"go run -tags=run_computational ./skills/run-sensor/scripts foo", true},
+		{"go run -tags=run_inferential ./skills/run-sensor/scripts foo --slot k=v", true},
+		{"go run ./skills/start-sensor/scripts run-api-local", true},
+		{"go run ./skills/stop-sensor/scripts run-api-local", true},
+		{"go run ./skills/tail-sensor/scripts run-api-local 0", true},
+		{"go run ./skills/list-sensors/scripts", true},
+		{"go run ./skills/heal-sensor/scripts foo", true},
+		{"go run ./skills/detect-sensors/scripts", true},
+
+		// Positive: go run hooks
+		{"go run ./hooks", true},
+		{"go run -tags=error_autofiler ./hooks", true},
+
+		// Positive: installed binaries
+		{"harness-run-sensor foo", true},
+		{"harness-watcher", true},
+		{"/usr/local/bin/harness-stop-sensor run-api-local", true},
+
+		// Positive: go test/vet/build of framework packages
+		{"go test ./lib/...", true},
+		{"go vet -tags=run_computational ./skills/...", true},
+		{"go build ./hooks", true},
+
+		// Negative
+		{"ls -la", false},
+		{"npm test", false},
+		{"git push", false},
+		{"go run ./cmd/other", false},
+		{"cd skills/run-sensor && echo hi", false},
+		// matcher is permissive on "go run" anywhere; we don't list
+		// `echo go run ./skills/...` as a negative case because the
+		// classifier needs real error output for false positives to
+		// matter.
+		{"", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			got := commandTouchesFramework(tc.cmd)
+			if got != tc.want {
+				t.Fatalf("cmd=%q: got %v want %v", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
