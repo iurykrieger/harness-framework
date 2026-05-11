@@ -25,6 +25,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -171,16 +173,20 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 var (
-	rePID         = regexp.MustCompile(`(?i)pid=\d+`)
-	reTimestamp   = regexp.MustCompile(`(?i)\d{4}-\d{2}-\d{2}t\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:z|[+-]\d{2}:\d{2})`)
-	reTrailingPos = regexp.MustCompile(`\s*:\d+(?::\d+)?\s*$`)
-	reWhitespace  = regexp.MustCompile(`\s+`)
+	rePID           = regexp.MustCompile(`(?i)pid=\d+`)
+	reTimestamp     = regexp.MustCompile(`(?i)\d{4}-\d{2}-\d{2}t\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:z|[+-]\d{2}:\d{2})`)
+	reGoPos         = regexp.MustCompile(`(\.go):\d+(?::\d+)?`)
+	reTrailingParen = regexp.MustCompile(`\s*\([^)]*\)\s*$`)
+	reTrailingPos   = regexp.MustCompile(`\s*:\d+(?::\d+)?\s*$`)
+	reWhitespace    = regexp.MustCompile(`\s+`)
 )
 
 // normalize produces a stable lower-case form of an error/output line
 // for use in fingerprint canonical strings. Strips PIDs, ISO/RFC3339
-// timestamps, absolute plugin paths (replaced with <plugin>), trailing
-// :line:col suffixes, and collapses whitespace.
+// timestamps, absolute plugin paths (replaced with <plugin>), :line:col
+// suffixes following ".go" file extensions, trailing parenthetical
+// noise (e.g. "(pid=n at t)") left over from the previous substitutions,
+// trailing :line:col suffixes, and collapses whitespace.
 func normalize(s string) string {
 	if s == "" {
 		return ""
@@ -191,6 +197,8 @@ func normalize(s string) string {
 	if root := os.Getenv("CLAUDE_PLUGIN_ROOT"); root != "" {
 		s = strings.ReplaceAll(s, strings.ToLower(root), "<plugin>")
 	}
+	s = reGoPos.ReplaceAllString(s, "$1")
+	s = reTrailingParen.ReplaceAllString(s, "")
 	s = reTrailingPos.ReplaceAllString(s, "")
 	s = reWhitespace.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
@@ -372,4 +380,43 @@ func extractFrameworkFrame(stack string) string {
 		}
 	}
 	return ""
+}
+
+// fingerprint returns a 12-character lowercase hex hash that identifies
+// an error across runs. The canonical string varies by Type — see
+// docs/superpowers/specs/2026-05-11-auto-issue-opening-design.md.
+func fingerprint(evt *classifiedEvent) string {
+	var canonical string
+	switch evt.Type {
+	case "compile_error":
+		canonical = strings.Join([]string{
+			"compile",
+			evt.Pkg,
+			evt.File,
+			normalize(evt.Summary),
+		}, "|")
+	case "panic":
+		canonical = strings.Join([]string{
+			"panic",
+			evt.FrameworkFrame,
+			normalize(evt.Summary),
+		}, "|")
+	case "signal_error":
+		canonical = strings.Join([]string{
+			"signal",
+			evt.Skill,
+			evt.MetadataKind,
+			normalize(evt.Summary),
+		}, "|")
+	case "exit_nonzero":
+		canonical = strings.Join([]string{
+			"exit",
+			evt.Skill,
+			normalize(evt.Summary),
+		}, "|")
+	default:
+		canonical = "unknown|" + normalize(evt.Summary)
+	}
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])[:12]
 }

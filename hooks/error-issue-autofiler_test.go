@@ -304,3 +304,84 @@ func TestClassify_SignalError_NonAllowlistedKindIgnored(t *testing.T) {
 		t.Fatalf("non-allowlisted kind must not classify; got %+v", got)
 	}
 }
+
+func TestFingerprint_CompileError(t *testing.T) {
+	a := &classifiedEvent{
+		Type:    "compile_error",
+		Pkg:     "github.com/iurykrieger/harness-framework/lib/sensor",
+		File:    "lib/sensor/load.go",
+		Summary: "lib/sensor/load.go:42: undefined: ResolveSensorPath",
+		Skill:   "run-sensor",
+	}
+	b := *a
+	b.Summary = "lib/sensor/load.go:99: undefined: ResolveSensorPath" // different line, same error
+	if fingerprint(a) != fingerprint(&b) {
+		t.Fatal("compile_error fingerprint should be stable across line numbers")
+	}
+
+	c := *a
+	c.Summary = "lib/sensor/load.go:42: undefined: OtherSymbol"
+	if fingerprint(a) == fingerprint(&c) {
+		t.Fatal("different compile errors must hash differently")
+	}
+}
+
+func TestFingerprint_Panic(t *testing.T) {
+	a := &classifiedEvent{
+		Type:           "panic",
+		Skill:          "start-sensor",
+		Summary:        "panic: runtime error: invalid memory address or nil pointer dereference",
+		FrameworkFrame: "lib/registry/root.go:151",
+	}
+	b := *a
+	b.Summary = "panic: runtime error: invalid memory address or nil pointer dereference (PID=12345 at 2026-05-11T10:00:00Z)"
+	if fingerprint(a) != fingerprint(&b) {
+		t.Fatal("panic fingerprint should ignore PID/timestamp noise")
+	}
+
+	c := *a
+	c.FrameworkFrame = "lib/registry/lock.go:13"
+	if fingerprint(a) == fingerprint(&c) {
+		t.Fatal("different framework frames must hash differently")
+	}
+}
+
+func TestFingerprint_SignalError(t *testing.T) {
+	a := &classifiedEvent{
+		Type:         "signal_error",
+		Skill:        "start-sensor",
+		MetadataKind: "start_failed",
+		Summary:      "start_failed · write registry: start watcher: fork/exec /tmp/watcher: no such file or directory",
+	}
+	c := *a
+	c.FrameworkFrame = "anything"
+	if fingerprint(a) != fingerprint(&c) {
+		t.Fatal("signal_error fingerprint should not depend on FrameworkFrame")
+	}
+	d := *a
+	d.MetadataKind = "schema_validation_error"
+	if fingerprint(a) == fingerprint(&d) {
+		t.Fatal("different MetadataKind must hash differently")
+	}
+}
+
+func TestFingerprint_ExitNonzero(t *testing.T) {
+	a := &classifiedEvent{
+		Type:    "exit_nonzero",
+		Skill:   "test",
+		Summary: "go: cannot find main module, but found .git/config in /home/user",
+	}
+	// Stability check: same summary → same fingerprint
+	c := *a
+	if fingerprint(a) != fingerprint(&c) {
+		t.Fatal("identical events must produce identical fingerprints")
+	}
+}
+
+func TestFingerprint_Length(t *testing.T) {
+	evt := &classifiedEvent{Type: "panic", Skill: "run-sensor", Summary: "x"}
+	fp := fingerprint(evt)
+	if len(fp) != 12 {
+		t.Fatalf("fingerprint len=%d want 12", len(fp))
+	}
+}
