@@ -387,3 +387,45 @@ func TestValidator_UpstreamSensorsRemoved(t *testing.T) {
 		t.Fatal("expected requires.upstream_sensors to be rejected (additionalProperties false)")
 	}
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// requires v2 array (discriminated union)
+// ──────────────────────────────────────────────────────────────────────
+
+func TestValidator_Sensor_RequiresArrayV2(t *testing.T) {
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{
+		"id": "ex-v2",
+		"version": "1.0.0",
+		"name": "ex",
+		"description": "desc",
+		"kind": "observation",
+		"type": "computational",
+		"regulation": "behaviour",
+		"phase": "on-demand",
+		"determinism": "high",
+		"output": "single",
+		"cost": {"class":"cheap","compute":{"cpu":"low","memory_mb":64},"latency":{"p50_ms":1,"p95_ms":1,"timeout_ms":1000}},
+		"triggers": [{"on":"manual"}],
+		"requires": [
+			{"kind":"sensor","id":"setup-touch-file"},
+			{"kind":"tool","name":"docker"},
+			{"kind":"env","name":"GH_TOKEN","optional":false},
+			{"kind":"context","path":"docs/"},
+			{"kind":"permission","scope":"repo:read"},
+			{"kind":"step","command":"true"}
+		],
+		"execution": {"command":"true","exit_code_map":[{"exit_code":0,"verdict":"pass","severity":"info"}]},
+		"verification": {"golden_cases":[{"fixture":"f","expected_verdict":"pass","expected_severity":"info"}]}
+	}`)
+	var instance map[string]interface{}
+	if err := json.Unmarshal(body, &instance); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Validate(schema.TargetSensor, instance); err != nil {
+		t.Fatalf("expected v2 requires[] to validate, got: %v", err)
+	}
+}
