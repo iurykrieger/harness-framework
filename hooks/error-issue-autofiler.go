@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -96,8 +97,25 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "parse hook input:", err)
 		return 2
 	}
-	// Subsequent tasks fill in: killSwitchEnabled, commandTouchesFramework,
+	if killSwitchEnabled() {
+		return 0
+	}
+	// Subsequent tasks fill in: commandTouchesFramework,
 	// classify, fingerprint, cache, gh ops. For now: parse-only → exit 0.
 	_ = in
 	return 0
+}
+
+// killSwitchEnabled returns true when the hook should be a no-op.
+// Disabled values: unset, "", "0", "false" (any case), "off" (any case).
+// Default-on: any other value (including "1", "true", "on", "yes")
+// keeps the autofiler active.
+func killSwitchEnabled() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("HARNESS_AUTOFILE_ISSUES")))
+	switch v {
+	case "", "0", "false", "off":
+		return true
+	default:
+		return false
+	}
 }
