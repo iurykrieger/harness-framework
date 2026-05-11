@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -39,6 +40,12 @@ type StreamConfig struct {
 	Validator *schema.Validator // for per-individual signal validation; may be nil to skip
 	Stdout    io.Writer         // JSONL goes here
 	Stderr    io.Writer         // diagnostic messages (validation warnings, etc.)
+
+	// RawLogPath is optional. When non-empty, stdout+stderr of the
+	// subprocess are tee-written to this file in O_TRUNC mode (a fresh
+	// run overwrites the previous content). On write errors the streamer
+	// logs to cfg.Stderr and keeps streaming — never aborts.
+	RawLogPath string
 }
 
 // StreamResult holds what the caller needs to build the aggregate Signal.
@@ -101,6 +108,20 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 		return res, fmt.Errorf("start: %w", err)
 	}
 
+	// Open the raw log file for tee-writing if requested.
+	var rawLogFile *os.File
+	var rawLogMu sync.Mutex
+	if cfg.RawLogPath != "" {
+		var openErr error
+		rawLogFile, openErr = os.OpenFile(cfg.RawLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		if openErr != nil {
+			fmt.Fprintf(cfg.Stderr, "stream: cannot open RawLogPath %q: %v\n", cfg.RawLogPath, openErr)
+			rawLogFile = nil
+		} else {
+			defer rawLogFile.Close()
+		}
+	}
+
 	// Drain stdout and stderr concurrently. Each goroutine pushes matched
 	// individuals onto a shared buffered channel; main loop emits JSONL.
 	// stderr is additionally tee'd into a capped byte buffer so the
@@ -118,6 +139,15 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 		sc.Buffer(make([]byte, 64*1024), 1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
+			if rawLogFile != nil {
+				rawLogMu.Lock()
+				if _, werr := rawLogFile.WriteString(line + "\n"); werr != nil {
+					fmt.Fprintf(cfg.Stderr, "stream: raw.log write failed: %v\n", werr)
+					_ = rawLogFile.Close()
+					rawLogFile = nil
+				}
+				rawLogMu.Unlock()
+			}
 			if captureStderr {
 				stderrMu.Lock()
 				if remaining := streamStderrExcerptCap - stderrBuf.Len(); remaining > 0 {

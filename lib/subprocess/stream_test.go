@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -168,5 +171,55 @@ func TestStreamSubprocess_NoPatternsNoIndividuals(t *testing.T) {
 	}
 	if len(res.Individuals) != 0 {
 		t.Fatalf("expected zero individuals, got %d", len(res.Individuals))
+	}
+}
+
+func TestStreamSubprocess_RawLogPathPopulated(t *testing.T) {
+	tmp := t.TempDir()
+	rawLogPath := filepath.Join(tmp, "raw.log")
+
+	cfg := subprocess.StreamConfig{
+		Command:   `printf "line-1\nline-2\nline-3\n"`,
+		TimeoutMS: 5000,
+		Envelope: sensor.Envelope{
+			SensorID: "x", Version: "0.0.1", RunID: "r",
+			StartedAt: "2026-05-08T00:00:00Z",
+		},
+		Stdout:     io.Discard,
+		Stderr:     io.Discard,
+		RawLogPath: rawLogPath,
+	}
+	if _, err := subprocess.StreamSubprocess(context.Background(), cfg); err != nil {
+		t.Fatalf("StreamSubprocess: %v", err)
+	}
+	got, err := os.ReadFile(rawLogPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(got), "line-1") || !strings.Contains(string(got), "line-3") {
+		t.Errorf("raw.log content unexpected: %q", string(got))
+	}
+}
+
+func TestStreamSubprocess_RawLogPathEmpty_NoFileCreated(t *testing.T) {
+	tmp := t.TempDir()
+	nonexistent := filepath.Join(tmp, "nope.log")
+
+	cfg := subprocess.StreamConfig{
+		Command:   `echo hello`,
+		TimeoutMS: 5000,
+		Envelope: sensor.Envelope{
+			SensorID: "x", Version: "0.0.1", RunID: "r",
+			StartedAt: "2026-05-08T00:00:00Z",
+		},
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+		// RawLogPath intentionally empty
+	}
+	if _, err := subprocess.StreamSubprocess(context.Background(), cfg); err != nil {
+		t.Fatalf("StreamSubprocess: %v", err)
+	}
+	if _, err := os.Stat(nonexistent); !os.IsNotExist(err) {
+		t.Errorf("expected nope.log to NOT exist, stat err = %v", err)
 	}
 }
