@@ -25,7 +25,7 @@ type Sensor struct {
 }
 
 // Resolve loads the sensor identified by rootID from sensorRoot, walks
-// its depends_on transitively, and returns the slice topo-sorted (leaves
+// its requires[kind=sensor] transitively, and returns the slice topo-sorted (leaves
 // first, rootID last). Cycles (including self-loops A → A) and missing
 // dependency files cause an error and an empty slice.
 func Resolve(rootID, sensorRoot string) ([]Sensor, error) {
