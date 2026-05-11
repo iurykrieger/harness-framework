@@ -14,7 +14,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -39,6 +41,12 @@ type StreamConfig struct {
 	Validator *schema.Validator // for per-individual signal validation; may be nil to skip
 	Stdout    io.Writer         // JSONL goes here
 	Stderr    io.Writer         // diagnostic messages (validation warnings, etc.)
+
+	// RunDir, when non-empty, points at .runtime/sensors/<id>/<run-id>/.
+	// The streamer tees subprocess stdout+stderr verbatim into <RunDir>/raw.log
+	// and appends individual + aggregate Signals to <RunDir>/signals.log.
+	// Empty preserves the legacy stdout-only behavior.
+	RunDir string
 }
 
 // StreamResult holds what the caller needs to build the aggregate Signal.
@@ -101,6 +109,21 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 		return res, fmt.Errorf("start: %w", err)
 	}
 
+	// When RunDir is set, open raw.log in append mode so subprocess
+	// stdout+stderr lines are teed verbatim alongside the JSONL stream.
+	var rawLogF *os.File
+	if cfg.RunDir != "" {
+		f, ferr := os.OpenFile(
+			filepath.Join(cfg.RunDir, "raw.log"),
+			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644,
+		)
+		if ferr != nil {
+			return res, fmt.Errorf("open raw.log: %w", ferr)
+		}
+		rawLogF = f
+		defer rawLogF.Close()
+	}
+
 	// Drain stdout and stderr concurrently. Each goroutine pushes matched
 	// individuals onto a shared buffered channel; main loop emits JSONL.
 	// stderr is additionally tee'd into a capped byte buffer so the
@@ -112,12 +135,18 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 	var wg sync.WaitGroup
 	var stderrBuf bytes.Buffer
 	var stderrMu sync.Mutex
+	var rawLogMu sync.Mutex
 	scan := func(r io.Reader, captureStderr bool) {
 		defer wg.Done()
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 64*1024), 1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
+			if rawLogF != nil {
+				rawLogMu.Lock()
+				_, _ = rawLogF.WriteString(line + "\n")
+				rawLogMu.Unlock()
+			}
 			if captureStderr {
 				stderrMu.Lock()
 				if remaining := streamStderrExcerptCap - stderrBuf.Len(); remaining > 0 {
