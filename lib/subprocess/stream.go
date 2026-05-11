@@ -124,6 +124,21 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 		defer rawLogF.Close()
 	}
 
+	// When RunDir is set, open signals.log in append mode so each individual
+	// Signal emitted to stdout is also persisted to disk.
+	var signalsLogF *os.File
+	if cfg.RunDir != "" {
+		f, ferr := os.OpenFile(
+			filepath.Join(cfg.RunDir, "signals.log"),
+			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644,
+		)
+		if ferr != nil {
+			return res, fmt.Errorf("open signals.log: %w", ferr)
+		}
+		signalsLogF = f
+		defer signalsLogF.Close()
+	}
+
 	// Drain stdout and stderr concurrently. Each goroutine pushes matched
 	// individuals onto a shared buffered channel; main loop emits JSONL.
 	// stderr is additionally tee'd into a capped byte buffer so the
@@ -180,6 +195,9 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 		}
 		res.Individuals = append(res.Individuals, e.sig)
 		_ = json.NewEncoder(cfg.Stdout).Encode(e.sig)
+		if signalsLogF != nil {
+			_ = json.NewEncoder(signalsLogF).Encode(e.sig)
+		}
 	}
 
 	waitErr := cmd.Wait()
