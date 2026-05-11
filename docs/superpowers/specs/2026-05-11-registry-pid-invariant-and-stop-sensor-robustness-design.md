@@ -46,14 +46,15 @@ The fix is to make PID-field non-negativity an **enforced, package-internal inva
    - `SanitizeAll(rs *RunningSensors) []SanitizeReport` — mutation invoked by the new `LoadSanitized`.
    - Types `InvalidEntryError` and `SanitizeReport`.
 2. **New `lib/registry/state.go::LoadSanitized(r Root) (RunningSensors, []SanitizeReport, error)`** — additive companion to the existing `Load`. Combines `Load` + `SanitizeAll` + best-effort re-`Save` under flock.
-3. **`lib/registry/state.go::Save`** validates every entry via `ValidateEntry` before marshalling.
-4. **`skills/{list,stop,tail,start}-sensor/scripts/*.go`** migrate from `registry.Load(r)` to `registry.LoadSanitized(r)` and emit a precedence `warn` Signal `metadata.kind=registry_migrated` as the first JSONL line on stdout when `reports` is non-empty.
-5. **`skills/stop-sensor/scripts/stop.go::stopWatcher`** signature widened to return `(killedForcefully bool, latencyMS int)`. The aggregate Signal carries those under `metadata.watcher_kill_forced` and `metadata.watcher_kill_latency_ms`.
-6. **`skills/start-sensor/scripts/start.go`** redirects the watcher subprocess's stderr to a new `<r.SensorDir(id)>/watcher.log` file instead of discarding it.
-7. **`skills/start-sensor/scripts/watcher.go`** logs `"watcher: <sig> received, draining"` to stderr (now captured into `watcher.log`) inside the signal-handling goroutine.
-8. **`test/registry-discovery-e2e/registry_discovery_e2e_test.go`** removes the defensive `_ = proc.Signal(syscall.SIGKILL)` blocks. Adds a new test asserting the legacy `-1` migration through `/list-sensors`.
-9. **No change to** `schemas/sensor.json`, `schemas/signal.json`, `RunningSensors.Version`, or the `running_sensors.json` on-disk shape (the saneamento writes the same fields, just with non-negative values).
-10. **No change to** the orchestrator path (`lib/orchestrator/live_deps.go`) or the watcher reaper (`skills/start-sensor/scripts/watcher.go::runReaper`) — they continue to use `Load` directly because they execute on the runtime fast path and migration belongs in user-facing skills.
+3. **New `lib/registry/root.go::LookupSanitized(startDir string) (Result, []SanitizeReport, error)`** — additive companion to the existing `Lookup`. Internally calls `Discover` + `LoadSanitized`, returning the same `Result` plus the migration reports. This is the skill-facing entry point; the existing `Lookup` stays untouched for non-skill callers (none today, but keeps the option open).
+4. **`lib/registry/state.go::Save`** validates every entry via `ValidateEntry` before marshalling.
+5. **`skills/{list,stop,tail,start}-sensor/scripts/*.go`** migrate from `registry.Lookup(startDir)` to `registry.LookupSanitized(startDir)` and emit a precedence `warn` Signal `metadata.kind=registry_migrated` as the first JSONL line on stdout when `reports` is non-empty. The deeper `registry.Load(r)` calls under flock in `start.go:168`, `stop.go:74`, `stop.go:132` remain unchanged — by the time those run, `LookupSanitized` has already persisted the sanitized state to disk, so `Load` reads a clean view.
+6. **`skills/stop-sensor/scripts/stop.go::stopWatcher`** signature widened to return `(killedForcefully bool, latencyMS int)`. The aggregate Signal carries those under `metadata.watcher_kill_forced` and `metadata.watcher_kill_latency_ms`.
+7. **`skills/start-sensor/scripts/start.go`** redirects the watcher subprocess's stderr to a new `<r.SensorDir(id)>/watcher.log` file instead of discarding it.
+8. **`skills/start-sensor/scripts/watcher.go`** logs `"watcher: <sig> received, draining"` to stderr (now captured into `watcher.log`) inside the signal-handling goroutine.
+9. **`test/registry-discovery-e2e/registry_discovery_e2e_test.go`** removes the `killWatcherIfAlive` helper (currently at lines 170–185) and its two callers in `t.Cleanup` blocks (lines 294 and 393). Adds a new test asserting the legacy `-1` migration through `/list-sensors`.
+10. **No change to** `schemas/sensor.json`, `schemas/signal.json`, `RunningSensors.Version`, or the `running_sensors.json` on-disk shape (the saneamento writes the same fields, just with non-negative values).
+11. **No change to** the orchestrator path (`lib/orchestrator/live_deps.go`) or the watcher reaper (`skills/start-sensor/scripts/watcher.go::runReaper`) — they continue to use `Load` directly because they execute on the runtime fast path and migration belongs in user-facing skills.
 
 ## Architecture
 
@@ -161,6 +162,50 @@ func LoadSanitized(r Root) (RunningSensors, []SanitizeReport, error) {
 ```
 
 `Load` and `LoadOrEmpty` are unchanged. The orchestrator (`lib/orchestrator/live_deps.go`) and the watcher reaper (`skills/start-sensor/scripts/watcher.go`) keep using `Load`; both run on the runtime fast path and migration noise is inappropriate there. Migration is observed *only* through user-invoked skills.
+
+### `lib/registry/root.go` — `LookupSanitized`
+
+All four registry-touching skills today funnel root discovery through `Lookup(startDir)`, which internally calls `Discover` + `LoadOrEmpty` and returns a `Result{Root, ProjectRoot, Source, Exists, State}`. The migration entry point is an additive companion:
+
+```go
+// LookupSanitized is the skill-facing entry point that combines root
+// discovery with PID-invariant sanitation. It is otherwise identical to
+// Lookup: same Result, same error semantics. The extra []SanitizeReport
+// return value is non-empty when LoadSanitized rewrote or dropped one or
+// more entries from running_sensors.json; callers surface this as a warn
+// Signal.
+func LookupSanitized(startDir string) (Result, []SanitizeReport, error) {
+    root, source, err := Discover(startDir)
+    if err != nil {
+        return Result{}, nil, err
+    }
+    rs, reports, err := LoadSanitized(root)
+    if err != nil {
+        return Result{Root: root, ProjectRoot: root.ProjectRoot(), Source: source}, nil, err
+    }
+    return Result{
+        Root:        root,
+        ProjectRoot: root.ProjectRoot(),
+        Source:      source,
+        Exists:      // computed same way as Lookup; LoadSanitized does not surface Exists,
+                     // so this is derived from os.Stat(root.RegistryFile()) inside LookupSanitized.
+        State:       rs,
+    }, reports, nil
+}
+```
+
+The exact derivation of `Exists` inside `LookupSanitized` mirrors `LoadOrEmpty`'s `errors.Is(err, os.ErrNotExist)` check — implementation detail for the plan, not architectural.
+
+Skills replace exactly one call:
+
+| Skill | Before | After |
+| --- | --- | --- |
+| `list-sensors/scripts/list.go:30` | `res, err := registry.Lookup(startDir)` | `res, reports, err := registry.LookupSanitized(startDir)` |
+| `tail-sensor/scripts/tail.go:32` | same | same |
+| `stop-sensor/scripts/stop.go:39` | same | same |
+| `start-sensor/scripts/start.go` (its `Lookup` call site) | same | same |
+
+The deeper `registry.Load(r)` invocations under flock (`start.go:168`, `stop.go:74`, `stop.go:132`) are **not** migrated — they continue to use `Load`. By the time they execute, `LookupSanitized` has already persisted sanitized state to disk, so `Load` sees clean entries.
 
 ### Skill integration: the `registry_migrated` warn Signal
 
@@ -376,7 +421,7 @@ Standard `testing` package, table-driven.
 
 ### `test/registry-discovery-e2e/registry_discovery_e2e_test.go` (changes)
 
-- **Remove** the three `proc.Signal(syscall.SIGKILL)` blocks (lines ~182, ~290, ~389). If a watcher survives `stop-sensor`, that is now a test failure rather than something the test papers over.
+- **Remove** the `killWatcherIfAlive` helper (lines 170–185) and both of its `t.Cleanup` callers (lines ~294 and ~393), along with the `// Capture watcher PID …` comment blocks (~281, ~378) that exist only to feed the helper. If a watcher survives `stop-sensor` after this PR, that is a test failure — the SIGKILL-defensive cleanup is exactly the thing this PR removes.
 - **Add `TestSanitize_LegacyMinusOneViaListSensors`** — end-to-end: `t.TempDir()` as project root, manual `running_sensors.json` with `watcher_pid: -1`, invoke `/list-sensors` via the built binary, assert two JSONL lines, and on disk the registry now has `watcher_pid: 0`.
 
 ### Manual verification (post-CI)
@@ -392,7 +437,7 @@ None. All decisions are settled in the sections above (scope: both invariant and
 
 ## References
 
-- Issue [#11](https://github.com/iurykrieger/issues/11)
+- Issue [#11](https://github.com/iurykrieger/harness-framework/issues/11)
 - Issue [#6](https://github.com/iurykrieger/harness-framework/issues/6) (registry root discovery; source of the original `-1` evidence)
 - `lib/registry/state.go` (current `Load`/`Save`)
 - `skills/stop-sensor/scripts/stop.go` (`stopWatcher`, `terminateWithGrace`)
