@@ -581,3 +581,77 @@ func TestCache_ConcurrentPut_Serializes(t *testing.T) {
 		t.Fatalf("expected 10 concurrent entries, got %d", len(c.Entries))
 	}
 }
+
+type fakeGhCreate struct {
+	repo, title, body string
+	labels            []string
+}
+
+type fakeGhComment struct {
+	repo string
+	num  int
+	body string
+}
+
+type fakeGhSearch struct {
+	repo string
+	fp   string
+}
+
+type fakeGhClient struct {
+	searches   []fakeGhSearch
+	comments   []fakeGhComment
+	creates    []fakeGhCreate
+	searchResp issueRef
+	searchErr  error
+	commentErr error
+	createResp issueRef
+	createErr  error
+}
+
+func (f *fakeGhClient) Search(repo, fp string) (issueRef, error) {
+	f.searches = append(f.searches, fakeGhSearch{repo, fp})
+	return f.searchResp, f.searchErr
+}
+
+func (f *fakeGhClient) Comment(repo string, n int, body string) error {
+	f.comments = append(f.comments, fakeGhComment{repo, n, body})
+	return f.commentErr
+}
+
+func (f *fakeGhClient) Create(repo, title, body string, labels []string) (issueRef, error) {
+	f.creates = append(f.creates, fakeGhCreate{repo, title, body, append([]string(nil), labels...)})
+	return f.createResp, f.createErr
+}
+
+func TestFakeGhClient_RecordsCalls(t *testing.T) {
+	f := &fakeGhClient{}
+	if _, err := f.Create("owner/repo", "title", "body", []string{"auto-filed", "bug"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.creates) != 1 {
+		t.Fatalf("expected 1 create call, got %d", len(f.creates))
+	}
+	if f.creates[0].title != "title" {
+		t.Fatalf("title=%q", f.creates[0].title)
+	}
+	if err := f.Comment("owner/repo", 42, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.comments) != 1 {
+		t.Fatalf("expected 1 comment call, got %d", len(f.comments))
+	}
+	if got, err := f.Search("owner/repo", "fp123"); err != nil || got.Number != 0 {
+		t.Fatalf("default fake search returns zero issueRef; got %+v err=%v", got, err)
+	}
+}
+
+func TestFakeGhClient_SearchReturnsScripted(t *testing.T) {
+	f := &fakeGhClient{
+		searchResp: issueRef{Number: 99, URL: "https://github.com/o/r/issues/99"},
+	}
+	got, err := f.Search("o/r", "fp")
+	if err != nil || got.Number != 99 {
+		t.Fatalf("got %+v err=%v", got, err)
+	}
+}

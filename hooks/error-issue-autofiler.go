@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -595,4 +596,84 @@ func updateCacheLocked(cachePath string, fn func(*cache)) error {
 		fn(c)
 		return c.save(cachePath)
 	})
+}
+
+type issueRef struct {
+	Number int
+	URL    string
+}
+
+// ghClient is the surface the autofiler uses to interact with GitHub.
+// Tests substitute fakeGhClient; production uses ghCLI.
+type ghClient interface {
+	Search(repo, fingerprint string) (issueRef, error)
+	Comment(repo string, issueNumber int, body string) error
+	Create(repo, title, body string, labels []string) (issueRef, error)
+}
+
+// ghCLI shells out to the `gh` CLI for all operations. Errors from
+// `gh` (auth missing, network, etc.) propagate back; the caller logs
+// and exits 0.
+type ghCLI struct{}
+
+// Search runs `gh issue list --search "is:open repo:<repo> harness-fp:<fp>" --json number,url --limit 1`.
+// Returns zero issueRef when no match.
+func (ghCLI) Search(repo, fingerprint string) (issueRef, error) {
+	cmd := exec.Command("gh", "issue", "list",
+		"--search", fmt.Sprintf("is:open repo:%s harness-fp:%s", repo, fingerprint),
+		"--json", "number,url",
+		"--limit", "1",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return issueRef{}, fmt.Errorf("gh search: %w", err)
+	}
+	var hits []struct {
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+	}
+	if err := json.Unmarshal(out, &hits); err != nil {
+		return issueRef{}, fmt.Errorf("parse gh search: %w", err)
+	}
+	if len(hits) == 0 {
+		return issueRef{}, nil
+	}
+	return issueRef{Number: hits[0].Number, URL: hits[0].URL}, nil
+}
+
+func (ghCLI) Comment(repo string, num int, body string) error {
+	cmd := exec.Command("gh", "issue", "comment",
+		fmt.Sprintf("%d", num),
+		"--repo", repo,
+		"--body-file", "-",
+	)
+	cmd.Stdin = strings.NewReader(body)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("gh comment: %w: %s", err, out)
+	}
+	return nil
+}
+
+func (ghCLI) Create(repo, title, body string, labels []string) (issueRef, error) {
+	args := []string{"issue", "create",
+		"--repo", repo,
+		"--title", title,
+		"--body-file", "-",
+	}
+	for _, l := range labels {
+		args = append(args, "--label", l)
+	}
+	cmd := exec.Command("gh", args...)
+	cmd.Stdin = strings.NewReader(body)
+	out, err := cmd.Output()
+	if err != nil {
+		return issueRef{}, fmt.Errorf("gh create: %w", err)
+	}
+	// `gh issue create` prints the URL on stdout. Extract issue number from the tail.
+	url := strings.TrimSpace(string(out))
+	num := 0
+	if i := strings.LastIndex(url, "/"); i >= 0 {
+		fmt.Sscanf(url[i+1:], "%d", &num)
+	}
+	return issueRef{Number: num, URL: url}, nil
 }
