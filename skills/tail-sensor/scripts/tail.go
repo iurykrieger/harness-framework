@@ -29,10 +29,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "tail: cwd:", err)
 		os.Exit(2)
 	}
-	res, err := registry.Lookup(startDir)
+	res, reports, err := registry.LookupSanitized(startDir)
 	if err != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(registry.DiscoveryErrorSignal(err, ""))
 		os.Exit(1)
+	}
+	if len(reports) > 0 {
+		_ = json.NewEncoder(os.Stdout).Encode(registry.RegistryMigratedSignal(res, reports, "tail-sensor"))
 	}
 	exit := runTail(res, os.Args[1:], os.Stdout, os.Stderr)
 	os.Exit(exit)
