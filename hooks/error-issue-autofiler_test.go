@@ -385,3 +385,99 @@ func TestFingerprint_Length(t *testing.T) {
 		t.Fatalf("fingerprint len=%d want 12", len(fp))
 	}
 }
+
+func TestRenderTitle(t *testing.T) {
+	cases := []struct {
+		skill, summary string
+		want           string
+	}{
+		{"run-sensor", "panic: nil pointer", "[auto] run-sensor: panic: nil pointer"},
+		{"start-sensor", strings.Repeat("a", 200), "[auto] start-sensor: " + strings.Repeat("a", titleSummaryMaxLen-1) + "…"},
+		{"hook", "x", "[auto] hook: x"},
+	}
+	for _, tc := range cases {
+		got := renderTitle(tc.skill, tc.summary)
+		if got != tc.want {
+			t.Fatalf("renderTitle(%q,%q):\n got %q\nwant %q", tc.skill, tc.summary, got, tc.want)
+		}
+	}
+}
+
+func TestRenderBody_ContainsRequiredFields(t *testing.T) {
+	in := hookInput{
+		Cwd: "/home/user/project",
+		ToolInput: toolInputBsh{
+			Command: "go run ./skills/run-sensor/scripts foo",
+		},
+		ToolResponse: toolResponse{
+			Stdout:   "line 1\nline 2\n",
+			Stderr:   "panic: boom\n",
+			ExitCode: 2,
+		},
+	}
+	evt := classifiedEvent{Type: "panic", Skill: "run-sensor", Summary: "panic: boom"}
+	body := renderBody(in, evt, "abcd1234ef00")
+
+	for _, want := range []string{
+		"**Type:** panic",
+		"**Skill:** run-sensor",
+		"**Fingerprint:** `abcd1234ef00`",
+		"**First seen:**",
+		"## Command",
+		"go run ./skills/run-sensor/scripts foo",
+		"## Output",
+		"stdout (last 50 lines)",
+		"stderr (last 50 lines)",
+		"line 1",
+		"panic: boom",
+		"## Context",
+		"`cwd`:",
+		"`exit_code`: 2",
+		"<!-- harness-fp:abcd1234ef00 -->",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+}
+
+func TestRenderBody_TruncatesLongOutput(t *testing.T) {
+	bigStdout := strings.Repeat("x", 10*1024) // 10 KB
+	in := hookInput{
+		ToolResponse: toolResponse{Stdout: bigStdout, Stderr: "", ExitCode: 1},
+	}
+	evt := classifiedEvent{Type: "exit_nonzero", Skill: "test", Summary: "x"}
+	body := renderBody(in, evt, "00000000abcd")
+	// Body cannot contain the full 10KB run; truncation applies.
+	if strings.Count(body, "x") >= 10*1024 {
+		t.Fatalf("body should truncate stdout below 10KB; got %d x's", strings.Count(body, "x"))
+	}
+}
+
+func TestRenderOccurrenceComment(t *testing.T) {
+	in := hookInput{
+		Cwd: "/home/user/project",
+		ToolInput: toolInputBsh{
+			Command: strings.Repeat("a", 500),
+		},
+		ToolResponse: toolResponse{ExitCode: 2},
+	}
+	c := renderOccurrenceComment(in)
+	if !strings.HasPrefix(c, "+1 occurrence detected at") {
+		t.Fatalf("comment must start with +1 occurrence: %q", c)
+	}
+	if !strings.Contains(c, "`cwd`:") {
+		t.Fatalf("comment missing cwd: %q", c)
+	}
+	if !strings.Contains(c, "`exit_code`: 2") {
+		t.Fatalf("comment missing exit_code: %q", c)
+	}
+	// command must be truncated to ≤200 chars in the rendered comment
+	for _, line := range strings.Split(c, "\n") {
+		if strings.HasPrefix(line, "- `command`:") {
+			if len(line) > 200+len("- `command`: ``")+5 {
+				t.Fatalf("command line too long: %d chars: %q", len(line), line)
+			}
+		}
+	}
+}

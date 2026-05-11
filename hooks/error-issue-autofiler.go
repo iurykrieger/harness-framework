@@ -382,6 +382,88 @@ func extractFrameworkFrame(stack string) string {
 	return ""
 }
 
+// nowUTC is overridable in tests.
+var nowUTC = func() time.Time { return time.Now().UTC() }
+
+func renderTitle(skill, summary string) string {
+	return "[auto] " + skill + ": " + truncate(summary, titleSummaryMaxLen)
+}
+
+// renderBody produces the Markdown issue body, en-US per Project rule
+// #1. The trailing <!-- harness-fp:... --> marker is the dedup hook
+// used by ghSearch.
+func renderBody(in hookInput, evt classifiedEvent, fp string) string {
+	stdout := truncateOutput(in.ToolResponse.Stdout, bodyLogLineLimit, bodyLogByteLimit)
+	stderr := truncateOutput(in.ToolResponse.Stderr, bodyLogLineLimit, bodyLogByteLimit)
+	var b strings.Builder
+	fmt.Fprintf(&b, "**Type:** %s\n", evt.Type)
+	fmt.Fprintf(&b, "**Skill:** %s\n", evt.Skill)
+	fmt.Fprintf(&b, "**Fingerprint:** `%s`\n", fp)
+	fmt.Fprintf(&b, "**First seen:** %s\n\n", nowUTC().Format(time.RFC3339))
+	b.WriteString("## Command\n\n")
+	b.WriteString("```bash\n")
+	b.WriteString(in.ToolInput.Command)
+	b.WriteString("\n```\n\n")
+	b.WriteString("## Output\n\n")
+	b.WriteString("<details>\n<summary>stdout (last 50 lines)</summary>\n\n")
+	b.WriteString("```\n")
+	b.WriteString(stdout)
+	b.WriteString("\n```\n</details>\n\n")
+	b.WriteString("<details>\n<summary>stderr (last 50 lines)</summary>\n\n")
+	b.WriteString("```\n")
+	b.WriteString(stderr)
+	b.WriteString("\n```\n</details>\n\n")
+	b.WriteString("## Context\n\n")
+	fmt.Fprintf(&b, "- `cwd`: `%s`\n", relativizeHome(in.Cwd))
+	fmt.Fprintf(&b, "- `exit_code`: %d\n", in.ToolResponse.ExitCode)
+	b.WriteString("- Hook: `error-issue-autofiler` in `hooks/`\n\n")
+	fmt.Fprintf(&b, "<!-- harness-fp:%s -->\n", fp)
+	return b.String()
+}
+
+func renderOccurrenceComment(in hookInput) string {
+	cmd := truncate(in.ToolInput.Command, commandTruncateLen)
+	var b strings.Builder
+	fmt.Fprintf(&b, "+1 occurrence detected at %s.\n\n", nowUTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "- `cwd`: `%s`\n", relativizeHome(in.Cwd))
+	fmt.Fprintf(&b, "- `command`: `%s`\n", cmd)
+	fmt.Fprintf(&b, "- `exit_code`: %d\n", in.ToolResponse.ExitCode)
+	return b.String()
+}
+
+// truncateOutput keeps at most lineLimit lines (taken from the tail) or
+// byteLimit bytes, whichever is smaller. Returns the truncated text.
+func truncateOutput(s string, lineLimit, byteLimit int) string {
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > lineLimit {
+		lines = lines[len(lines)-lineLimit:]
+	}
+	out := strings.Join(lines, "\n")
+	if len(out) > byteLimit {
+		out = out[len(out)-byteLimit:]
+	}
+	return out
+}
+
+// relativizeHome rewrites paths under $HOME as ~/... for readability.
+// Non-matching paths are returned unchanged.
+func relativizeHome(p string) string {
+	if p == "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if strings.HasPrefix(p, home) {
+		return "~" + strings.TrimPrefix(p, home)
+	}
+	return p
+}
+
 // fingerprint returns a 12-character lowercase hex hash that identifies
 // an error across runs. The canonical string varies by Type — see
 // docs/superpowers/specs/2026-05-11-auto-issue-opening-design.md.
