@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -167,21 +166,6 @@ func makeProject(t *testing.T, parent, id, command string) string {
 	return proj
 }
 
-// killWatcherIfAlive sends SIGKILL to a watcher PID after stop-sensor
-// has had a chance to terminate it. Tolerates "process not found" (the
-// happy-path: watcher already exited).
-func killWatcherIfAlive(pid int) {
-	if pid <= 0 {
-		return
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return
-	}
-	// Best-effort SIGKILL; ignore errors (process may already be dead).
-	_ = proc.Signal(syscall.SIGKILL)
-}
-
 // runIn runs binary in dir with optional env overrides. Returns
 // (stdout, stderr, exitCode).
 func runIn(t *testing.T, binary, dir string, args []string, extraEnv map[string]string) (string, string, int) {
@@ -278,20 +262,9 @@ func TestE2E_DiscoverySharesStateAcrossCwds(t *testing.T) {
 		t.Errorf("start registry_path: got %v, want %v", startMD["registry_path"], wantPath)
 	}
 
-	// Capture watcher PID so we can SIGKILL it if stop-sensor leaves it alive.
-	watcherPID := 0
-	if v, ok := startMD["watcher_pid"].(float64); ok {
-		watcherPID = int(v)
-	}
-
 	// Always clean up the sensor process at the end.
 	t.Cleanup(func() {
 		_, _, _ = runIn(t, stopBin, proj, []string{"sleeper"}, nil)
-		// Defensive: if stop-sensor failed to kill the watcher, SIGKILL it
-		// directly so the scratch dir cleanup can remove proj/ (the watcher's
-		// cwd prevents rmdir on macOS otherwise).
-		time.Sleep(50 * time.Millisecond)
-		killWatcherIfAlive(watcherPID)
 	})
 
 	// Give the watcher a beat to settle before the list call.
@@ -375,22 +348,8 @@ func TestE2E_EnvVarOverridesDiscovery(t *testing.T) {
 		t.Fatalf("start exit %d\nstdout=%s\nstderr=%s", exit, stdout, stderr)
 	}
 
-	// Capture watcher PID so we can SIGKILL it if stop-sensor leaves it alive.
-	watcherPID := 0
-	startSig := lastJSON(t, stdout)
-	if md, ok := startSig["metadata"].(map[string]interface{}); ok {
-		if v, ok := md["watcher_pid"].(float64); ok {
-			watcherPID = int(v)
-		}
-	}
-
 	t.Cleanup(func() {
 		_, _, _ = runIn(t, stopBin, proj, []string{"sleeper"}, nil)
-		// Defensive: if stop-sensor failed to kill the watcher, SIGKILL it
-		// directly so the scratch dir cleanup can remove proj/ (the watcher's
-		// cwd prevents rmdir on macOS otherwise).
-		time.Sleep(50 * time.Millisecond)
-		killWatcherIfAlive(watcherPID)
 	})
 
 	time.Sleep(100 * time.Millisecond)
