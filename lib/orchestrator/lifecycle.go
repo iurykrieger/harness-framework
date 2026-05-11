@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/iurykrieger/harness-framework/lib/heal"
@@ -44,6 +46,49 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 	}
 	execMap, _ := s.JSON["execution"].(map[string]interface{})
 	output, _ := s.JSON["output"].(string)
+
+	// Runtime dir: create .runtime/sensors/<id>/<run_id>/ and tee stdout
+	// into signals.log so the on-disk JSONL is byte-for-byte identical to
+	// what the caller receives on stdout.
+	projectRoot := filepath.Dir(filepath.Dir(s.Path))
+	rawLogPath, signalsLogPath, dirErr := prepareRuntimeDir(projectRoot, s.ID, envelope.RunID)
+	if dirErr != nil {
+		finished := sensor.NowFn().Format("2006-01-02T15:04:05Z")
+		sig := map[string]interface{}{
+			"sensor_id":   envelope.SensorID,
+			"version":     envelope.Version,
+			"run_id":      envelope.RunID,
+			"started_at":  envelope.StartedAt,
+			"finished_at": finished,
+			"verdict":     "error",
+			"severity":    "high",
+			"confidence":  1.0,
+			"evidence": []interface{}{
+				map[string]interface{}{"rationale": fmt.Sprintf("cannot create runtime dir: %v", dirErr)},
+			},
+			"cost_actual": map[string]interface{}{"latency_ms": 0},
+			"metadata": map[string]interface{}{
+				"kind":          "runtime_dir_failed",
+				"output_mode":   output,
+				"error_excerpt": dirErr.Error(),
+			},
+		}
+		if v != nil {
+			if vErr := v.Validate(schema.TargetSignal, sig); vErr != nil {
+				schema.PrintValidationOrPlain(vErr, stderr)
+				return nil, 1
+			}
+		}
+		_ = json.NewEncoder(stdout).Encode(sig)
+		return sig, 0
+	}
+	signalsLogFile, openErr := os.OpenFile(signalsLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if openErr != nil {
+		fmt.Fprintf(stderr, "RunOne: cannot open signals.log %q: %v\n", signalsLogPath, openErr)
+	} else {
+		defer signalsLogFile.Close()
+		stdout = io.MultiWriter(stdout, signalsLogFile)
+	}
 
 	// Phase 0: requires[] gate. Fail-closed pre-flight check across
 	// tool / context / env preconditions. A non-empty gate emits a single
@@ -96,14 +141,15 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 		}
 
 		res, _ := subprocess.StreamSubprocess(ctx, subprocess.StreamConfig{
-			Command:   command,
-			Env:       envExtra,
-			TimeoutMS: timeoutMS,
-			Patterns:  patterns,
-			Envelope:  envelope,
-			Validator: v,
-			Stdout:    stdout,
-			Stderr:    stderr,
+			Command:    command,
+			Env:        envExtra,
+			TimeoutMS:  timeoutMS,
+			Patterns:   patterns,
+			Envelope:   envelope,
+			Validator:  v,
+			Stdout:     stdout,
+			Stderr:     stderr,
+			RawLogPath: rawLogPath,
 		})
 
 		ecMap, _ := execMap["exit_code_map"].([]interface{})

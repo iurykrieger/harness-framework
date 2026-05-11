@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -29,10 +30,23 @@ func roundTripJSON(t *testing.T, in map[string]interface{}) map[string]interface
 	return out
 }
 
+// makeSensorPath creates <tmp>/sensors/<id>.json so that RunOne's
+// projectRoot derivation (filepath.Dir(filepath.Dir(s.Path))) resolves to
+// tmp — a t.TempDir() — preventing .runtime from leaking into the repo tree.
+func makeSensorPath(t *testing.T, id string) string {
+	t.Helper()
+	tmp := t.TempDir()
+	sensorsDir := filepath.Join(tmp, "sensors")
+	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(sensorsDir, id+".json")
+}
+
 func TestRunOne_SimpleNoLifecycle(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
 	v, _ := schema.NewValidator(schemasDir)
-	s := Sensor{ID: "smoke-comp", JSON: roundTripJSON(t, testfixtures.ValidSensorComputational())}
+	s := Sensor{ID: "smoke-comp", Path: makeSensorPath(t, "smoke-comp"), JSON: roundTripJSON(t, testfixtures.ValidSensorComputational())}
 
 	var out, errBuf bytes.Buffer
 	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
@@ -58,7 +72,7 @@ func TestRunOne_PrepareFailFast(t *testing.T) {
 		map[string]interface{}{"kind": "step", "command": "false"},
 		map[string]interface{}{"kind": "step", "command": "echo should-not-run"},
 	}
-	s := Sensor{ID: js["id"].(string), JSON: js}
+	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 
 	var out, errBuf bytes.Buffer
 	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
@@ -93,7 +107,7 @@ func TestRunOne_TeardownBestEffort(t *testing.T) {
 		map[string]interface{}{"command": "false"}, // first fails
 		map[string]interface{}{"command": "true"},  // second still runs
 	}
-	s := Sensor{ID: js["id"].(string), JSON: js}
+	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 
 	var out, errBuf bytes.Buffer
 	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
@@ -129,7 +143,7 @@ func TestRunOne_TeardownRunsAfterCommandFail(t *testing.T) {
 	exec["teardown"] = []interface{}{
 		map[string]interface{}{"command": "true"},
 	}
-	s := Sensor{ID: js["id"].(string), JSON: js}
+	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 
 	var out, errBuf bytes.Buffer
 	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
@@ -157,7 +171,7 @@ func TestRunOne_HealHintEmittedOnStderrPattern(t *testing.T) {
 	// metadata.heal_hint = "env-file-absent:<excerpt>" so the heal
 	// classifier's fast path can fire.
 	exec["command"] = "echo 'open .env: ENOENT no such file or directory' >&2; exit 1"
-	s := Sensor{ID: js["id"].(string), JSON: js}
+	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 
 	var out, errBuf bytes.Buffer
 	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
@@ -189,7 +203,7 @@ func TestRunOne_HealHintAbsentOnBenignFailure(t *testing.T) {
 	// heal pattern. metadata.heal_hint MUST be absent — emitting it on
 	// generic failures would poison the classifier.
 	exec["command"] = "echo 'some unrelated error message' >&2; exit 1"
-	s := Sensor{ID: js["id"].(string), JSON: js}
+	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 
 	var out, errBuf bytes.Buffer
 	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
@@ -213,7 +227,7 @@ func TestRunOne_HealHintAbsentOnPassingCommand(t *testing.T) {
 	// Even when stderr would match a heal pattern, a passing command
 	// must NOT emit heal_hint — there is nothing to heal.
 	exec["command"] = "echo 'open .env: ENOENT no such file' >&2; exit 0"
-	s := Sensor{ID: js["id"].(string), JSON: js}
+	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 
 	var out, errBuf bytes.Buffer
 	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
@@ -263,7 +277,7 @@ func TestRunOne_AbortsOnMissingRequiresEnv(t *testing.T) {
 	}
 	t.Cleanup(func() { sensor.LookupEnvFn = prev })
 
-	s := Sensor{ID: js["id"].(string), JSON: js}
+	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 	var out, errBuf bytes.Buffer
 	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
 	if code != 0 {
@@ -297,9 +311,14 @@ func TestRunOne_GateFailure_Tool(t *testing.T) {
 	sensor.LookupEnvFn = func(string) (string, bool) { return "", true }
 	t.Cleanup(func() { sensor.LookupEnvFn = prevLookup })
 
+	tmp := t.TempDir()
+	sensorsDir := filepath.Join(tmp, "sensors")
+	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	s := Sensor{
 		ID:   "needs-docker",
-		Path: "/tmp/needs-docker.json",
+		Path: filepath.Join(sensorsDir, "needs-docker.json"),
 		JSON: map[string]interface{}{
 			"id":      "needs-docker",
 			"version": "0.1.0",
@@ -338,9 +357,14 @@ func TestRunOne_GateFailure_Tool(t *testing.T) {
 }
 
 func TestRunOne_GateFailure_Context(t *testing.T) {
+	tmp := t.TempDir()
+	sensorsDir := filepath.Join(tmp, "sensors")
+	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	s := Sensor{
 		ID:   "needs-context",
-		Path: "/tmp/needs-context.json",
+		Path: filepath.Join(sensorsDir, "needs-context.json"),
 		JSON: map[string]interface{}{
 			"id":      "needs-context",
 			"version": "0.1.0",
@@ -376,9 +400,14 @@ func TestRunOne_GateFailure_Env(t *testing.T) {
 	sensor.LookupEnvFn = func(string) (string, bool) { return "", false }
 	t.Cleanup(func() { sensor.LookupEnvFn = prev })
 
+	tmp := t.TempDir()
+	sensorsDir := filepath.Join(tmp, "sensors")
+	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	s := Sensor{
 		ID:   "needs-env",
-		Path: "/tmp/needs-env.json",
+		Path: filepath.Join(sensorsDir, "needs-env.json"),
 		JSON: map[string]interface{}{
 			"id":      "needs-env",
 			"version": "0.1.0",
@@ -409,11 +438,69 @@ func TestRunOne_GateFailure_Env(t *testing.T) {
 	}
 }
 
+func TestRunOne_PersistsAggregateAndStdoutMatchesSignalsLog(t *testing.T) {
+	tmp := t.TempDir()
+	sensorsDir := filepath.Join(tmp, "sensors")
+	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sensorPath := filepath.Join(sensorsDir, "echo-stream.json")
+	s := Sensor{
+		ID:   "echo-stream",
+		Path: sensorPath,
+		JSON: map[string]interface{}{
+			"id":      "echo-stream",
+			"version": "0.0.1",
+			"type":    "computational",
+			"output":  "stream",
+			"execution": map[string]interface{}{
+				"command": `printf "PASS line\n"`,
+				"exit_code_map": []interface{}{
+					map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
+				},
+				"output_parsing": map[string]interface{}{
+					"patterns": []interface{}{
+						map[string]interface{}{"regex": "PASS", "verdict": "pass", "severity": "info"},
+					},
+				},
+			},
+			"cost": map[string]interface{}{
+				"class":   "cheap",
+				"latency": map[string]interface{}{"p50_ms": 1, "p95_ms": 5, "timeout_ms": 5000},
+				"compute": map[string]interface{}{"cpu": "low", "memory_mb": 1},
+			},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	_, code := RunOne(context.Background(), s, "", nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	parent := filepath.Join(tmp, ".runtime", "sensors", "echo-stream")
+	entries, err := os.ReadDir(parent)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("no .runtime entry: err=%v entries=%v", err, entries)
+	}
+	sigLog := filepath.Join(parent, entries[0].Name(), "signals.log")
+	fileBytes, err := os.ReadFile(sigLog)
+	if err != nil {
+		t.Fatalf("read signals.log: %v", err)
+	}
+	if !bytes.Equal(stdout.Bytes(), fileBytes) {
+		t.Errorf("stdout != signals.log\nstdout=%q\nfile=%q", stdout.String(), string(fileBytes))
+	}
+	rawLog := filepath.Join(parent, entries[0].Name(), "raw.log")
+	rawBytes, _ := os.ReadFile(rawLog)
+	if !strings.Contains(string(rawBytes), "PASS line") {
+		t.Errorf("raw.log missing subprocess output: %q", string(rawBytes))
+	}
+}
+
 // The aggregate Signal emitted on stdout is valid JSON and the LAST line.
 func TestRunOne_OutputIsValidJSON(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
 	v, _ := schema.NewValidator(schemasDir)
-	s := Sensor{ID: "smoke-comp", JSON: roundTripJSON(t, testfixtures.ValidSensorComputational())}
+	s := Sensor{ID: "smoke-comp", Path: makeSensorPath(t, "smoke-comp"), JSON: roundTripJSON(t, testfixtures.ValidSensorComputational())}
 
 	var out, errBuf bytes.Buffer
 	if _, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf); code != 0 {
