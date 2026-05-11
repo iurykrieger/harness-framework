@@ -3,7 +3,6 @@ package sensor
 import (
 	"fmt"
 	"os"
-	"strings"
 )
 
 // MissingEnv names a required env var that was declared by requires[kind=env]
@@ -49,48 +48,21 @@ func CheckRequiredEnv(s map[string]interface{}) []MissingEnv {
 	return missing
 }
 
-// BuildMissingEnvSignal constructs the verdict=error aggregate Signal the
-// runner emits when requires[kind=env] declares non-optional vars that are
-// absent from the runner's environment.
-//
-// The returned Signal has ONE evidence entry per missing var (not one block
-// listing all), so heal/rules/missing_env's per-entry regex walker can fire
-// on each var independently. Each rationale is shaped as:
-//
-//	Required environment variable NAME is not set: <description>
-//
-// (The trailing ": <description>" is omitted when description is empty.)
-//
-// The aggregate-level remediation lists all missing var names so the agent
-// can see the full set in one place.
+// BuildMissingEnvSignal is a thin wrapper around BuildRequiresGateSignal
+// kept for backwards compatibility with call sites that still produce
+// []MissingEnv. New code should call CheckRequiresGate + BuildRequiresGateSignal
+// directly.
 func BuildMissingEnvSignal(env Envelope, outputMode string, missing []MissingEnv) map[string]interface{} {
-	finished := NowFn().Format("2006-01-02T15:04:05Z")
-	evidence := make([]interface{}, 0, len(missing))
+	gate := Gate{Failures: make([]Failure, 0, len(missing))}
 	for _, m := range missing {
-		evidence = append(evidence, map[string]interface{}{
-			"rationale": missingEnvRationale(m),
+		gate.Failures = append(gate.Failures, Failure{
+			Kind:       "env",
+			Identifier: m.Name,
+			Rationale:  missingEnvRationale(m),
+			HealShape:  "missing-env",
 		})
 	}
-	sig := map[string]interface{}{
-		"sensor_id":   env.SensorID,
-		"version":     env.Version,
-		"run_id":      env.RunID,
-		"started_at":  env.StartedAt,
-		"finished_at": finished,
-		"verdict":     "error",
-		"severity":    "high",
-		"confidence":  1.0,
-		"evidence":    evidence,
-		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata": map[string]interface{}{
-			"kind":        "aggregate",
-			"output_mode": outputMode,
-		},
-	}
-	if rem := missingEnvRemediation(missing); rem != "" {
-		sig["remediation"] = map[string]interface{}{"instructions": rem}
-	}
-	return sig
+	return BuildRequiresGateSignal(env, outputMode, gate)
 }
 
 // missingEnvRationale produces a single evidence rationale string for a
@@ -104,15 +76,3 @@ func missingEnvRationale(m MissingEnv) string {
 	return fmt.Sprintf("Required environment variable %s is not set", m.Name)
 }
 
-// missingEnvRemediation produces the aggregate-level remediation string
-// listing every missing var name. Returns "" when missing is empty.
-func missingEnvRemediation(missing []MissingEnv) string {
-	if len(missing) == 0 {
-		return ""
-	}
-	names := make([]string, 0, len(missing))
-	for _, m := range missing {
-		names = append(names, m.Name)
-	}
-	return "Set the following env var(s) before invoking /run-sensor: " + strings.Join(names, ", ") + ". Source them from your shell, a .env file, or the secret manager backing this project."
-}
