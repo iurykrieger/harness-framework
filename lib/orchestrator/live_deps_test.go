@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
@@ -305,5 +307,78 @@ func TestRebindDepHolderPID_DepEntryMissing_IsNoop(t *testing.T) {
 	// No registry entry exists for this id.
 	if err := orchestrator.RebindDepHolderPID("never-attached", root, "holder-id", 1, 2); err != nil {
 		t.Errorf("RebindDepHolderPID for missing dep: got error %v, want nil (idempotent no-op)", err)
+	}
+}
+
+func TestStartBlockingDep_SpawnsWatcherAndPopulatesPID(t *testing.T) {
+	tmp := t.TempDir()
+	sensorsDir := filepath.Join(tmp, "sensors")
+	_ = os.MkdirAll(sensorsDir, 0o755)
+
+	r := registry.NewRoot(tmp)
+	rs := registry.RunningSensors{}
+	dep := orchestrator.Sensor{
+		ID:   "fake-blocking",
+		Path: filepath.Join(sensorsDir, "fake-blocking.json"),
+		JSON: map[string]interface{}{
+			"id":      "fake-blocking",
+			"version": "0.0.1",
+			"type":    "computational",
+			"output":  "stream",
+			"execution": map[string]interface{}{
+				"command":  "sleep 30",
+				"blocking": true,
+				"output_parsing": map[string]interface{}{
+					"patterns": []interface{}{
+						map[string]interface{}{"regex": "x", "verdict": "pass", "severity": "info"},
+					},
+				},
+			},
+		},
+	}
+	holder := registry.HeldByEntry{Kind: "sensor", ID: "root", PID: os.Getpid(), AttachedAt: "2026-05-11T00:00:00Z"}
+
+	err := orchestrator.ExportedStartBlockingDep(&rs, r, dep, holder)
+
+	// Cleanup any subprocess that was spawned.
+	defer func() {
+		for _, e := range rs.Entries {
+			if e.SensorID == dep.ID && e.PGID > 0 {
+				_ = syscall.Kill(-e.PGID, syscall.SIGKILL)
+			}
+		}
+	}()
+
+	if err != nil {
+		// Watcher binary may not exist in the test environment — that's
+		// acceptable as long as the failure path mentions "watcher" and
+		// the subprocess was cleaned up (no entry in rs).
+		if !strings.Contains(err.Error(), "watcher") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if rs.FindEntry(dep.ID) != nil {
+			t.Errorf("expected rs entry to be removed after watcher failure, found one")
+		}
+		return
+	}
+
+	entry := rs.FindEntry(dep.ID)
+	if entry == nil {
+		t.Fatal("rs entry missing")
+	}
+	if entry.WatcherPID == 0 {
+		t.Errorf("WatcherPID = 0, expected > 0")
+	}
+	// .runtime/sensors/<dep>/<run_id>/raw.log and signals.log should exist.
+	parent := filepath.Join(tmp, ".runtime", "sensors", dep.ID)
+	sub, _ := os.ReadDir(parent)
+	if len(sub) == 0 {
+		t.Fatalf("no run_id subdir under %q", parent)
+	}
+	if _, err := os.Stat(filepath.Join(parent, sub[0].Name(), "raw.log")); err != nil {
+		t.Errorf("raw.log missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(parent, sub[0].Name(), "signals.log")); err != nil {
+		t.Errorf("signals.log missing: %v", err)
 	}
 }

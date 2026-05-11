@@ -14,7 +14,9 @@ import (
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	libsensor "github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/subprocess"
+	"github.com/iurykrieger/harness-framework/lib/watcher"
 )
 
 // RunWithDepsRoot is the id-resolving variant of RunWithDeps. The
@@ -153,40 +155,81 @@ func DetachLiveDep(depID, projectRoot, holderID string, v *schema.Validator, std
 }
 
 // startBlockingDep is called from AttachLiveDep under flock. It spawns
-// the dep's command detached and writes a registry entry with the given
-// holder. No watcher process is spawned for orchestrator-managed deps —
-// the dep runs unobserved (signals.log stays empty); /stop-sensor of
-// dep would also see no individuals, which is intentional for the
-// orchestrator path (the dependent's aggregate is what matters).
+// the dep's command detached, starts a watcher process to tail raw.log
+// and write signals.log, then writes a registry entry with the given holder.
 func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, holder registry.HeldByEntry) error {
 	execMap, _ := dep.JSON["execution"].(map[string]interface{})
 	command, _ := execMap["command"].(string)
-	if err := os.MkdirAll(r.SensorDir(dep.ID), 0o755); err != nil {
-		return fmt.Errorf("mkdir log dir: %w", err)
+
+	runID := uuid.NewString()
+	rawLogPath, signalsLogPath, dirErr := prepareRuntimeDir(r.ProjectRoot(), dep.ID, runID)
+	if dirErr != nil {
+		return fmt.Errorf("runtime dir: %w", dirErr)
 	}
-	if err := os.WriteFile(r.RawLog(dep.ID), nil, 0o644); err != nil {
-		return fmt.Errorf("create raw.log: %w", err)
-	}
-	if err := os.WriteFile(r.SignalsLog(dep.ID), nil, 0o644); err != nil {
+	// Pre-create signals.log so the watcher has an existing file to append to.
+	if err := os.WriteFile(signalsLogPath, nil, 0o644); err != nil {
 		return fmt.Errorf("create signals.log: %w", err)
 	}
-	det, err := subprocess.SpawnDetached(subprocess.DetachConfig{Command: command, LogFile: r.RawLog(dep.ID)})
+
+	det, err := subprocess.SpawnDetached(subprocess.DetachConfig{Command: command, LogFile: rawLogPath})
 	if err != nil {
 		return fmt.Errorf("spawn: %w", err)
 	}
+
+	envelope := libsensor.Envelope{
+		SensorID:   dep.ID,
+		Version:    stringFieldFromJSON(dep.JSON, "version"),
+		RunID:      runID,
+		StartedAt:  time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		SensorType: stringFieldFromJSON(dep.JSON, "type"),
+	}
+	envelopeJSON, _ := json.Marshal(envelope)
+	patterns := []interface{}{}
+	if op, ok := execMap["output_parsing"].(map[string]interface{}); ok {
+		if raw, ok := op["patterns"].([]interface{}); ok {
+			patterns = raw
+		}
+	}
+	patternsJSON, _ := json.Marshal(patterns)
+
+	watcherPID, werr := watcher.Spawn(watcher.SpawnOpts{
+		ProjectRoot:    r.ProjectRoot(),
+		SensorID:       dep.ID,
+		RunID:          runID,
+		RawLogPath:     rawLogPath,
+		SignalsLogPath: signalsLogPath,
+		EnvelopeJSON:   envelopeJSON,
+		PatternsJSON:   patternsJSON,
+		SubprocessPID:  det.PID,
+	})
+	if werr != nil {
+		if det.PGID > 0 {
+			_ = syscall.Kill(-det.PGID, syscall.SIGKILL)
+		}
+		return fmt.Errorf("watcher: %w", werr)
+	}
+
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	rs.RemoveEntry(dep.ID)
 	rs.Entries = append(rs.Entries, registry.RunningSensorEntry{
 		SensorID:   dep.ID,
 		PID:        det.PID,
 		PGID:       det.PGID,
-		WatcherPID: 0,
+		WatcherPID: watcherPID,
 		StartedAt:  now,
 		Command:    command,
-		LogDir:     filepath.Join(".runtime", "sensors", dep.ID),
+		LogDir:     filepath.Join(".runtime", "sensors", dep.ID, runID),
 		HeldBy:     []registry.HeldByEntry{holder},
 	})
 	return registry.Save(r, *rs)
+}
+
+// stringFieldFromJSON extracts a string field from a sensor's parsed JSON
+// without panicking on type mismatch. Local helper to keep the orchestrator
+// independent of start.go's stringField (same purpose, different package).
+func stringFieldFromJSON(m map[string]interface{}, key string) string {
+	s, _ := m[key].(string)
+	return s
 }
 
 // stopBlockingDep terminates the dep's process group and removes its
