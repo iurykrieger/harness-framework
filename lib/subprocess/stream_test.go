@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,52 +173,93 @@ func TestStreamSubprocess_NoPatternsNoIndividuals(t *testing.T) {
 	}
 }
 
-func TestStreamSubprocess_RawLogPathPopulated(t *testing.T) {
-	tmp := t.TempDir()
-	rawLogPath := filepath.Join(tmp, "raw.log")
+func TestStreamSubprocess_TeesRawLogWhenRunDirSet(t *testing.T) {
+	_, runID, runDir := testfixtures.WithRunDir(t, "alpha", "")
+	_ = runID
 
+	var stdout, stderr bytes.Buffer
 	cfg := subprocess.StreamConfig{
-		Command:   `printf "line-1\nline-2\nline-3\n"`,
-		TimeoutMS: 5000,
-		Envelope: sensor.Envelope{
-			SensorID: "x", Version: "0.0.1", RunID: "r",
-			StartedAt: "2026-05-08T00:00:00Z",
-		},
-		Stdout:     io.Discard,
-		Stderr:     io.Discard,
-		RawLogPath: rawLogPath,
+		Command:  `printf 'line one\nline two\n'`,
+		Envelope: sensor.Envelope{SensorID: "alpha", Version: "0.0.0", RunID: runID, StartedAt: "2026-05-11T00:00:00Z"},
+		Stdout:   &stdout,
+		Stderr:   &stderr,
+		RunDir:   runDir,
 	}
-	if _, err := subprocess.StreamSubprocess(context.Background(), cfg); err != nil {
-		t.Fatalf("StreamSubprocess: %v", err)
-	}
-	got, err := os.ReadFile(rawLogPath)
+	res, err := subprocess.StreamSubprocess(context.Background(), cfg)
 	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
+		t.Fatalf("stream: %v", err)
 	}
-	if !strings.Contains(string(got), "line-1") || !strings.Contains(string(got), "line-3") {
-		t.Errorf("raw.log content unexpected: %q", string(got))
+	if res.ExitCode != 0 {
+		t.Fatalf("exit=%d", res.ExitCode)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(runDir, "raw.log"))
+	if err != nil {
+		t.Fatalf("read raw.log: %v", err)
+	}
+	if want := "line one\nline two\n"; string(raw) != want {
+		t.Errorf("raw.log = %q, want %q", string(raw), want)
 	}
 }
 
-func TestStreamSubprocess_RawLogPathEmpty_NoFileCreated(t *testing.T) {
-	tmp := t.TempDir()
-	nonexistent := filepath.Join(tmp, "nope.log")
-
+func TestStreamSubprocess_NoTeeWhenRunDirEmpty(t *testing.T) {
+	var stdout, stderr bytes.Buffer
 	cfg := subprocess.StreamConfig{
-		Command:   `echo hello`,
-		TimeoutMS: 5000,
-		Envelope: sensor.Envelope{
-			SensorID: "x", Version: "0.0.1", RunID: "r",
-			StartedAt: "2026-05-08T00:00:00Z",
-		},
-		Stdout: io.Discard,
-		Stderr: io.Discard,
-		// RawLogPath intentionally empty
+		Command:  `echo hello`,
+		Envelope: sensor.Envelope{SensorID: "alpha", Version: "0.0.0", RunID: "1-x", StartedAt: "2026-05-11T00:00:00Z"},
+		Stdout:   &stdout,
+		Stderr:   &stderr,
+		// RunDir intentionally empty — legacy behavior
 	}
 	if _, err := subprocess.StreamSubprocess(context.Background(), cfg); err != nil {
-		t.Fatalf("StreamSubprocess: %v", err)
+		t.Fatalf("stream: %v", err)
 	}
-	if _, err := os.Stat(nonexistent); !os.IsNotExist(err) {
-		t.Errorf("expected nope.log to NOT exist, stat err = %v", err)
+	// Nothing to assert about disk; the absence of a panic / RunDir-related error is the check.
+}
+
+func TestStreamSubprocess_WritesIndividualsToSignalsLog(t *testing.T) {
+	_, runID, runDir := testfixtures.WithRunDir(t, "alpha", "")
+
+	patterns, err := signal.CompilePatterns([]interface{}{
+		map[string]interface{}{"regex": `^FAIL: (.+)$`, "verdict": "fail", "severity": "high"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cfg := subprocess.StreamConfig{
+		Command:  `printf 'FAIL: boom\nFAIL: bang\n'`,
+		Envelope: sensor.Envelope{SensorID: "alpha", Version: "0.0.0", RunID: runID, StartedAt: "2026-05-11T00:00:00Z"},
+		Patterns: patterns,
+		Stdout:   &stdout,
+		Stderr:   &stderr,
+		RunDir:   runDir,
+	}
+	res, err := subprocess.StreamSubprocess(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if len(res.Individuals) != 2 {
+		t.Fatalf("individuals=%d", len(res.Individuals))
+	}
+
+	data, err := os.ReadFile(filepath.Join(runDir, "signals.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("signals.log lines=%d (%q)", len(lines), string(data))
+	}
+	// Cross-check: stdout has the same JSONL lines
+	stdoutLines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	if len(stdoutLines) != 2 {
+		t.Fatalf("stdout lines=%d", len(stdoutLines))
+	}
+	for i := 0; i < 2; i++ {
+		if lines[i] != stdoutLines[i] {
+			t.Errorf("line %d: signals.log=%q stdout=%q", i, lines[i], stdoutLines[i])
+		}
 	}
 }

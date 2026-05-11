@@ -23,7 +23,6 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	libsensor "github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/subprocess"
-	"github.com/iurykrieger/harness-framework/lib/watcher"
 )
 
 func main() {
@@ -150,23 +149,22 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 			map[string]interface{}{"error_excerpt": err.Error()},
 			fmt.Sprintf("mkdir log dir: %v", err), diagnose), id)
 	}
-	if err := os.WriteFile(r.RawLog(id), nil, 0o644); err != nil {
+
+	watcherPath, err := watcherBinaryPath()
+	if err != nil {
 		detachAll()
-		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
+		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "watcher_spawn_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("create raw.log: %v", err), diagnose), id)
-	}
-	if err := os.WriteFile(r.SignalsLog(id), nil, 0o644); err != nil {
-		detachAll()
-		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
-			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("create signals.log: %v", err), diagnose), id)
+			fmt.Sprintf("watcher binary: %v", err), diagnose), id)
 	}
 
 	type spawnResult struct {
-		det        subprocess.DetachResult
-		watcherPID int
-		envelope   libsensor.Envelope
+		det         subprocess.DetachResult
+		watcherProc *os.Process
+		watcherPID  int
+		envelope    libsensor.Envelope
+		runID       string
+		runDir      string
 	}
 	var spawned spawnResult
 	var alreadyRunning bool
@@ -177,22 +175,73 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 		if err != nil {
 			return fmt.Errorf("load registry: %w", err)
 		}
-		if existing := rs.FindEntry(id); existing != nil && registry.IsPIDAlive(existing.PID) {
+		if existing := rs.FindBlockingEntry(id); existing != nil && registry.IsPIDAlive(existing.PID) {
 			alreadyRunning = true
 			alreadyRunningPID = existing.PID
 			return nil
 		}
+
+		// Stage 1: pre-create the staging raw.log at the flat SensorDir
+		// path. SpawnDetached opens this for stdout+stderr; we rename it
+		// into <run-id>/raw.log once the PID is known. os.Rename on the
+		// same filesystem preserves the subprocess's open fd, so writes
+		// continue uninterrupted at the new path.
+		stagingRaw := r.RawLog(id)
+		if err := os.WriteFile(stagingRaw, nil, 0o644); err != nil {
+			return fmt.Errorf("create staging raw.log: %w", err)
+		}
+
+		// Stage 2: spawn the subprocess detached.
 		det, err := subprocess.SpawnDetached(subprocess.DetachConfig{
 			Command: command,
-			LogFile: r.RawLog(id),
+			LogFile: stagingRaw,
 		})
 		if err != nil {
+			_ = os.Remove(stagingRaw)
 			return fmt.Errorf("spawn: %w", err)
 		}
+
+		// Stage 3: derive composite run_id from the freshly-spawned PID
+		// and a short UUID. This becomes the per-run directory name and
+		// the run_id carried on every Signal the watcher emits.
+		shortUUID := uuid.NewString()
+		if len(shortUUID) >= 8 {
+			shortUUID = shortUUID[:8]
+		}
+		runID := fmt.Sprintf("%d-%s", det.PID, shortUUID)
+		runDir := r.RunDir(id, runID)
+		if err := os.MkdirAll(runDir, 0o755); err != nil {
+			if det.PGID > 0 {
+				_ = killGroup(det.PGID)
+			}
+			_ = os.Remove(stagingRaw)
+			return fmt.Errorf("mkdir run dir: %w", err)
+		}
+
+		// Stage 4: rename the staging raw.log into <run-id>/raw.log.
+		// Atomic on POSIX; subprocess's open fd survives the rename.
+		rawPath := r.RawLogRun(id, runID)
+		if err := os.Rename(stagingRaw, rawPath); err != nil {
+			if det.PGID > 0 {
+				_ = killGroup(det.PGID)
+			}
+			_ = os.Remove(stagingRaw)
+			_ = os.RemoveAll(runDir)
+			return fmt.Errorf("rename raw.log into run dir: %w", err)
+		}
+		sigsPath := r.SignalsLogRun(id, runID)
+		if err := os.WriteFile(sigsPath, nil, 0o644); err != nil {
+			if det.PGID > 0 {
+				_ = killGroup(det.PGID)
+			}
+			_ = os.RemoveAll(runDir)
+			return fmt.Errorf("create signals.log: %w", err)
+		}
+
 		envelope := libsensor.Envelope{
 			SensorID:   id,
 			Version:    stringField(sensorJSON, "version"),
-			RunID:      uuid.NewString(),
+			RunID:      runID,
 			StartedAt:  time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 			SensorType: stringField(sensorJSON, "type"),
 		}
@@ -205,32 +254,52 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 		patternsJSON, _ := json.Marshal(patterns)
 		envelopeJSON, _ := json.Marshal(envelope)
 
-		watcherPID, err := watcher.Spawn(watcher.SpawnOpts{
-			ProjectRoot:    projectRoot,
-			SensorID:       id,
-			RunID:          envelope.RunID,
-			RawLogPath:     r.RawLog(id),
-			SignalsLogPath: r.SignalsLog(id),
-			EnvelopeJSON:   envelopeJSON,
-			PatternsJSON:   patternsJSON,
-			SubprocessPID:  det.PID,
+		watcherLogPath := filepath.Join(runDir, "watcher.log")
+		watcherLogFile, err := os.OpenFile(watcherLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			if det.PGID > 0 {
+				_ = killGroup(det.PGID)
+			}
+			_ = os.RemoveAll(runDir)
+			return fmt.Errorf("open watcher.log: %w", err)
+		}
+		watcherProc, err := os.StartProcess(watcherPath, []string{watcherPath}, &os.ProcAttr{
+			Env: []string{
+				fmt.Sprintf("HARNESS_WATCHER_RAW=%s", rawPath),
+				fmt.Sprintf("HARNESS_WATCHER_SIGNALS=%s", sigsPath),
+				fmt.Sprintf("HARNESS_WATCHER_PATTERNS=%s", string(patternsJSON)),
+				fmt.Sprintf("HARNESS_WATCHER_ENVELOPE=%s", string(envelopeJSON)),
+				fmt.Sprintf("HARNESS_WATCHER_SUBPROCESS_PID=%d", det.PID),
+				fmt.Sprintf("HARNESS_WATCHER_REGISTRY_ROOT=%s", projectRoot),
+				fmt.Sprintf("HARNESS_WATCHER_SENSOR_ID=%s", id),
+				fmt.Sprintf("HARNESS_WATCHER_RUN_ID=%s", runID),
+			},
+			Files: []*os.File{nil, nil, watcherLogFile},
+			Sys:   &watcherSysProcAttr,
 		})
 		if err != nil {
 			if det.PGID > 0 {
 				_ = killGroup(det.PGID)
 			}
+			_ = watcherLogFile.Close()
+			_ = os.RemoveAll(runDir)
 			return fmt.Errorf("start watcher: %w", err)
 		}
+		watcherPID := watcherProc.Pid
 
-		rs.RemoveEntry(id)
+		if stale := rs.FindBlockingEntry(id); stale != nil {
+			rs.RemoveEntryByRunID(stale.RunID)
+		}
 		rs.Entries = append(rs.Entries, registry.RunningSensorEntry{
 			SensorID:   id,
+			RunID:      runID,
+			Blocking:   true,
 			PID:        det.PID,
 			PGID:       det.PGID,
 			WatcherPID: watcherPID,
 			StartedAt:  envelope.StartedAt,
 			Command:    command,
-			LogDir:     filepath.Join(".runtime", "sensors", id),
+			LogDir:     filepath.Join(".runtime", "sensors", id, runID),
 			HeldBy: []registry.HeldByEntry{
 				{Kind: "manual", AttachedAt: envelope.StartedAt},
 			},
@@ -239,7 +308,14 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 			return err
 		}
 
-		spawned = spawnResult{det: det, watcherPID: watcherPID, envelope: envelope}
+		spawned = spawnResult{
+			det:         det,
+			watcherProc: watcherProc,
+			watcherPID:  watcherPID,
+			envelope:    envelope,
+			runID:       runID,
+			runDir:      runDir,
+		}
 		return nil
 	})
 
@@ -266,10 +342,10 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 
 	// Rebind: dep holders go from placeholderPID to spawned.det.PID.
 	var rebindWarnings []interface{}
-	for _, depID := range pre.LiveStack {
-		if err := orchestrator.RebindDepHolderPID(depID, projectRoot, id, placeholderPID, spawned.det.PID); err != nil {
+	for _, live := range pre.LiveStack {
+		if err := orchestrator.RebindDepHolderPID(live.ID, projectRoot, id, placeholderPID, spawned.det.PID); err != nil {
 			rebindWarnings = append(rebindWarnings, map[string]interface{}{
-				"dep_id": depID,
+				"dep_id": live.ID,
 				"error":  err.Error(),
 			})
 		}
@@ -278,7 +354,7 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 	aux := map[string]interface{}{
 		"pid":         spawned.det.PID,
 		"watcher_pid": spawned.watcherPID,
-		"log_dir":     filepath.Join(".runtime", "sensors", id),
+		"log_dir":     filepath.Join(".runtime", "sensors", id, spawned.runID),
 		"next_cursor": 0,
 	}
 	if len(prepResults) > 0 {
@@ -287,7 +363,7 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 	if len(pre.LiveStack) > 0 {
 		ds := []interface{}{}
 		for _, d := range pre.LiveStack {
-			ds = append(ds, d)
+			ds = append(ds, d.ID)
 		}
 		aux["dep_chain"] = ds
 	}

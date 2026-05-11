@@ -7,8 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
@@ -149,15 +147,18 @@ func TestAttachLiveDep_PassesHolderPID(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	const customHolderPID = 99999
-	depID, err := orchestrator.AttachLiveDep(
+	live, err := orchestrator.AttachLiveDep(
 		context.Background(), dep, root, "holder-id", customHolderPID,
 		v, &stdout, &stderr,
 	)
 	if err != nil {
 		t.Fatalf("AttachLiveDep: %v", err)
 	}
-	if depID != "blocking-tick" {
-		t.Errorf("depID: got %q, want blocking-tick", depID)
+	if live.ID != "blocking-tick" {
+		t.Errorf("live.ID: got %q, want blocking-tick", live.ID)
+	}
+	if live.RunID == "" {
+		t.Error("live.RunID: got empty, want non-empty")
 	}
 
 	r := registry.NewRoot(root)
@@ -169,6 +170,12 @@ func TestAttachLiveDep_PassesHolderPID(t *testing.T) {
 	if entry == nil {
 		t.Fatal("expected entry in registry, got none")
 	}
+	if entry.RunID != live.RunID {
+		t.Errorf("entry.RunID: got %q, want %q (matches AttachLiveDep return)", entry.RunID, live.RunID)
+	}
+	if !entry.Blocking {
+		t.Error("entry.Blocking: got false, want true")
+	}
 	if len(entry.HeldBy) != 1 {
 		t.Fatalf("HeldBy length: got %d, want 1", len(entry.HeldBy))
 	}
@@ -178,7 +185,7 @@ func TestAttachLiveDep_PassesHolderPID(t *testing.T) {
 	}
 
 	// Tear down for cleanliness — kill the spawned subprocess.
-	orchestrator.DetachLiveDep("blocking-tick", root, "holder-id", v, io.Discard, io.Discard)
+	orchestrator.DetachLiveDep(live, root, "holder-id", v, io.Discard, io.Discard)
 }
 
 func TestAttachLiveDep_ReapsStaleSameHolder(t *testing.T) {
@@ -191,10 +198,11 @@ func TestAttachLiveDep_ReapsStaleSameHolder(t *testing.T) {
 
 	// First attach with a "real" pid (current process) so the dep is alive.
 	livePID := os.Getpid()
-	if _, err := orchestrator.AttachLiveDep(
+	firstLive, err := orchestrator.AttachLiveDep(
 		context.Background(), dep, root, "holder-id", livePID,
 		v, &stdout, &stderr,
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -236,7 +244,7 @@ func TestAttachLiveDep_ReapsStaleSameHolder(t *testing.T) {
 	}
 
 	// Cleanup.
-	orchestrator.DetachLiveDep("blocking-tick", root, "holder-id", v, io.Discard, io.Discard)
+	orchestrator.DetachLiveDep(firstLive, root, "holder-id", v, io.Discard, io.Discard)
 }
 
 func TestRebindDepHolderPID_Match(t *testing.T) {
@@ -248,10 +256,11 @@ func TestRebindDepHolderPID_Match(t *testing.T) {
 
 	const oldPID = 12345
 	const newPID = 67890
-	if _, err := orchestrator.AttachLiveDep(
+	live, err := orchestrator.AttachLiveDep(
 		context.Background(), dep, root, "holder-id", oldPID,
 		v, &out, &errBuf,
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -269,7 +278,7 @@ func TestRebindDepHolderPID_Match(t *testing.T) {
 		t.Errorf("rebound PID: got %d, want %d", entry.HeldBy[0].PID, newPID)
 	}
 
-	orchestrator.DetachLiveDep("blocking-tick", root, "holder-id", v, io.Discard, io.Discard)
+	orchestrator.DetachLiveDep(live, root, "holder-id", v, io.Discard, io.Discard)
 }
 
 func TestRebindDepHolderPID_NoMatch_IsNoop(t *testing.T) {
@@ -280,10 +289,11 @@ func TestRebindDepHolderPID_NoMatch_IsNoop(t *testing.T) {
 	var out, errBuf bytes.Buffer
 
 	const realPID = 12345
-	if _, err := orchestrator.AttachLiveDep(
+	live, err := orchestrator.AttachLiveDep(
 		context.Background(), dep, root, "holder-id", realPID,
 		v, &out, &errBuf,
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -299,7 +309,7 @@ func TestRebindDepHolderPID_NoMatch_IsNoop(t *testing.T) {
 		t.Errorf("PID after no-op rebind: got %d, want %d (unchanged)", entry.HeldBy[0].PID, realPID)
 	}
 
-	orchestrator.DetachLiveDep("blocking-tick", root, "holder-id", v, io.Discard, io.Discard)
+	orchestrator.DetachLiveDep(live, root, "holder-id", v, io.Discard, io.Discard)
 }
 
 func TestRebindDepHolderPID_DepEntryMissing_IsNoop(t *testing.T) {
@@ -310,75 +320,108 @@ func TestRebindDepHolderPID_DepEntryMissing_IsNoop(t *testing.T) {
 	}
 }
 
-func TestStartBlockingDep_SpawnsWatcherAndPopulatesPID(t *testing.T) {
-	tmp := t.TempDir()
-	sensorsDir := filepath.Join(tmp, "sensors")
-	_ = os.MkdirAll(sensorsDir, 0o755)
+// TestAttachDetachLiveDep_CoexistsWithNonBlockingEntry seeds the registry
+// with a non-blocking entry for the same sensor id BEFORE calling
+// AttachLiveDep, then verifies:
+//   - AttachLiveDep targets only the blocking entry (or creates one):
+//     the non-blocking entry's HeldBy is untouched.
+//   - DetachLiveDep removes only the blocking entry, by run_id: the
+//     non-blocking entry survives the teardown.
+//
+// This is the invariant that motivated the FindBlockingEntry +
+// RemoveEntryByRunID rewrite — under the old FindEntry/RemoveEntry API
+// the non-blocking entry would have been mutated or removed by the
+// orchestrator's dep mechanics, which it has no claim on.
+func TestAttachDetachLiveDep_CoexistsWithNonBlockingEntry(t *testing.T) {
+	root := t.TempDir()
+	writeBlockingDep(t, root, "blocking-tick")
+	dep := loadDepSensor(t, root, "blocking-tick")
+	v := loadValidator(t)
 
-	r := registry.NewRoot(tmp)
-	rs := registry.RunningSensors{}
-	dep := orchestrator.Sensor{
-		ID:   "fake-blocking",
-		Path: filepath.Join(sensorsDir, "fake-blocking.json"),
-		JSON: map[string]interface{}{
-			"id":      "fake-blocking",
-			"version": "0.0.1",
-			"type":    "computational",
-			"output":  "stream",
-			"execution": map[string]interface{}{
-				"command":  "sleep 30",
-				"blocking": true,
-				"output_parsing": map[string]interface{}{
-					"patterns": []interface{}{
-						map[string]interface{}{"regex": "x", "verdict": "pass", "severity": "info"},
-					},
-				},
-			},
-		},
+	// Seed a non-blocking entry with the same sensor id. This simulates a
+	// concurrent /run-sensor that has its own registry entry for
+	// blocking-tick (e.g., an observation phase running while a
+	// blocking instance also exists). The dep mechanics must not touch
+	// it.
+	r := registry.NewRoot(root)
+	nonBlockingRunID := "11111-nonblock"
+	nonBlockingHolder := registry.HeldByEntry{Kind: "manual", AttachedAt: "2026-05-10T00:00:00Z"}
+	if err := registry.WithFileLock(r.LockFile(), func() error {
+		rs, _ := registry.Load(r)
+		rs.Entries = append(rs.Entries, registry.RunningSensorEntry{
+			SensorID:   "blocking-tick",
+			RunID:      nonBlockingRunID,
+			Blocking:   false,
+			PID:        os.Getpid(),
+			PGID:       os.Getpid(),
+			WatcherPID: 0,
+			StartedAt:  "2026-05-10T00:00:00Z",
+			Command:    "echo non-blocking",
+			LogDir:     filepath.Join(".runtime", "sensors", "blocking-tick", nonBlockingRunID),
+			HeldBy:     []registry.HeldByEntry{nonBlockingHolder},
+		})
+		return registry.Save(r, rs)
+	}); err != nil {
+		t.Fatalf("seed non-blocking entry: %v", err)
 	}
-	holder := registry.HeldByEntry{Kind: "sensor", ID: "root", PID: os.Getpid(), AttachedAt: "2026-05-11T00:00:00Z"}
 
-	err := orchestrator.ExportedStartBlockingDep(&rs, r, dep, holder)
-
-	// Cleanup any subprocess that was spawned.
-	defer func() {
-		for _, e := range rs.Entries {
-			if e.SensorID == dep.ID && e.PGID > 0 {
-				_ = syscall.Kill(-e.PGID, syscall.SIGKILL)
-			}
-		}
-	}()
-
+	var stdout, stderr bytes.Buffer
+	live, err := orchestrator.AttachLiveDep(
+		context.Background(), dep, root, "holder-id", os.Getpid(),
+		v, &stdout, &stderr,
+	)
 	if err != nil {
-		// Watcher binary may not exist in the test environment — that's
-		// acceptable as long as the failure path mentions "watcher" and
-		// the subprocess was cleaned up (no entry in rs).
-		if !strings.Contains(err.Error(), "watcher") {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if rs.FindEntry(dep.ID) != nil {
-			t.Errorf("expected rs entry to be removed after watcher failure, found one")
-		}
-		return
+		t.Fatalf("AttachLiveDep: %v", err)
+	}
+	if live.RunID == "" {
+		t.Fatal("AttachLiveDep returned empty RunID")
+	}
+	if live.RunID == nonBlockingRunID {
+		t.Fatalf("AttachLiveDep returned the non-blocking entry's RunID %q — should have started/attached a blocking entry instead", live.RunID)
 	}
 
-	entry := rs.FindEntry(dep.ID)
-	if entry == nil {
-		t.Fatal("rs entry missing")
+	// Verify both entries exist, exactly one blocking and one not.
+	rs, _ := registry.Load(r)
+	entries := rs.FindEntries("blocking-tick")
+	if len(entries) != 2 {
+		t.Fatalf("entries for blocking-tick: got %d, want 2 (one blocking + one non-blocking)", len(entries))
 	}
-	if entry.WatcherPID == 0 {
-		t.Errorf("WatcherPID = 0, expected > 0")
+	var nonBlock, block *registry.RunningSensorEntry
+	for _, e := range entries {
+		if e.Blocking {
+			block = e
+		} else {
+			nonBlock = e
+		}
 	}
-	// .runtime/sensors/<dep>/<run_id>/raw.log and signals.log should exist.
-	parent := filepath.Join(tmp, ".runtime", "sensors", dep.ID)
-	sub, _ := os.ReadDir(parent)
-	if len(sub) == 0 {
-		t.Fatalf("no run_id subdir under %q", parent)
+	if nonBlock == nil {
+		t.Fatal("non-blocking entry missing after Attach")
 	}
-	if _, err := os.Stat(filepath.Join(parent, sub[0].Name(), "raw.log")); err != nil {
-		t.Errorf("raw.log missing: %v", err)
+	if block == nil {
+		t.Fatal("blocking entry missing after Attach")
 	}
-	if _, err := os.Stat(filepath.Join(parent, sub[0].Name(), "signals.log")); err != nil {
-		t.Errorf("signals.log missing: %v", err)
+	if nonBlock.RunID != nonBlockingRunID {
+		t.Errorf("non-blocking RunID: got %q, want %q (untouched)", nonBlock.RunID, nonBlockingRunID)
+	}
+	if len(nonBlock.HeldBy) != 1 || nonBlock.HeldBy[0].Kind != "manual" {
+		t.Errorf("non-blocking HeldBy: got %+v, want untouched [manual]", nonBlock.HeldBy)
+	}
+	if block.RunID != live.RunID {
+		t.Errorf("blocking entry RunID: got %q, want %q", block.RunID, live.RunID)
+	}
+
+	// Detach by LiveDep — must remove only the blocking entry.
+	orchestrator.DetachLiveDep(live, root, "holder-id", v, io.Discard, io.Discard)
+
+	rs, _ = registry.Load(r)
+	entries = rs.FindEntries("blocking-tick")
+	if len(entries) != 1 {
+		t.Fatalf("post-detach entries: got %d, want 1 (non-blocking survives)", len(entries))
+	}
+	if entries[0].Blocking {
+		t.Errorf("post-detach survivor: got Blocking=true, want false")
+	}
+	if entries[0].RunID != nonBlockingRunID {
+		t.Errorf("post-detach survivor RunID: got %q, want %q", entries[0].RunID, nonBlockingRunID)
 	}
 }

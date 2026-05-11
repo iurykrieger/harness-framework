@@ -5,10 +5,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
@@ -100,6 +104,107 @@ func TestRun_SensorNotFound(t *testing.T) {
 	code := run([]string{"--schemas-dir", testfixtures.RepoSchemasDir(t), "nonexistent"}, root, &out, &errBuf)
 	if code != 2 {
 		t.Fatalf("expected 2 when sensor missing, got %d", code)
+	}
+}
+
+// TestRunComputational_SIGTERMSetsTerminatedExternally spawns the runner
+// as a subprocess (via `go run`), waits for it to enter its long-running
+// command, and sends SIGTERM. The aggregate Signal on the LAST stdout
+// line must carry metadata.terminated_externally=true.
+//
+// This test exercises the realistic SIGTERM path; the in-process unit
+// tests already cover ctx-cancellation via the orchestrator. The
+// 200ms sleep before SIGTERM is a known flake risk on slow CI.
+func TestRunComputational_SIGTERMSetsTerminatedExternally(t *testing.T) {
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Hand-rolled fixture: minimal valid computational sensor with a
+	// long-running command so the runner is still in the command phase
+	// when SIGTERM arrives.
+	sensorJSON := map[string]interface{}{
+		"id":          "sleeper",
+		"version":     "0.1.0",
+		"name":        "sleeper",
+		"description": "fixture",
+		"kind":        "observation",
+		"type":        "computational",
+		"regulation":  "maintainability",
+		"phase":       "on-demand",
+		"determinism": "high",
+		"output":      "single",
+		"cost": map[string]interface{}{
+			"class":   "cheap",
+			"latency": map[string]interface{}{"p50_ms": 1, "p95_ms": 1, "timeout_ms": 60000},
+			"compute": map[string]interface{}{"cpu": "low", "memory_mb": 1},
+		},
+		"triggers": []interface{}{map[string]interface{}{"on": "manual"}},
+		"execution": map[string]interface{}{
+			"command": "sleep 30",
+			"exit_code_map": []interface{}{
+				map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
+			},
+		},
+		"verification": map[string]interface{}{
+			"golden_cases": []interface{}{map[string]interface{}{"fixture": "f", "expected_verdict": "pass", "expected_severity": "info"}},
+		},
+	}
+	b, _ := json.Marshal(sensorJSON)
+	if err := os.WriteFile(filepath.Join(proj, "sensors", "sleeper.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-build the runner binary so we can invoke it directly with
+	// cwd=proj (the runner resolves the sensor against its cwd as
+	// projectRoot). `go run` would force cwd to be the repo root,
+	// defeating the resolution.
+	bin := filepath.Join(t.TempDir(), "runner-comp")
+	build := exec.Command("go", "build", "-tags=run_computational",
+		"-o", bin, "./skills/run-sensor/scripts")
+	build.Dir = repoRootForTest(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build runner: %v\n%s", err, out)
+	}
+
+	cmd := exec.Command(bin, "--schemas-dir", testfixtures.RepoSchemasDir(t), "sleeper")
+	cmd.Dir = proj
+	cmd.Env = append(os.Environ(), "HARNESS_REGISTRY_ROOT="+proj)
+	// Set a process group so we can clean up cleanly if the test bails.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// Give the runner time to spawn its subprocess and register the
+	// signal handler before delivering SIGTERM.
+	time.Sleep(500 * time.Millisecond)
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("send SIGTERM: %v", err)
+	}
+
+	out, _ := io.ReadAll(stdout)
+	_ = cmd.Wait()
+
+	trimmed := strings.TrimRight(string(out), "\n")
+	if trimmed == "" {
+		t.Fatalf("no stdout (subprocess may have been killed before emitting aggregate)")
+	}
+	lines := strings.Split(trimmed, "\n")
+	last := lines[len(lines)-1]
+	var sig map[string]interface{}
+	if err := json.Unmarshal([]byte(last), &sig); err != nil {
+		t.Fatalf("parse last line: %v\n%q", err, last)
+	}
+	md, _ := sig["metadata"].(map[string]interface{})
+	if md == nil {
+		t.Fatalf("aggregate Signal has no metadata: %v", sig)
+	}
+	if v, _ := md["terminated_externally"].(bool); !v {
+		t.Errorf("expected metadata.terminated_externally=true; got metadata=%v", md)
 	}
 }
 

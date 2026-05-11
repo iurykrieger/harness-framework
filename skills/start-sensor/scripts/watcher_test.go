@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/iurykrieger/harness-framework/lib/registry"
 )
 
 func TestParseAndAppendSignals(t *testing.T) {
@@ -135,6 +137,49 @@ func TestRunWatcher_StopReturnsEvenWhenReaperWaitsForLiveSubprocess(t *testing.T
 		}
 	case <-time.After(time.Second):
 		t.Fatal("runWatcher did not return within 1s after stop closed (reaper-hang regression)")
+	}
+}
+
+func TestWatcher_ResolvesEntryByRunID(t *testing.T) {
+	proj := t.TempDir()
+	r := registry.NewRoot(proj)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{SensorID: "alpha", RunID: "1-aa", Blocking: true, PID: 1111, PGID: 1111, WatcherPID: 1112, StartedAt: "2026-05-11T00:00:00Z", LogDir: r.RunDir("alpha", "1-aa")},
+		{SensorID: "alpha", RunID: "2-bb", Blocking: true, PID: 2222, PGID: 2222, WatcherPID: 2223, StartedAt: "2026-05-11T00:00:00Z", LogDir: r.RunDir("alpha", "2-bb")},
+	}}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := watcherConfig{
+		RawLog:        filepath.Join(t.TempDir(), "raw.log"),
+		SignalsLog:    filepath.Join(t.TempDir(), "signals.log"),
+		PatternsJSON:  "[]",
+		EnvelopeJSON:  `{"sensor_id":"alpha","version":"0.0.0","run_id":"2-bb","started_at":"2026-05-11T00:00:00Z"}`,
+		SubprocessPID: 2222,
+		RegistryRoot:  proj,
+		SensorID:      "alpha",
+		RunID:         "2-bb",
+	}
+	_ = os.WriteFile(cfg.RawLog, nil, 0o644)
+	_ = os.WriteFile(cfg.SignalsLog, nil, 0o644)
+
+	// Drive the reaper's exit-recording path directly (factored out for testability).
+	if err := recordSubprocessExit(registry.NewRoot(proj), "2-bb", &registry.SubprocessExit{Code: 0, ExitedAt: "2026-05-11T00:00:01Z"}); err != nil {
+		t.Fatalf("recordSubprocessExit: %v", err)
+	}
+
+	got, _ := registry.Load(registry.NewRoot(proj))
+	e := got.FindEntryByRunID("2-bb")
+	if e == nil || e.SubprocessExit == nil {
+		t.Fatalf("expected SubprocessExit on 2-bb; got %+v", e)
+	}
+	other := got.FindEntryByRunID("1-aa")
+	if other != nil && other.SubprocessExit != nil {
+		t.Errorf("SubprocessExit leaked to 1-aa: %+v", other.SubprocessExit)
 	}
 }
 

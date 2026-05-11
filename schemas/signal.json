@@ -42,7 +42,7 @@
     },
     "run_id": {
       "type": "string",
-      "description": "ULID/UUID identifying this single invocation."
+      "description": "Unique identifier of this invocation; runners may use a `<pid>-<short-uuid8>` composite or a plain UUID/ULID."
     },
     "started_at":  { "type": "string", "format": "date-time" },
     "finished_at": { "type": "string", "format": "date-time" },

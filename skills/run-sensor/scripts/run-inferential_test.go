@@ -5,11 +5,15 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
@@ -323,6 +327,72 @@ func TestRun_InferentialWithComputationalDep(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
 	if len(lines) < 2 {
 		t.Fatalf("expected at least 2 Signals (dep + inf aggregate), got %d:\n%s", len(lines), out.String())
+	}
+}
+
+// TestRunInferential_SIGTERMSetsTerminatedExternally mirrors the
+// computational SIGTERM test for the inferential runner. The runner's
+// signal handler cancels the run ctx; the inferential runner sets
+// metadata.terminated_externally on its locally-built aggregate Signal.
+func TestRunInferential_SIGTERMSetsTerminatedExternally(t *testing.T) {
+	proj := t.TempDir()
+	// Hand-roll a minimal inferential sensor with a long-running command.
+	// writeInferentialSensor's default fixture is fine — we just override
+	// the command to sleep.
+	id := writeInferentialSensor(t, proj, "infr-sleeper", "sleep 30")
+
+	// Pre-build the runner binary so we can invoke it with cwd=proj
+	// (the runner resolves the sensor against its cwd as projectRoot).
+	bin := filepath.Join(t.TempDir(), "runner-inf")
+	build := exec.Command("go", "build", "-tags=run_inferential",
+		"-o", bin, "./skills/run-sensor/scripts")
+	build.Dir = repoRootForTest(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build runner: %v\n%s", err, out)
+	}
+
+	cmd := exec.Command(bin,
+		"--schemas-dir", testfixtures.RepoSchemasDir(t),
+		"--slot", "a=x", "--slot", "b=y", id)
+	cmd.Dir = proj
+	cmd.Env = append(os.Environ(), "HARNESS_REGISTRY_ROOT="+proj)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// Give the runner time to spawn its subprocess and register the
+	// signal handler before delivering SIGTERM. The inferential runner
+	// does more setup work (schema validation, DAG resolution) before
+	// reaching the streaming subprocess phase, so it needs more time
+	// than the computational runner.
+	time.Sleep(1 * time.Second)
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("send SIGTERM: %v", err)
+	}
+
+	out, _ := io.ReadAll(stdout)
+	_ = cmd.Wait()
+
+	trimmed := strings.TrimRight(string(out), "\n")
+	if trimmed == "" {
+		t.Fatalf("no stdout (subprocess may have been killed before emitting aggregate)")
+	}
+	lines := strings.Split(trimmed, "\n")
+	last := lines[len(lines)-1]
+	var sig map[string]interface{}
+	if err := json.Unmarshal([]byte(last), &sig); err != nil {
+		t.Fatalf("parse last line: %v\n%q", err, last)
+	}
+	md, _ := sig["metadata"].(map[string]interface{})
+	if md == nil {
+		t.Fatalf("aggregate Signal has no metadata: %v", sig)
+	}
+	if v, _ := md["terminated_externally"].(bool); !v {
+		t.Errorf("expected metadata.terminated_externally=true; got metadata=%v", md)
 	}
 }
 

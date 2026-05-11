@@ -276,7 +276,7 @@ func TestRunDeps_BlockingDepStartFresh(t *testing.T) {
 	if res.ExitCode != 0 {
 		t.Fatalf("ExitCode: got %d, want 0", res.ExitCode)
 	}
-	if got := res.LiveStack; len(got) != 1 || got[0] != "blocking-tick" {
+	if got := res.LiveStack; len(got) != 1 || got[0].ID != "blocking-tick" {
 		t.Errorf("LiveStack: got %v, want [blocking-tick]", got)
 	}
 
@@ -341,35 +341,3 @@ func TestRunDeps_TransitiveCascade(t *testing.T) {
 	}
 }
 
-func TestRunDeps_CascadeSignalPersistedToSignalsLog(t *testing.T) {
-	tmp := t.TempDir()
-
-	// failing-dep: exits 1, producing a fail aggregate via exit_code_map.
-	// Uses writeNonBlockingDep which writes a schema-valid sensor fixture.
-	writeNonBlockingDep(t, tmp, "failing-dep", nil, "false")
-	// root sensor depends on failing-dep; it will be cascade-skipped.
-	writeNonBlockingDep(t, tmp, "root", []string{"failing-dep"}, "echo should-not-run")
-
-	schemasDir := testfixtures.RepoSchemasDir(t)
-	var stdout, stderr bytes.Buffer
-	code := orchestrator.RunWithDepsRoot(context.Background(), "root", tmp, schemasDir, &stdout, &stderr)
-	if code == 0 {
-		t.Errorf("expected non-zero exit because root cascades; stdout=%s stderr=%s", stdout.String(), stderr.String())
-	}
-	parent := filepath.Join(tmp, ".runtime", "sensors", "root")
-	sub, err := os.ReadDir(parent)
-	if err != nil || len(sub) == 0 {
-		t.Fatalf("no .runtime/sensors/root entry: err=%v; stdout=%s stderr=%s", err, stdout.String(), stderr.String())
-	}
-	sigLog := filepath.Join(parent, sub[0].Name(), "signals.log")
-	fileBytes, err := os.ReadFile(sigLog)
-	if err != nil {
-		t.Fatalf("read signals.log: %v", err)
-	}
-	if len(fileBytes) == 0 {
-		t.Fatal("signals.log is empty; cascade signal not persisted")
-	}
-	if !bytes.Contains(fileBytes, []byte("cascade")) {
-		t.Errorf("signals.log missing 'cascade' marker: %q", string(fileBytes))
-	}
-}

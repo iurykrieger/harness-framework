@@ -16,7 +16,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
@@ -41,11 +43,11 @@ type StreamConfig struct {
 	Stdout    io.Writer         // JSONL goes here
 	Stderr    io.Writer         // diagnostic messages (validation warnings, etc.)
 
-	// RawLogPath is optional. When non-empty, stdout+stderr of the
-	// subprocess are tee-written to this file in O_TRUNC mode (a fresh
-	// run overwrites the previous content). On write errors the streamer
-	// logs to cfg.Stderr and keeps streaming — never aborts.
-	RawLogPath string
+	// RunDir, when non-empty, points at .runtime/sensors/<id>/<run-id>/.
+	// The streamer tees subprocess stdout+stderr verbatim into <RunDir>/raw.log
+	// and appends individual + aggregate Signals to <RunDir>/signals.log.
+	// Empty preserves the legacy stdout-only behavior.
+	RunDir string
 }
 
 // StreamResult holds what the caller needs to build the aggregate Signal.
@@ -64,23 +66,63 @@ type StreamResult struct {
 	StderrExcerpt string
 }
 
-// StreamSubprocess spawns sh -c <Command>, scans merged stdout+stderr line by
-// line, emits one JSONL Signal per matching line, and returns an aggregate-
-// ready summary when the process exits or times out.
+// StreamHandle is the result of Start: a spawned subprocess whose
+// PID/PGID are known, but whose stdout/stderr haven't been drained yet.
+// The caller may set RunDir / Envelope (which control persistence and
+// signal envelope fields) before calling Run(), which drains and waits.
 //
-// It returns a non-nil error only for setup failures (missing command,
-// pipe creation). A subprocess that fails to spawn (e.g. binary not found)
-// is reported via a non-zero ExitCode, not an error.
-func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, error) {
-	if cfg.Command == "" {
-		return StreamResult{}, errors.New("stream: empty command")
-	}
-	res := StreamResult{CommandRun: cfg.Command, ExitCode: -1}
+// This two-phase split exists so the orchestrator can synthesize a
+// run_id (using the just-spawned PID) and create the <run-id>/ directory
+// BEFORE the streaming goroutines start opening raw.log / signals.log.
+type StreamHandle struct {
+	PID  int
+	PGID int
 
+	// Internal fields needed by Run()
+	cmd        *exec.Cmd
+	ctx        context.Context
+	cancel     context.CancelFunc // non-nil when TimeoutMS > 0; invoked in Run()
+	cfg        *StreamConfig      // pointer so SetRunDir/SetEnvelope can mutate
+	stdoutPipe io.Reader
+	stderrPipe io.Reader
+	startedAt  time.Time
+}
+
+// SetRunDir updates the cfg's RunDir; must be called before Run().
+func (h *StreamHandle) SetRunDir(dir string) { h.cfg.RunDir = dir }
+
+// SetEnvelope updates the cfg's Envelope; must be called before Run().
+func (h *StreamHandle) SetEnvelope(env sensor.Envelope) { h.cfg.Envelope = env }
+
+// Kill kills the subprocess group. Used by the orchestrator if mkdir or
+// registry insert fail between Start and Run.
+func (h *StreamHandle) Kill() error {
+	if h.cancel != nil {
+		h.cancel()
+	}
+	if h.cmd != nil && h.cmd.Process != nil {
+		// Kill the whole process group if available
+		if pgid, err := syscall.Getpgid(h.cmd.Process.Pid); err == nil {
+			if killErr := syscall.Kill(-pgid, syscall.SIGKILL); killErr == nil {
+				return nil
+			}
+		}
+		return h.cmd.Process.Kill()
+	}
+	return nil
+}
+
+// Start spawns sh -c <Command> and returns once cmd.Start() succeeds.
+// Drains and waits are deferred until Run() is called on the returned
+// handle. On error, no subprocess remains.
+func Start(ctx context.Context, cfg StreamConfig) (*StreamHandle, error) {
+	if cfg.Command == "" {
+		return nil, errors.New("stream: empty command")
+	}
+
+	var cancel context.CancelFunc
 	if cfg.TimeoutMS > 0 {
-		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(cfg.TimeoutMS)*time.Millisecond)
-		defer cancel()
 	}
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", cfg.Command)
@@ -91,35 +133,103 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 		}
 		cmd.Env = envList
 	}
+	// Place the subprocess in its own process group so Kill() can target
+	// the whole tree (-pgid). Mirrors what SpawnDetached does, scoped to
+	// the streaming path.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return res, fmt.Errorf("stdout pipe: %w", err)
+		if cancel != nil {
+			cancel()
+		}
+		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return res, fmt.Errorf("stderr pipe: %w", err)
-	}
-
-	start := time.Now()
-	if err := cmd.Start(); err != nil {
-		// e.g. /bin/sh missing — extremely unlikely on POSIX hosts.
-		res.ElapsedMS = int(time.Since(start) / time.Millisecond)
-		return res, fmt.Errorf("start: %w", err)
-	}
-
-	// Open the raw log file for tee-writing if requested.
-	var rawLogFile *os.File
-	var rawLogMu sync.Mutex
-	if cfg.RawLogPath != "" {
-		var openErr error
-		rawLogFile, openErr = os.OpenFile(cfg.RawLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-		if openErr != nil {
-			fmt.Fprintf(cfg.Stderr, "stream: cannot open RawLogPath %q: %v\n", cfg.RawLogPath, openErr)
-			rawLogFile = nil
-		} else {
-			defer rawLogFile.Close()
+		if cancel != nil {
+			cancel()
 		}
+		return nil, fmt.Errorf("stderr pipe: %w", err)
+	}
+
+	startedAt := time.Now()
+	if err := cmd.Start(); err != nil {
+		if cancel != nil {
+			cancel()
+		}
+		return nil, fmt.Errorf("start: %w", err)
+	}
+	pid := cmd.Process.Pid
+	pgid, perr := syscall.Getpgid(pid)
+	if perr != nil {
+		pgid = pid // Setpgid implies pgid == pid by default
+	}
+
+	cfgCopy := cfg
+	return &StreamHandle{
+		PID:        pid,
+		PGID:       pgid,
+		cmd:        cmd,
+		ctx:        ctx,
+		cancel:     cancel,
+		cfg:        &cfgCopy,
+		stdoutPipe: stdoutPipe,
+		stderrPipe: stderrPipe,
+		startedAt:  startedAt,
+	}, nil
+}
+
+// Run drains the subprocess and returns the StreamResult. Equivalent to
+// the original StreamSubprocess body from cmd.Start onward.
+func (h *StreamHandle) Run() StreamResult {
+	if h.cancel != nil {
+		defer h.cancel()
+	}
+	cfg := h.cfg
+	res := StreamResult{CommandRun: cfg.Command, ExitCode: -1}
+
+	// When RunDir is set, open raw.log in append mode so subprocess
+	// stdout+stderr lines are teed verbatim alongside the JSONL stream.
+	var rawLogF *os.File
+	if cfg.RunDir != "" {
+		f, ferr := os.OpenFile(
+			filepath.Join(cfg.RunDir, "raw.log"),
+			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644,
+		)
+		if ferr != nil {
+			// Wait for the subprocess to drain on its own to avoid leaks.
+			_ = h.cmd.Wait()
+			res.ElapsedMS = int(time.Since(h.startedAt) / time.Millisecond)
+			if h.cmd.ProcessState != nil {
+				res.ExitCode = h.cmd.ProcessState.ExitCode()
+			}
+			fmt.Fprintf(cfg.Stderr, "warning: open raw.log: %v\n", ferr)
+			return res
+		}
+		rawLogF = f
+		defer rawLogF.Close()
+	}
+
+	// When RunDir is set, open signals.log in append mode so each individual
+	// Signal emitted to stdout is also persisted to disk.
+	var signalsLogF *os.File
+	if cfg.RunDir != "" {
+		f, ferr := os.OpenFile(
+			filepath.Join(cfg.RunDir, "signals.log"),
+			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644,
+		)
+		if ferr != nil {
+			_ = h.cmd.Wait()
+			res.ElapsedMS = int(time.Since(h.startedAt) / time.Millisecond)
+			if h.cmd.ProcessState != nil {
+				res.ExitCode = h.cmd.ProcessState.ExitCode()
+			}
+			fmt.Fprintf(cfg.Stderr, "warning: open signals.log: %v\n", ferr)
+			return res
+		}
+		signalsLogF = f
+		defer signalsLogF.Close()
 	}
 
 	// Drain stdout and stderr concurrently. Each goroutine pushes matched
@@ -133,21 +243,18 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 	var wg sync.WaitGroup
 	var stderrBuf bytes.Buffer
 	var stderrMu sync.Mutex
+	var rawLogMu sync.Mutex
 	scan := func(r io.Reader, captureStderr bool) {
 		defer wg.Done()
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 64*1024), 1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
-			rawLogMu.Lock()
-			if rawLogFile != nil {
-				if _, werr := rawLogFile.WriteString(line + "\n"); werr != nil {
-					fmt.Fprintf(cfg.Stderr, "stream: raw.log write failed: %v\n", werr)
-					_ = rawLogFile.Close()
-					rawLogFile = nil
-				}
+			if rawLogF != nil {
+				rawLogMu.Lock()
+				_, _ = rawLogF.WriteString(line + "\n")
+				rawLogMu.Unlock()
 			}
-			rawLogMu.Unlock()
 			if captureStderr {
 				stderrMu.Lock()
 				if remaining := streamStderrExcerptCap - stderrBuf.Len(); remaining > 0 {
@@ -168,8 +275,8 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 		}
 	}
 	wg.Add(2)
-	go scan(stdoutPipe, false)
-	go scan(stderrPipe, true)
+	go scan(h.stdoutPipe, false)
+	go scan(h.stderrPipe, true)
 	go func() { wg.Wait(); close(emits) }()
 
 	for e := range emits {
@@ -181,19 +288,39 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 		}
 		res.Individuals = append(res.Individuals, e.sig)
 		_ = json.NewEncoder(cfg.Stdout).Encode(e.sig)
+		if signalsLogF != nil {
+			_ = json.NewEncoder(signalsLogF).Encode(e.sig)
+		}
 	}
 
-	waitErr := cmd.Wait()
-	res.ElapsedMS = int(time.Since(start) / time.Millisecond)
-	res.TimedOut = errors.Is(ctx.Err(), context.DeadlineExceeded)
-	if cmd.ProcessState != nil {
-		res.ExitCode = cmd.ProcessState.ExitCode()
+	waitErr := h.cmd.Wait()
+	res.ElapsedMS = int(time.Since(h.startedAt) / time.Millisecond)
+	res.TimedOut = errors.Is(h.ctx.Err(), context.DeadlineExceeded)
+	if h.cmd.ProcessState != nil {
+		res.ExitCode = h.cmd.ProcessState.ExitCode()
 	}
 	stderrMu.Lock()
 	res.StderrExcerpt = stderrBuf.String()
 	stderrMu.Unlock()
 	_ = waitErr
-	return res, nil
+	return res
+}
+
+// StreamSubprocess spawns sh -c <Command>, scans merged stdout+stderr line by
+// line, emits one JSONL Signal per matching line, and returns an aggregate-
+// ready summary when the process exits or times out.
+//
+// It returns a non-nil error only for setup failures (missing command,
+// pipe creation). A subprocess that fails to spawn (e.g. binary not found)
+// is reported via a non-zero ExitCode, not an error.
+//
+// Thin wrapper over Start + Run; kept for backwards compatibility.
+func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, error) {
+	h, err := Start(ctx, cfg)
+	if err != nil {
+		return StreamResult{CommandRun: cfg.Command, ExitCode: -1}, err
+	}
+	return h.Run(), nil
 }
 
 // buildIndividualSignal assembles a Signal-shaped map for one matched line.

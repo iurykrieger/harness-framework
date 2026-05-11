@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -20,9 +21,12 @@ type RunDepsResult struct {
 	// aggregate, AttachLiveDep ack, or BuildCascadeSignal for skipped deps).
 	Signals map[string]map[string]interface{}
 
-	// LiveStack is the ordered list of blocking dep ids that
-	// AttachLiveDep succeeded on. Caller iterates in reverse for detach.
-	LiveStack []string
+	// LiveStack is the ordered list of blocking dep handles that
+	// AttachLiveDep succeeded on. Each carries (ID, RunID) so detach
+	// can address the exact blocking entry we attached to, not any
+	// sibling non-blocking entry of the same sensor. Caller iterates
+	// in reverse for detach.
+	LiveStack []LiveDep
 
 	// CascadeSig is non-nil when a dep of the root produced fail/error
 	// and the root would cascade. Caller emits and detaches LiveStack.
@@ -84,14 +88,14 @@ func RunDeps(
 		execMap, _ := s.JSON["execution"].(map[string]interface{})
 		blocking, _ := execMap["blocking"].(bool)
 		if blocking {
-			depID, attachErr := AttachLiveDep(ctx, s, projectRoot, holderID, holderPID, v, stdout, stderr)
+			live, attachErr := AttachLiveDep(ctx, s, projectRoot, holderID, holderPID, v, stdout, stderr)
 			if attachErr != nil {
 				cascade := buildSimpleSignal(targetID, "error", "high", "dep_start_failed", attachErr.Error())
-				_ = emitSignalWithPersistence(cascade, stdout, projectRoot, targetID, stderr)
+				_ = json.NewEncoder(stdout).Encode(cascade)
 				res.ExitCode = 1
 				return res
 			}
-			res.LiveStack = append(res.LiveStack, depID)
+			res.LiveStack = append(res.LiveStack, live)
 			res.Signals[s.ID] = map[string]interface{}{"verdict": "pass"}
 			continue
 		}
@@ -102,7 +106,7 @@ func RunDeps(
 				res.ExitCode = 1
 				return res
 			}
-			_ = emitSignalWithPersistence(cascade, stdout, projectRoot, s.ID, stderr)
+			_ = json.NewEncoder(stdout).Encode(cascade)
 			res.Signals[s.ID] = cascade
 			continue
 		}

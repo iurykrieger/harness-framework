@@ -2,11 +2,13 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
+	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
@@ -30,6 +32,15 @@ import (
 //	     still emitted to stdout before the non-zero exit.
 //	2 — schema/io error opening the sensor or schemas.
 func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, stderr io.Writer) int {
+	return runWithDepsImpl(ctx, sensorPath, schemasDir, nil, stdout, stderr)
+}
+
+// runWithDepsImpl is the shared implementation for RunWithDeps and the
+// Root-aware paths. When root is non-nil, the target sensor is run via
+// RunOneWithRoot so the run is registered under .runtime/sensors/<id>/<run-id>/.
+// Cascade-skipped roots do NOT touch the registry — the cascade Signal
+// is emitted unchanged on stdout.
+func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *registry.Root, stdout, stderr io.Writer) int {
 	abs, err := filepath.Abs(sensorPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: abs path:", err)
@@ -60,12 +71,12 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 			schema.PrintValidationOrPlain(err, stderr)
 			return 1
 		}
-		_ = emitSignalWithPersistence(pre.CascadeSig, stdout, projectRoot, rootID, stderr)
+		_ = json.NewEncoder(stdout).Encode(pre.CascadeSig)
 		return 1
 	}
 
 	target := pre.Order[len(pre.Order)-1]
-	_, code = RunOne(ctx, target, schemasDir, v, stdout, stderr)
+	_, code = RunOneWithRoot(ctx, target, schemasDir, v, root, stdout, stderr)
 	return code
 }
 
