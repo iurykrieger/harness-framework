@@ -4,6 +4,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -191,5 +193,114 @@ func TestNormalize(t *testing.T) {
 				t.Fatalf("in=%q: got %q want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func loadFixture(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", name, err)
+	}
+	return string(b)
+}
+
+func TestClassify_CompileError(t *testing.T) {
+	stderr := loadFixture(t, "compile_error.txt")
+	evt := classify("", stderr, 2)
+	if evt == nil {
+		t.Fatal("expected non-nil event")
+	}
+	if evt.Type != "compile_error" {
+		t.Fatalf("Type=%q want compile_error", evt.Type)
+	}
+	if evt.Pkg != "github.com/iurykrieger/harness-framework/lib/sensor" {
+		t.Fatalf("Pkg=%q", evt.Pkg)
+	}
+	if evt.File != "lib/sensor/load.go" {
+		t.Fatalf("File=%q want lib/sensor/load.go", evt.File)
+	}
+	if !strings.Contains(evt.Summary, "undefined: ResolveSensorPath") {
+		t.Fatalf("Summary=%q", evt.Summary)
+	}
+}
+
+func TestClassify_PanicRuntime(t *testing.T) {
+	combined := loadFixture(t, "panic_runtime_nil_deref.txt")
+	evt := classify("", combined, 2)
+	if evt == nil {
+		t.Fatal("expected non-nil event")
+	}
+	if evt.Type != "panic" {
+		t.Fatalf("Type=%q want panic", evt.Type)
+	}
+	if !strings.Contains(evt.Summary, "nil pointer dereference") {
+		t.Fatalf("Summary=%q", evt.Summary)
+	}
+	if !strings.Contains(evt.FrameworkFrame, "lib/registry/root.go:151") {
+		t.Fatalf("FrameworkFrame=%q", evt.FrameworkFrame)
+	}
+}
+
+func TestClassify_PanicLibRegistry(t *testing.T) {
+	combined := loadFixture(t, "panic_stack_lib_registry.txt")
+	evt := classify("", combined, 2)
+	if evt == nil || evt.Type != "panic" {
+		t.Fatalf("expected panic; got %+v", evt)
+	}
+	if !strings.Contains(evt.FrameworkFrame, "lib/registry/lock.go") {
+		t.Fatalf("FrameworkFrame=%q", evt.FrameworkFrame)
+	}
+}
+
+func TestClassify_SignalError(t *testing.T) {
+	stdout := loadFixture(t, "signal_error_start_failed.jsonl")
+	evt := classify(stdout, "", 1)
+	if evt == nil || evt.Type != "signal_error" {
+		t.Fatalf("expected signal_error; got %+v", evt)
+	}
+	if evt.MetadataKind != "start_failed" {
+		t.Fatalf("MetadataKind=%q", evt.MetadataKind)
+	}
+	if !strings.Contains(evt.Summary, "start_failed") {
+		t.Fatalf("Summary=%q", evt.Summary)
+	}
+	if !strings.Contains(evt.Summary, "fork/exec /tmp/watcher") {
+		t.Fatalf("Summary=%q", evt.Summary)
+	}
+}
+
+func TestClassify_ExitNonzero(t *testing.T) {
+	stderr := loadFixture(t, "exit_nonzero_no_match.txt")
+	evt := classify("", stderr, 1)
+	if evt == nil || evt.Type != "exit_nonzero" {
+		t.Fatalf("expected exit_nonzero; got %+v", evt)
+	}
+	if !strings.Contains(evt.Summary, "cannot find main module") {
+		t.Fatalf("Summary=%q", evt.Summary)
+	}
+}
+
+func TestClassify_NoMatch_ReturnsNil(t *testing.T) {
+	if got := classify("hello\n", "", 0); got != nil {
+		t.Fatalf("expected nil for clean exit, got %+v", got)
+	}
+	if got := classify("hello\n", "warning: deprecated\n", 0); got != nil {
+		t.Fatalf("expected nil for warn on stderr with exit 0, got %+v", got)
+	}
+}
+
+func TestClassify_SignalError_VerdictFailIgnored(t *testing.T) {
+	// A verdict=fail Signal is a legitimate sensor failure, NOT a framework bug.
+	stdout := `{"verdict":"fail","metadata":{"kind":"aggregate"}}` + "\n"
+	if got := classify(stdout, "", 1); got != nil {
+		t.Fatalf("verdict=fail must not classify as framework bug; got %+v", got)
+	}
+}
+
+func TestClassify_SignalError_NonAllowlistedKindIgnored(t *testing.T) {
+	stdout := `{"verdict":"error","metadata":{"kind":"some_other_kind"}}` + "\n"
+	if got := classify(stdout, "", 1); got != nil {
+		t.Fatalf("non-allowlisted kind must not classify; got %+v", got)
 	}
 }

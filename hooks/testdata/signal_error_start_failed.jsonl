@@ -1,0 +1,1 @@
+{"verdict":"error","severity":"high","metadata":{"kind":"start_failed","sensor_id":"run-api-local"},"evidence":[{"rationale":"write registry: start watcher: fork/exec /tmp/watcher: no such file or directory"}]}

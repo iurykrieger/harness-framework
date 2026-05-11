@@ -24,6 +24,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -207,4 +208,168 @@ func killSwitchEnabled() bool {
 	default:
 		return false
 	}
+}
+
+// signalErrorAllowedKinds restricts signal_error classification to
+// framework-internal failure modes. fail/warn verdicts are legitimate
+// sensor detections and are excluded entirely.
+var signalErrorAllowedKinds = map[string]struct{}{
+	"start_failed":            {},
+	"runner_internal_error":   {},
+	"schema_validation_error": {},
+	"slot_error":              {},
+}
+
+var (
+	reCompileError = regexp.MustCompile(`(?m)^# (\S+)\n(\S+?):(\d+):\d+:\s*(.+)$`)
+	rePanic        = regexp.MustCompile(`(?m)^(panic:|runtime error:)\s*(.+)$`)
+	reGoroutine    = regexp.MustCompile(`(?m)^goroutine \d+ \[running\]:`)
+	reFrameFile    = regexp.MustCompile(`(?m)^\t(/\S+\.go):(\d+)\b`)
+)
+
+// tailBytes returns the last n bytes of s (or all of s when shorter).
+func tailBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
+}
+
+// classify inspects stdout, stderr, and exitCode and returns a
+// classifiedEvent (or nil when none of the four rules match).
+func classify(stdout, stderr string, exitCode int) *classifiedEvent {
+	stdoutTail := tailBytes(stdout, classifierScanWindow)
+	stderrTail := tailBytes(stderr, classifierScanWindow)
+	combined := stdoutTail + "\n" + stderrTail
+
+	// Rule 1: compile_error (stderr only)
+	if m := reCompileError.FindStringSubmatch(stderrTail); m != nil {
+		summary := truncate(fmt.Sprintf("%s:%s: %s", m[2], m[3], m[4]), 120)
+		return &classifiedEvent{
+			Type:    "compile_error",
+			Summary: summary,
+			Pkg:     m[1],
+			File:    m[2],
+		}
+	}
+
+	// Rule 2: panic with goroutine frame within 5 lines
+	if m := rePanic.FindStringSubmatchIndex(combined); m != nil {
+		// Look for "goroutine N [running]:" within ~5 lines after the panic line.
+		after := combined[m[1]:] // text after the panic line
+		gIdx := reGoroutine.FindStringIndex(after)
+		if gIdx != nil && linesBetween(after[:gIdx[0]]) <= 5 {
+			panicLine := combined[m[2]:m[3]] // "panic:" or "runtime error:"
+			msg := strings.TrimSpace(combined[m[4]:m[5]])
+			summary := truncate(panicLine+" "+msg, 120)
+			framework := extractFrameworkFrame(combined[m[1]:])
+			return &classifiedEvent{
+				Type:           "panic",
+				Summary:        summary,
+				FrameworkFrame: framework,
+			}
+		}
+	}
+
+	// Rule 3: signal_error on the last JSONL line of stdout
+	if last := lastJSONLine(stdoutTail); last != "" {
+		var sig struct {
+			Verdict  string `json:"verdict"`
+			Metadata struct {
+				Kind string `json:"kind"`
+			} `json:"metadata"`
+			Evidence []struct {
+				Rationale string `json:"rationale"`
+			} `json:"evidence"`
+		}
+		if err := json.Unmarshal([]byte(last), &sig); err == nil {
+			if sig.Verdict == "error" {
+				if _, ok := signalErrorAllowedKinds[sig.Metadata.Kind]; ok {
+					rationale := ""
+					if len(sig.Evidence) > 0 {
+						rationale = sig.Evidence[0].Rationale
+					}
+					summary := truncate(fmt.Sprintf("%s · %s", sig.Metadata.Kind, rationale), 120)
+					return &classifiedEvent{
+						Type:         "signal_error",
+						Summary:      summary,
+						MetadataKind: sig.Metadata.Kind,
+					}
+				}
+			}
+		}
+	}
+
+	// Rule 4: exit_nonzero, stderr non-empty, nothing else matched
+	if exitCode != 0 && strings.TrimSpace(stderrTail) != "" {
+		first := firstNonBlankLine(stderrTail)
+		return &classifiedEvent{
+			Type:    "exit_nonzero",
+			Summary: truncate(first, 120),
+		}
+	}
+
+	return nil
+}
+
+// truncate cuts s to at most n runes and appends "…" when truncated.
+func truncate(s string, n int) string {
+	rs := []rune(s)
+	if len(rs) <= n {
+		return s
+	}
+	return string(rs[:n-1]) + "…"
+}
+
+// linesBetween counts the number of newline characters in s.
+func linesBetween(s string) int { return strings.Count(s, "\n") }
+
+// firstNonBlankLine returns the first non-empty line of s.
+func firstNonBlankLine(s string) string {
+	scanner := bufio.NewScanner(strings.NewReader(s))
+	for scanner.Scan() {
+		line := strings.TrimRight(scanner.Text(), " \t")
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// lastJSONLine returns the last non-empty line of s if it looks like a
+// JSON object (starts with '{'). Otherwise returns "".
+func lastJSONLine(s string) string {
+	scanner := bufio.NewScanner(strings.NewReader(s))
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var last string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			last = line
+		}
+	}
+	if strings.HasPrefix(last, "{") {
+		return last
+	}
+	return ""
+}
+
+// extractFrameworkFrame scans stack-trace lines after a panic and
+// returns the first file:line frame under
+// github.com/iurykrieger/harness-framework. Returns "" if none found.
+func extractFrameworkFrame(stack string) string {
+	scanner := bufio.NewScanner(strings.NewReader(stack))
+	for scanner.Scan() {
+		line := scanner.Text()
+		m := reFrameFile.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		path := m[1]
+		if idx := strings.Index(path, "harness-framework/"); idx >= 0 {
+			rel := path[idx+len("harness-framework/"):]
+			return rel + ":" + m[2]
+		}
+	}
+	return ""
 }
