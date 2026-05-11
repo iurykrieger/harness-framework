@@ -1,6 +1,6 @@
 ---
 name: start-sensor
-description: Use when the user invokes /start-sensor or asks to bring a blocking sensor (one whose command does not terminate on its own) up for observation. Takes a `<sensor.id>` argument and resolves it to `sensors/<id>.json`. Validates the sensor against schemas/sensor.json, requires `execution.blocking: true`, runs `execution.prepare[]` fail-fast, spawns the command detached (Setsid, redirected stdout/stderr to .runtime/sensors/<id>/raw.log), spawns a watcher binary that tails raw.log and emits parsed Signals to .runtime/sensors/<id>/signals.log, and writes an entry into .runtime/sensors/running_sensors.json with `held_by: [{kind: "manual", attached_at: ...}]`. Emits a Signal `verdict=pass`, `metadata.kind=started`. Singleton: rejects with `start_rejected` if the sensor already has a live registry entry.
+description: Use when the user invokes /start-sensor or asks to bring a blocking sensor (one whose command does not terminate on its own) up for observation. Takes a `<sensor.id>` argument and resolves it to `sensors/<id>.json`. Validates the sensor against schemas/sensor.json, requires `execution.blocking: true`, resolves dep graph and brings deps up, runs `execution.prepare[]` fail-fast, spawns the command detached (Setsid, redirected stdout/stderr to .runtime/sensors/<id>/raw.log), spawns a watcher binary that tails raw.log and emits parsed Signals to .runtime/sensors/<id>/signals.log, and writes an entry into .runtime/sensors/running_sensors.json with `held_by: [{kind: "manual", attached_at: ...}]`. Emits a Signal `verdict=pass`, `metadata.kind=started`. Singleton: rejects with `rejected` if the sensor already has a live registry entry.
 ---
 
 # start-sensor
@@ -21,19 +21,31 @@ The argument must be the sensor's id (lowercase letters/digits/dashes, starting 
 go run -tags=start_sensor ./skills/start-sensor/scripts <sensor.id>
 ```
 
-The script does everything: schema validation, prepare lifecycle, fork+exec the command detached, watcher spawn, registry write, started Signal emission. Pass its stdout through to the caller.
+The script does everything: schema validation, dep graph resolution, prepare lifecycle, fork+exec the command detached, watcher spawn, registry write, started Signal emission. Pass its stdout through to the caller.
 
 ## Output contract
 
-A single Signal on stdout. `metadata.kind` is one of:
+Stdout is JSONL. Multiple Signals can be emitted in order:
 
-- `started` — the subprocess and watcher are up; the sensor is now alive in the registry. Signal verdict is `pass`. `metadata.next_cursor` is `0` so the agent can begin tailing immediately.
-- `start_rejected` — already running; existing run is referenced in evidence. `verdict=error`.
-- `start_failed` — schema invalid, prepare step failed, fork failed, or registry write failed. `verdict=error`.
+1. Aggregates of `kind=setup` or non-blocking deps that ran via `RunOne` (`metadata.kind=aggregate`).
+2. Acks of blocking deps that the orchestrator brought up (`metadata.kind` ∈ {`dep_attached`, `dep_started`}).
+3. Cascade signals for intermediate deps that were skipped because their own dep failed (`metadata.kind=cascade`).
+4. **Exactly one** terminal Signal whose `metadata.kind` is one of:
+   - `started` — subprocess and watcher are up; the sensor is now alive in the registry. `verdict=pass`. `metadata.next_cursor=0`. Carries `metadata.lifecycle.prepare`, `metadata.dep_chain`, `metadata.rebind_warnings` (omitted when empty).
+   - `rejected` — already running (singleton check failed). `verdict=error`. `metadata.existing_pid` carries the live entry's pid.
+   - `failed` — anything else preventing a `started` signal. `verdict=error`. `metadata.cause` discriminates: `dep_cascade`, `prepare_failed`, `spawn_failed`, `watcher_spawn_failed`, `registry_write_failed`, `schema_invalid`, `resolve_failed`, `preflight_failed`, `not_blocking`, `bootstrap_failed`. The `dep_cascade` cause carries `failed_dep_id`/`failed_dep_run_id`/`failed_dep_verdict`/`failed_dep_severity` from the failed dep's signal.
 
 ## Lifecycle integration
 
-Other sensors may declare a blocking sensor in `depends_on`. When `/run-sensor` is invoked for such a dependent, the orchestrator will start (or attach to) the blocking dep automatically using the same primitives this skill exposes — you do not need to invoke `/start-sensor` manually for that case. Use `/start-sensor` directly when:
+When the target sensor declares `depends_on`, `/start-sensor` resolves the dep graph and brings deps up before spawning the target:
+
+- Setup or non-blocking deps run via `RunOne` (their command terminates; the result PASS or FAIL).
+- Blocking deps come up via `AttachLiveDep` — if the dep is already alive in the registry, `/start-sensor` adds a holder; otherwise the dep is started fresh.
+- The target's `execution.prepare[]` runs fail-fast after deps are up but before the target subprocess spawns.
+- After the target subprocess is spawned, dep holder pids are rebound from `/start-sensor`'s pid to the target subprocess pid, so `/list-sensors` and `/stop-sensor` see a holder that mirrors the target's lifetime.
+- On any failure (cascade, prepare fail, spawn fail, watcher fail, registry write fail), every blocking dep we attached this run is detached in reverse order. If the detach drops a dep's last holder, the dep is stopped (SIGTERM/SIGKILL). State is left as before `/start-sensor` ran.
+
+Use `/start-sensor` directly when:
 
 - The blocking sensor is the observation target itself (e.g., the agent wants to watch logs while doing other work in parallel).
 - The agent needs to interact with the live process (curl, edit, observe) without an immediately-dependent sensor driving the workflow.

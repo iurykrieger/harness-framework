@@ -1,6 +1,6 @@
 ---
 name: stop-sensor
-description: Use when the user invokes /stop-sensor or asks to bring down a previously-started blocking sensor. Takes `<sensor.id>` and an optional `--reap-dead-holders` flag. Idempotent: stopping a sensor that is not running emits a warn Signal and exits 0. Otherwise removes the user's `kind=manual` hold, refuses with `stop_held` if any sensor still holds the run, or proceeds with SIGTERM → wait `execution.graceful_timeout_ms` → SIGKILL on the subprocess group, then signals the watcher to drain, reads signals.log, and emits the aggregate Signal. Removes the entry from `.runtime/sensors/running_sensors.json` on success.
+description: Use when the user invokes /stop-sensor or asks to bring down a previously-started blocking sensor. Takes `<sensor.id>` and an optional `--reap-dead-holders` flag. Idempotent: stopping a sensor that is not running emits a warn Signal and exits 0. Otherwise removes the user's `kind=manual` hold, refuses with `held` if any sensor still holds the run, or proceeds with SIGTERM → wait `execution.graceful_timeout_ms` → SIGKILL on the subprocess group, then signals the watcher to drain, reads signals.log, and emits the aggregate Signal. Removes the entry from `.runtime/sensors/running_sensors.json` on success.
 ---
 
 # stop-sensor
@@ -21,16 +21,16 @@ go run -tags=stop_sensor ./skills/stop-sensor/scripts <sensor.id> [--reap-dead-h
 
 ## When to use --reap-dead-holders
 
-If `/list-sensors` shows the sensor with `held_by` entries whose `pid_alive=false`, the holder process (typically a crashed orchestrator running a dependent sensor) leaked the hold. Pass `--reap-dead-holders` to drop those entries before evaluating whether the sensor is still held. The aggregate Signal carries `metadata.reaped_holders` listing what was removed.
+If `/list-sensors` shows the sensor with `held_by` entries whose `pid_alive=false` — or the `held` signal carries a non-empty `metadata.dead_holders` — the holder process (typically a crashed orchestrator running a dependent sensor, or a `/start-sensor` that was SIGKILL'd between attach and rebind) leaked the hold. Pass `--reap-dead-holders` to drop those entries before evaluating whether the sensor is still held. The aggregate Signal carries `metadata.reaped_holders` listing what was removed.
 
 ## Output contract
 
 A single aggregate Signal on stdout. `metadata.kind` is one of:
 
-- `aggregate` — the subprocess and watcher were brought down cleanly. `verdict` is the worst-of-stream and exit-side per signal.Aggregate.
-- `stop_not_running` — no live entry; warn.
-- `stop_held` / `stop_held_with_dead_holders` — other holders remain; warn. Process not stopped.
-- `stop_failed` — registry I/O failed; error.
+- `aggregate` — the subprocess and watcher were brought down cleanly. `verdict` is the worst-of-stream and exit-side per `signal.Aggregate`.
+- `not_running` — no live entry; `verdict=warn`.
+- `held` — other holders remain. `verdict=warn`. `metadata.holders` lists remaining holders; `metadata.dead_holders` is the subset whose pid is no longer alive (empty when none). Process not stopped.
+- `failed` — registry I/O failed. `verdict=error`.
 
 ## Notes
 

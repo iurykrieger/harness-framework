@@ -1,0 +1,140 @@
+package orchestrator
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"path/filepath"
+
+	"github.com/iurykrieger/harness-framework/lib/schema"
+)
+
+// RunDepsResult carries the post-pre-flight state for the caller to
+// decide the root's fate.
+type RunDepsResult struct {
+	// Order is the topo-sorted DAG (root last). Always populated when
+	// ExitCode==0.
+	Order []Sensor
+
+	// Signals maps non-root sensor id → its emitted signal (RunOne
+	// aggregate, AttachLiveDep ack, or BuildCascadeSignal for skipped deps).
+	Signals map[string]map[string]interface{}
+
+	// LiveStack is the ordered list of blocking dep ids that
+	// AttachLiveDep succeeded on. Caller iterates in reverse for detach.
+	LiveStack []string
+
+	// CascadeSig is non-nil when a dep of the root produced fail/error
+	// and the root would cascade. Caller emits and detaches LiveStack.
+	CascadeSig map[string]interface{}
+
+	// ExitCode: 0 ok, 1 DAG/schema failure, 2 io error.
+	ExitCode int
+}
+
+// RunDeps resolves targetID's depends_on graph, validates every sensor
+// against schemas/sensor.json, and iterates topologically — emitting
+// per-dep aggregate (non-blocking via RunOne) or attach acks (blocking
+// via AttachLiveDep). Cascade signals for intermediate deps are emitted
+// on stdout during the loop. The root is NOT processed; caller handles
+// it.
+//
+// Intermediate cascade: a non-blocking dep whose own dep failed gets a
+// cascade signal emitted in stdout (metadata.kind=cascade), recorded in
+// Signals, and processing continues. The cascade chain propagates: any
+// dependent of the cascade-marked dep also cascades.
+//
+// Root cascade: when iteration finishes, if FirstFailedDep returns
+// non-nil for the root sensor, BuildCascadeSignal is built but NOT
+// emitted — returned in CascadeSig so the caller can wrap it (e.g.
+// /start-sensor translates it to a `failed` signal with
+// metadata.cause=dep_cascade).
+func RunDeps(
+	ctx context.Context,
+	targetID, projectRoot, schemasDir, holderID string,
+	holderPID int,
+	v *schema.Validator,
+	stdout, stderr io.Writer,
+) *RunDepsResult {
+	res := &RunDepsResult{
+		Signals: map[string]map[string]interface{}{},
+	}
+
+	sensorsDir := filepath.Join(projectRoot, "sensors")
+	order, err := Resolve(targetID, sensorsDir)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+		res.ExitCode = 1
+		return res
+	}
+	res.Order = order
+
+	for _, s := range order {
+		if err := v.Validate(schema.TargetSensor, s.JSON); err != nil {
+			schema.PrintValidationOrPlain(err, stderr)
+			res.ExitCode = 1
+			return res
+		}
+	}
+
+	for _, s := range order {
+		if s.ID == targetID {
+			continue
+		}
+		execMap, _ := s.JSON["execution"].(map[string]interface{})
+		blocking, _ := execMap["blocking"].(bool)
+		if blocking {
+			depID, attachErr := AttachLiveDep(ctx, s, projectRoot, holderID, holderPID, v, stdout, stderr)
+			if attachErr != nil {
+				cascade := buildSimpleSignal(targetID, "error", "high", "dep_start_failed", attachErr.Error())
+				_ = json.NewEncoder(stdout).Encode(cascade)
+				res.ExitCode = 1
+				return res
+			}
+			res.LiveStack = append(res.LiveStack, depID)
+			res.Signals[s.ID] = map[string]interface{}{"verdict": "pass"}
+			continue
+		}
+		if blocker := FirstFailedDep(s, res.Signals); blocker != nil {
+			cascade := BuildCascadeSignal(s, blocker)
+			if err := v.Validate(schema.TargetSignal, cascade); err != nil {
+				schema.PrintValidationOrPlain(err, stderr)
+				res.ExitCode = 1
+				return res
+			}
+			_ = json.NewEncoder(stdout).Encode(cascade)
+			res.Signals[s.ID] = cascade
+			continue
+		}
+		sig, sigCode := RunOne(ctx, s, schemasDir, v, stdout, stderr)
+		if sigCode != 0 {
+			res.ExitCode = sigCode
+			return res
+		}
+		res.Signals[s.ID] = sig
+	}
+
+	rootSensor := order[len(order)-1]
+	if blocker := FirstFailedDep(rootSensor, res.Signals); blocker != nil {
+		res.CascadeSig = BuildCascadeSignal(rootSensor, blocker)
+	}
+	return res
+}
+
+// RunPreparePhase runs sensor.execution.prepare[] fail-fast. Returns the
+// per-step results (shaped for inclusion in metadata.lifecycle.prepare)
+// and a bool indicating whether the phase failed (first non-pass step
+// triggers fail-fast).
+//
+// Extracted from lifecycle.go::runLifecyclePhase("prepare", failFast=true)
+// so callers that need only the prepare phase (notably /start-sensor
+// before its detached spawn) can run it without paying for command +
+// teardown.
+func RunPreparePhase(ctx context.Context, target Sensor, defaultTimeoutMS int) (results []interface{}, failed bool) {
+	execMap, _ := target.JSON["execution"].(map[string]interface{})
+	if execMap == nil {
+		return nil, false
+	}
+	return runLifecyclePhase(ctx, execMap, "prepare", defaultTimeoutMS, true)
+}
