@@ -62,9 +62,17 @@ func Load(r Root) (RunningSensors, error) {
 	return rs, nil
 }
 
-// Save writes running_sensors.json atomically (temp + rename). The
-// caller is expected to be holding the registry flock.
+// Save writes running_sensors.json atomically (temp + rename). Each
+// entry is validated via ValidateEntry before any bytes are written;
+// the first invalid entry causes Save to return *InvalidEntryError
+// without touching the file. The caller is expected to be holding the
+// registry flock.
 func Save(r Root, rs RunningSensors) error {
+	for _, e := range rs.Entries {
+		if err := ValidateEntry(e); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
 		return fmt.Errorf("mkdir sensors dir: %w", err)
 	}
@@ -127,4 +135,25 @@ func LoadOrEmpty(r Root) (RunningSensors, bool, error) {
 		rs.Version = 1
 	}
 	return rs, true, nil
+}
+
+// LoadSanitized loads running_sensors.json, applies SanitizeAll, and
+// best-effort re-persists when any mutation occurred. Returns the
+// sanitized in-memory state plus the migration reports so callers can
+// surface a warn Signal.
+//
+// A failure to re-Save the sanitized state is silenced: the in-memory
+// state is still correct, persistence retries on the next invocation.
+// A Load failure (parse error, I/O error) returns (zero, nil, err)
+// untouched.
+func LoadSanitized(r Root) (RunningSensors, []SanitizeReport, error) {
+	rs, err := Load(r)
+	if err != nil {
+		return rs, nil, err
+	}
+	reports := SanitizeAll(&rs)
+	if len(reports) > 0 {
+		_ = WithFileLock(r.LockFile(), func() error { return Save(r, rs) })
+	}
+	return rs, reports, nil
 }
