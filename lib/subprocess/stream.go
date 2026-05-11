@@ -139,15 +139,15 @@ func StreamSubprocess(ctx context.Context, cfg StreamConfig) (StreamResult, erro
 		sc.Buffer(make([]byte, 64*1024), 1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
+			rawLogMu.Lock()
 			if rawLogFile != nil {
-				rawLogMu.Lock()
 				if _, werr := rawLogFile.WriteString(line + "\n"); werr != nil {
 					fmt.Fprintf(cfg.Stderr, "stream: raw.log write failed: %v\n", werr)
 					_ = rawLogFile.Close()
 					rawLogFile = nil
 				}
-				rawLogMu.Unlock()
 			}
+			rawLogMu.Unlock()
 			if captureStderr {
 				stderrMu.Lock()
 				if remaining := streamStderrExcerptCap - stderrBuf.Len(); remaining > 0 {
