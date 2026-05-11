@@ -62,9 +62,17 @@ func Load(r Root) (RunningSensors, error) {
 	return rs, nil
 }
 
-// Save writes running_sensors.json atomically (temp + rename). The
-// caller is expected to be holding the registry flock.
+// Save writes running_sensors.json atomically (temp + rename). Each
+// entry is validated via ValidateEntry before any bytes are written;
+// the first invalid entry causes Save to return *InvalidEntryError
+// without touching the file. The caller is expected to be holding the
+// registry flock.
 func Save(r Root, rs RunningSensors) error {
+	for _, e := range rs.Entries {
+		if err := ValidateEntry(e); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
 		return fmt.Errorf("mkdir sensors dir: %w", err)
 	}

@@ -1,6 +1,7 @@
 package registry_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -131,7 +132,7 @@ func TestLoadOrEmpty_FilePresentWithEntries(t *testing.T) {
 	want := registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "loop", PID: 1234, StartedAt: "2026-05-10T00:00:00Z"},
+			{SensorID: "loop", PID: 1234, PGID: 1234, StartedAt: "2026-05-10T00:00:00Z"},
 		},
 	}
 	if err := registry.Save(r, want); err != nil {
@@ -146,6 +147,41 @@ func TestLoadOrEmpty_FilePresentWithEntries(t *testing.T) {
 	}
 	if !reflect.DeepEqual(want, rs) {
 		t.Fatalf("state mismatch\nwant %+v\ngot  %+v", want, rs)
+	}
+}
+
+func TestSave_RejectsInvalidEntry(t *testing.T) {
+	dir := t.TempDir()
+	r := registry.NewRoot(dir)
+
+	rs := registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{
+			{
+				SensorID:   "bad",
+				PID:        1234,
+				PGID:       1234,
+				WatcherPID: -1, // invalid
+				StartedAt:  "t",
+				Command:    "c",
+				LogDir:     "d",
+				HeldBy:     []registry.HeldByEntry{{Kind: "manual", AttachedAt: "t"}},
+			},
+		},
+	}
+	err := registry.Save(r, rs)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var ie *registry.InvalidEntryError
+	if !errors.As(err, &ie) {
+		t.Fatalf("expected *InvalidEntryError, got %T: %v", err, err)
+	}
+	if ie.Field != "watcher_pid" || ie.SensorID != "bad" {
+		t.Errorf("got field=%q sensor=%q, want watcher_pid/bad", ie.Field, ie.SensorID)
+	}
+	if _, statErr := os.Stat(r.RegistryFile()); statErr == nil {
+		t.Errorf("registry file should NOT exist after rejected Save")
 	}
 }
 

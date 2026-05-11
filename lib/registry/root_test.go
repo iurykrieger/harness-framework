@@ -209,7 +209,7 @@ func TestLookup_FilePresentWithEntries(t *testing.T) {
 	want := registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "loop", PID: 1234, StartedAt: "2026-05-10T00:00:00Z"},
+			{SensorID: "loop", PID: 1234, PGID: 1234, StartedAt: "2026-05-10T00:00:00Z"},
 		},
 	}
 	if err := registry.Save(r, want); err != nil {
