@@ -26,12 +26,20 @@ import (
 )
 
 func main() {
-	root, err := os.Getwd()
+	startDir, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "start: cwd:", err)
 		os.Exit(2)
 	}
-	exit, sig := runStart(root, os.Args[1:])
+	res, reports, err := registry.LookupSanitized(startDir)
+	if err != nil {
+		_ = json.NewEncoder(os.Stdout).Encode(registry.DiscoveryErrorSignal(err, ""))
+		os.Exit(1)
+	}
+	if len(reports) > 0 {
+		_ = json.NewEncoder(os.Stdout).Encode(registry.RegistryMigratedSignal(res, reports, "start-sensor"))
+	}
+	exit, sig := runStart(res.ProjectRoot, os.Args[1:])
 	if sig != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(sig)
 	}
@@ -198,6 +206,11 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		patternsJSON, _ := json.Marshal(patterns)
 		envelopeJSON, _ := json.Marshal(envelope)
 
+		watcherLogPath := filepath.Join(r.SensorDir(id), "watcher.log")
+		watcherLogFile, err := os.OpenFile(watcherLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			return fmt.Errorf("open watcher.log: %w", err)
+		}
 		watcherProc, err := os.StartProcess(watcherPath, []string{watcherPath}, &os.ProcAttr{
 			Env: []string{
 				fmt.Sprintf("HARNESS_WATCHER_RAW=%s", r.RawLog(id)),
@@ -208,7 +221,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 				fmt.Sprintf("HARNESS_WATCHER_REGISTRY_ROOT=%s", projectRoot),
 				fmt.Sprintf("HARNESS_WATCHER_SENSOR_ID=%s", id),
 			},
-			Files: []*os.File{nil, nil, nil},
+			Files: []*os.File{nil, nil, watcherLogFile},
 			Sys:   &watcherSysProcAttr,
 		})
 		if err != nil {
@@ -216,6 +229,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 			if det.PGID > 0 {
 				_ = killGroup(det.PGID)
 			}
+			_ = watcherLogFile.Close()
 			return fmt.Errorf("start watcher: %w", err)
 		}
 		// Capture the watcher pid BEFORE Release() — on Unix, Release
@@ -223,6 +237,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		// PID non-negativity invariant when Save validates the entry.
 		watcherPID := watcherProc.Pid
 		_ = watcherProc.Release()
+		_ = watcherLogFile.Close() // parent's handle; child keeps its own fd open.
 
 		rs.RemoveEntry(id)
 		rs.Entries = append(rs.Entries, registry.RunningSensorEntry{
