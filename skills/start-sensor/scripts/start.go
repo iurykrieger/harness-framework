@@ -175,7 +175,7 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 		if err != nil {
 			return fmt.Errorf("load registry: %w", err)
 		}
-		if existing := rs.FindEntry(id); existing != nil && registry.IsPIDAlive(existing.PID) {
+		if existing := rs.FindBlockingEntry(id); existing != nil && registry.IsPIDAlive(existing.PID) {
 			alreadyRunning = true
 			alreadyRunningPID = existing.PID
 			return nil
@@ -293,7 +293,9 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 		_ = watcherProc.Release()
 		_ = watcherLogFile.Close() // parent's handle; child keeps its own fd open.
 
-		rs.RemoveEntry(id)
+		if stale := rs.FindBlockingEntry(id); stale != nil {
+			rs.RemoveEntryByRunID(stale.RunID)
+		}
 		rs.Entries = append(rs.Entries, registry.RunningSensorEntry{
 			SensorID:   id,
 			RunID:      runID,

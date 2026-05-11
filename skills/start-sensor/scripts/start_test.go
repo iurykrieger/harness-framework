@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"syscall"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
@@ -125,7 +126,7 @@ func TestStart_RejectsAlreadyRunning(t *testing.T) {
 	if err := registry.Save(r, registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "loop", PID: registry.SelfPID(), PGID: registry.SelfPID(), HeldBy: []registry.HeldByEntry{{Kind: "manual"}}},
+			{SensorID: "loop", Blocking: true, PID: registry.SelfPID(), PGID: registry.SelfPID(), HeldBy: []registry.HeldByEntry{{Kind: "manual"}}},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -619,5 +620,39 @@ func TestStart_WritesNewRunIDLayout(t *testing.T) {
 	wantLogDir := filepath.Join(".runtime", "sensors", "longrun", runID)
 	if entry.LogDir != wantLogDir {
 		t.Errorf("entry.LogDir: got %q, want %q", entry.LogDir, wantLogDir)
+	}
+}
+
+func TestStart_AllowsStartWhenOnlyNonBlockingEntryExists(t *testing.T) {
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureSensor(t, proj, "shared", blockingFixtureBody())
+
+	// Pre-seed a NON-blocking entry of the same sensor; it must NOT block /start-sensor.
+	r := registry.NewRoot(proj)
+	_ = os.MkdirAll(r.SensorsDir(), 0o755)
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{{
+		SensorID: "shared", RunID: "999-runX", Blocking: false,
+		PID: os.Getpid(), PGID: os.Getpid(), StartedAt: "2026-05-11T00:00:00Z",
+	}}}
+	_ = registry.Save(r, rs)
+
+	exit, sig := runStart(testResult(proj), []string{"shared"})
+	if exit != 0 {
+		t.Fatalf("exit=%d, sig=%+v", exit, sig)
+	}
+	md, _ := sig["metadata"].(map[string]interface{})
+	if md["kind"] != "started" {
+		t.Errorf("expected started, got %v", md["kind"])
+	}
+
+	// cleanup
+	after, _ := registry.Load(r)
+	for _, e := range after.Entries {
+		if e.Blocking {
+			_ = syscall.Kill(-e.PGID, syscall.SIGKILL)
+		}
 	}
 }
