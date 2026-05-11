@@ -42,7 +42,7 @@ func TestStderrPatternRule_MatchesRequiredToolNotOnPath(t *testing.T) {
 			{Rationale: `Required tool "docker" is not on PATH`},
 		},
 	}
-	ok, shape, detail := rule.Match(sig, heal.FailedSensor{Tools: []string{"docker"}})
+	ok, shape, detail := rule.Match(sig, heal.FailedSensor{})
 	if !ok {
 		t.Fatal("expected match")
 	}

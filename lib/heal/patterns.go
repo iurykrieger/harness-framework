@@ -12,7 +12,10 @@
 // breaking change.
 package heal
 
-import "regexp"
+import (
+	"fmt"
+	"regexp"
+)
 
 type stderrPattern struct {
 	re    *regexp.Regexp
@@ -21,7 +24,8 @@ type stderrPattern struct {
 
 // stderrPatternCapturing is like stderrPattern but the regex must
 // contain exactly one capture group; the captured text is returned as
-// the detail string by MatchStderrPatternCapturing.
+// the detail string by MatchStderrPatternCapturing (exported for use
+// by sub-packages such as lib/heal/rules).
 type stderrPatternCapturing struct {
 	re    *regexp.Regexp
 	shape Shape
@@ -38,6 +42,14 @@ var stderrPatterns = []stderrPattern{
 // a meaningful detail string (e.g. a tool name).
 var stderrCapturingPatterns = []stderrPatternCapturing{
 	{re: regexp.MustCompile(`Required tool "([^"]+)" is not on PATH`), shape: ShapeBinaryNotFound},
+}
+
+func init() {
+	for i, p := range stderrCapturingPatterns {
+		if p.re.NumSubexp() != 1 {
+			panic(fmt.Sprintf("stderrCapturingPatterns[%d]: regex must have exactly one capture group, got %d", i, p.re.NumSubexp()))
+		}
+	}
 }
 
 // MatchStderrPattern returns the shape associated with the first
