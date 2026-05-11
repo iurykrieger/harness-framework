@@ -16,6 +16,8 @@ type RunningSensors struct {
 // RunningSensorEntry is one live blocking sensor's state.
 type RunningSensorEntry struct {
 	SensorID       string          `json:"sensor_id"`
+	RunID          string          `json:"run_id"`
+	Blocking       bool            `json:"blocking"`
 	PID            int             `json:"pid"`
 	PGID           int             `json:"pgid"`
 	WatcherPID     int             `json:"watcher_pid"`

@@ -293,3 +293,35 @@ func TestLoadSanitized_ReturnsEmptyOnMissingFile(t *testing.T) {
 		t.Errorf("reports: got %d, want 0", len(reports))
 	}
 }
+
+func TestRunningSensorEntry_RunIDBlockingRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	r := registry.NewRoot(dir)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{{
+		SensorID: "alpha", RunID: "12345-abc12345", Blocking: true,
+		PID: 100, PGID: 100, WatcherPID: 101,
+		StartedAt: "2026-05-11T00:00:00Z", Command: "echo hi",
+		LogDir: ".runtime/sensors/alpha/12345-abc12345",
+		HeldBy: []registry.HeldByEntry{},
+	}}}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := registry.Load(r)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(got.Entries))
+	}
+	e := got.Entries[0]
+	if e.RunID != "12345-abc12345" {
+		t.Errorf("RunID = %q, want %q", e.RunID, "12345-abc12345")
+	}
+	if !e.Blocking {
+		t.Errorf("Blocking = false, want true")
+	}
+}
