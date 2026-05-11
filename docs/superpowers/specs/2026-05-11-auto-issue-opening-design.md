@@ -2,7 +2,7 @@
 
 Status: proposed
 Date: 2026-05-11
-Related: `hooks/setup-failure-detector.go`, `plugin.json`, `lib/registry/`, `skills/run-sensor/`, `skills/start-sensor/`, `skills/stop-sensor/`, `skills/heal-sensor/`, `skills/detect-sensors/`, `skills/list-sensors/`, `skills/tail-sensor/`
+Related: `hooks/setup-failure-detector.go`, `.claude-plugin/plugin.json`, `lib/registry/`, `skills/run-sensor/`, `skills/start-sensor/`, `skills/stop-sensor/`, `skills/heal-sensor/`, `skills/detect-sensors/`, `skills/list-sensors/`, `skills/tail-sensor/`
 
 ## Why
 
