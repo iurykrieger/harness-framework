@@ -1,6 +1,11 @@
 package registry
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // InvalidEntryError is returned by ValidateEntry when a RunningSensorEntry
 // violates a PID non-negativity invariant. Save propagates this unwrapped
@@ -110,4 +115,42 @@ func SanitizeAll(rs *RunningSensors) []SanitizeReport {
 	}
 	rs.Entries = keep
 	return reports
+}
+
+// RegistryMigratedSignal builds the precedence warn Signal emitted by
+// the four registry-touching skills when SanitizeAll returns non-empty
+// reports. The Signal carries DiagnoseMetadata fields plus the
+// migration report list under metadata.reports, and is structured to
+// pass signal.json validation.
+//
+// sensorID is the skill name ("list-sensors", "tail-sensor",
+// "stop-sensor", "start-sensor") — same convention as DiscoveryErrorSignal.
+func RegistryMigratedSignal(res Result, reports []SanitizeReport, sensorID string) map[string]interface{} {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	rewritten := 0
+	dropped := 0
+	for _, r := range reports {
+		if r.Dropped {
+			dropped++
+		} else {
+			rewritten++
+		}
+	}
+	rationale := fmt.Sprintf("rewrote %d invalid PID field(s) and dropped %d entry/holder(s) in running_sensors.json", rewritten, dropped)
+	md := DiagnoseMetadata(res)
+	md["kind"] = "registry_migrated"
+	md["reports"] = reports
+	return map[string]interface{}{
+		"sensor_id":   sensorID,
+		"version":     "0.0.0",
+		"run_id":      uuid.NewString(),
+		"started_at":  now,
+		"finished_at": now,
+		"verdict":     "warn",
+		"severity":    "low",
+		"confidence":  1.0,
+		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
+		"cost_actual": map[string]interface{}{"latency_ms": 0},
+		"metadata":    md,
+	}
 }

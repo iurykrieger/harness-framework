@@ -181,3 +181,39 @@ func TestSanitizeAll_NoOpOnHealthy(t *testing.T) {
 		t.Fatalf("got %d reports, want 0", len(got))
 	}
 }
+
+func TestRegistryMigratedSignal_Shape(t *testing.T) {
+	res := registry.Result{
+		Root:        registry.NewRoot("/tmp/proj"),
+		ProjectRoot: "/tmp/proj",
+		Source:      registry.SourceWalkUp,
+		Exists:      true,
+	}
+	reports := []registry.SanitizeReport{
+		{SensorID: "run-api-local", Field: "watcher_pid", OldValue: -1, Dropped: false},
+	}
+	sig := registry.RegistryMigratedSignal(res, reports, "list-sensors")
+	if got, _ := sig["verdict"].(string); got != "warn" {
+		t.Errorf("verdict: got %q, want warn", got)
+	}
+	if got, _ := sig["severity"].(string); got != "low" {
+		t.Errorf("severity: got %q, want low", got)
+	}
+	if got, _ := sig["sensor_id"].(string); got != "list-sensors" {
+		t.Errorf("sensor_id: got %q, want list-sensors", got)
+	}
+	md, _ := sig["metadata"].(map[string]interface{})
+	if md == nil {
+		t.Fatal("metadata: nil")
+	}
+	if got, _ := md["kind"].(string); got != "registry_migrated" {
+		t.Errorf("metadata.kind: got %q, want registry_migrated", got)
+	}
+	if got, _ := md["registry_path"].(string); got == "" {
+		t.Errorf("metadata.registry_path missing")
+	}
+	rpts, ok := md["reports"].([]registry.SanitizeReport)
+	if !ok || len(rpts) != 1 || rpts[0].Field != "watcher_pid" {
+		t.Errorf("metadata.reports: got %v", md["reports"])
+	}
+}
