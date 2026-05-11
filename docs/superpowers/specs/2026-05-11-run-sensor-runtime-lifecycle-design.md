@@ -42,6 +42,7 @@ Make `/run-sensor` write the same on-disk artifacts and participate in the same 
 5. **Visibility:** non-blocking runs register an entry on start, remove on exit; `/list-sensors`, `/tail-sensor`, `/stop-sensor` operate on both `blocking:true` and `blocking:false` entries.
 6. **Singleton:** `blocking:true` keeps singleton-by-`sensor.id`. `blocking:false` allows concurrent runs of the same sensor (disambiguated by `run_id`).
 7. **Persistence pipeline:** non-blocking runs tee in-process (no watcher); blocking runs keep the existing detached-subprocess + watcher design.
+8. **Crossover policy:** `/start-sensor X` is blocked only by another live `blocking:true` entry of `X` (concurrent non-blocking runs of `X` are allowed and ignored). `/run-sensor X` is implicitly blocked from ever running on a `blocking:true` sensor by the existing reject at `run-computational.go:68–72` and the equivalent in `run-inferential.go`.
 
 ## Architecture
 
@@ -61,7 +62,7 @@ For `/start-sensor` the existing `watcher.log` (watcher's own stderr) also lives
 
 ### Schema changes
 
-`schemas/signal.json`: update the `run_id` description to acknowledge the composite form. No type change.
+`schemas/signal.json`: tighten the `run_id` description to "Unique identifier of this invocation; runners may use a `<pid>-<short-uuid8>` composite or a plain UUID/ULID." Keeps existing UUID callers (`sensor.NewRunIDFn`) valid while documenting the composite form. No type change.
 
 `schemas/sensor.json`: no change.
 
@@ -69,18 +70,21 @@ For `/start-sensor` the existing `watcher.log` (watcher's own stderr) also lives
 
 ```go
 type RunningSensorEntry struct {
-    SensorID   string        `json:"sensor_id"`
-    RunID      string        `json:"run_id"`             // NEW
-    Blocking   bool          `json:"blocking"`            // NEW (mirrors sensor.execution.blocking)
-    PID        int           `json:"pid"`
-    PGID       int           `json:"pgid"`
-    WatcherPID int           `json:"watcher_pid,omitempty"` // present only when blocking:true
-    StartedAt  string        `json:"started_at"`
-    Command    string        `json:"command"`
-    LogDir     string        `json:"log_dir"`             // now .runtime/sensors/<id>/<run-id>
-    HeldBy     []HeldByEntry `json:"held_by"`
+    SensorID       string          `json:"sensor_id"`
+    RunID          string          `json:"run_id"`              // NEW
+    Blocking       bool            `json:"blocking"`             // NEW (mirrors sensor.execution.blocking)
+    PID            int             `json:"pid"`
+    PGID           int             `json:"pgid"`
+    WatcherPID     int             `json:"watcher_pid,omitempty"`     // present only when blocking:true
+    StartedAt      string          `json:"started_at"`
+    Command        string          `json:"command"`
+    LogDir         string          `json:"log_dir"`              // now .runtime/sensors/<id>/<run-id>
+    HeldBy         []HeldByEntry   `json:"held_by"`
+    SubprocessExit *SubprocessExit `json:"subprocess_exit,omitempty"` // unchanged; watcher-only
 }
 ```
+
+`SubprocessExit` is preserved as-is — only the watcher writes it (blocking:true), and `/stop-sensor` reads it (`stop.go:123,249,281`). Non-blocking entries never have it set.
 
 ### Registry API
 
@@ -88,12 +92,30 @@ type RunningSensorEntry struct {
 
 | Helper | Semantics |
 | --- | --- |
-| `FindBlockingEntry(id) *RunningSensorEntry` | replaces `FindEntry(id)`; only `blocking:true`. |
+| `FindBlockingEntry(id) *RunningSensorEntry` | finds the single `blocking:true` entry for `id`, or nil. |
 | `FindEntries(id) []*RunningSensorEntry` | returns all entries for an id (any `blocking`). |
 | `FindEntryByRunID(runID) *RunningSensorEntry` | direct lookup by globally-unique `run_id`. |
-| `RemoveEntryByRunID(runID)` | replaces `RemoveEntry(id)`. |
+| `RemoveEntryByRunID(runID)` | removes one entry. |
 
-`lib/registry/sanitize.go`: extend to migrate legacy entries lacking `run_id`/`blocking`. Legacy is assumed `blocking:true` (start-sensor was the only producer); generates `run_id = <pid>-legacy` for path resolution, logs an `entry_migrated` warn-shaped report on load, persists on next `Save`.
+`FindEntry(id)`/`RemoveEntry(id)` are **kept** with their current semantics ("first match by id") but become internal helpers; new code uses the explicit variants above. The migration is per-callsite (see "Callsite rewrites" below).
+
+#### Callsite rewrites
+
+Every existing caller in this table is rewritten to use the explicit variant whose semantics match its intent. The blanket replacement of `FindEntry`/`RemoveEntry` is the source of the ambiguity the spec was created to remove.
+
+| File:line | Today | Rewritten to | Rationale |
+| --- | --- | --- | --- |
+| `lib/orchestrator/live_deps.go:57` | `rs.FindEntry(dep.ID)` (attach blocking dep) | `rs.FindBlockingEntry(dep.ID)` | Only attaches to a *blocking* dep; ignore concurrent non-blocking runs of same id. |
+| `lib/orchestrator/live_deps.go:130,137,138,251` | `FindEntry(depID)` (mutate holder) | `FindBlockingEntry(depID)` | Holder mechanics apply to blocking deps only. |
+| `lib/orchestrator/live_deps.go:178,214` | `RemoveEntry(dep.ID)` | `RemoveEntryByRunID(<run_id of attached dep>)` | Plumb the run_id from the attach result; never remove a sibling non-blocking entry by accident. |
+| `skills/start-sensor/scripts/start.go:188` | `rs.FindEntry(id)` (singleton check) | `rs.FindBlockingEntry(id)` | Only another *blocking* run blocks a new `/start-sensor`. A concurrent non-blocking run of the same id is unrelated. |
+| `skills/start-sensor/scripts/start.go:249` | `rs.RemoveEntry(id)` (pre-insert dedup of dead entry) | `rs.RemoveEntryByRunID(staleRunID)` | The dedup is for the prior blocking entry only; look it up first and remove by its run_id. |
+| `skills/start-sensor/scripts/watcher.go:230` | `rs.FindEntry(cfg.SensorID)` (mark `SubprocessExit`) | `rs.FindEntryByRunID(cfg.RunID)` | Watcher already knows its run_id; uniqueness eliminates the by-id ambiguity. New env var `HARNESS_WATCHER_RUN_ID` carries it. |
+| `skills/stop-sensor/scripts/stop.go:81` | `rs.FindEntry(id)` (target lookup) | "blocking-preferred resolution" — see §Skill changes / `/stop-sensor`. |
+| `skills/stop-sensor/scripts/stop.go:143` | `rs.RemoveEntry(id)` | `rs.RemoveEntryByRunID(entry.RunID)` | After resolving the target entry, remove by run_id. |
+| `skills/tail-sensor/scripts/tail.go:72` | `rs.FindEntry(id)` | resolution per §`/tail-sensor` (compact vs path-like). |
+
+`lib/registry/sanitize.go`: extend to migrate legacy entries lacking `run_id`/`blocking`. Legacy is assumed `blocking:true` (start-sensor was the only producer); generates `run_id = <pid>-legacy` for paths, logs an `entry_migrated` warn-shaped report on load, persists on next `Save`. **Legacy artifacts already on disk live at `.runtime/sensors/<id>/{raw.log,signals.log}` (flat, no `<run-id>/` level).** The `paths` API exposes a `LegacyRawLog(id)`/`LegacySignalsLog(id)` pair that returns the flat path; `/tail-sensor` and `/stop-sensor` check `entry.RunID` for the `-legacy` suffix and route to the flat path for those entries. New entries always use the `<run-id>/` layout. Once all legacy entries have been stopped/cleared, the legacy code path becomes dead and can be removed in a follow-up.
 
 ### Paths
 
@@ -103,29 +125,44 @@ type RunningSensorEntry struct {
 func (r Root) RunDir(id, runID string) string
 func (r Root) RawLog(id, runID string) string
 func (r Root) SignalsLog(id, runID string) string
+
+// Legacy-entry fallback (returns the flat .runtime/sensors/<id>/{raw,signals}.log
+// from before this spec). Read-only callers consult these only when
+// entry.RunID has the "-legacy" suffix.
+func (r Root) LegacyRawLog(id string) string
+func (r Root) LegacySignalsLog(id string) string
 ```
 
 `SensorDir(id)` is preserved for ops that walk all runs of a sensor (e.g. future cleanup).
 
 ## Runtime flow
 
+### `RunOne` signature
+
+`RunOne` gains an optional `*registry.Root` parameter. When nil (default), the function preserves its current behavior (no persistence, no registry entry). When non-nil, it activates the new lifecycle (insert entry → tee → defer-remove). This keeps existing callers and tests working without modification, and lets `/run-sensor` opt in by passing a `Root` resolved via `registry.Lookup(cwd)`.
+
+### Non-blocking deps via `RunOne`
+
+When a non-blocking sensor is reached as a dep of another sensor (recursive `RunOne` from `RunDeps`), it receives the same `Root` as its parent and creates its own `<run-id>/` and registry entry — self-owned (`held_by:[]`, same as a root non-blocking run). The dep's entry is removed at the end of its own `RunOne` lifetime, before control returns to the parent. Non-blocking deps never participate in the `held_by` refcount machinery that blocking-dep attachment uses (`live_deps.go`'s `startBlockingDep`); that path is reached only for `blocking:true` deps.
+
 ### `/run-sensor <id>` (foreground, `blocking:false`)
 
 1. Resolve sensor; reject if `execution.blocking:true` (existing behavior).
-2. Orchestrate deps via `RunDeps` → topo order. Each `RunOne(dep)` recurses through this same pipeline.
-3. Run target's `prepare[]` fail-fast.
-4. Enter `StreamSubprocess` with a new `RunDir` field (empty = legacy behavior, no persistence).
-5. Right after `cmd.Start()`:
+2. Resolve `registry.Root` via `registry.Lookup(cwd)` (existing helper).
+3. Orchestrate deps via `RunDeps` → topo order. Each `RunOne(dep, root)` recurses through this same pipeline.
+4. Run target's `prepare[]` fail-fast.
+5. Enter `StreamSubprocess` with a new `RunDir` field (empty = legacy behavior, no persistence).
+6. Right after `cmd.Start()`:
    - Compute `run_id = <pid>-<short-uuid8>` from `cmd.Process.Pid`.
    - `mkdir -p` the `<run-id>/` directory; open `raw.log` and `signals.log` for append.
    - Under `WithFileLock`, insert the registry entry. Validate insert: refuse if `run_id` is already present.
    - Install a `defer` that removes the entry on any exit path (success, panic, signal).
-6. As the scanner drains stdout/stderr:
+7. As the scanner drains stdout/stderr:
    - Every read line is written verbatim to `raw.log`.
    - Pattern-matched lines yield individual Signals → written to both stdout (existing) and `signals.log` (new).
-7. On subprocess exit, build the aggregate; write to `signals.log` (last line) and stdout (last line).
-8. Run `teardown[]` (existing).
-9. `defer` removes the registry entry.
+8. On subprocess exit, build the aggregate; write to `signals.log` (last line) and stdout (last line).
+9. Run `teardown[]` (existing).
+10. `defer` removes the registry entry.
 
 The runner installs a SIGINT/SIGTERM handler that forwards the signal to the subprocess group, waits for command exit, writes the aggregate with `metadata.terminated_externally:true`, then unwinds the defers (cleanup runs).
 
@@ -135,7 +172,7 @@ The runner installs a SIGINT/SIGTERM handler that forwards the signal to the sub
 2. `SpawnDetached` returns the subprocess PID.
 3. Compute `run_id = <pid>-<short-uuid8>` (replaces the standalone UUID currently used in `Envelope`).
 4. `mkdir -p <run-id>/`; create `raw.log` (subprocess redirects stdout/stderr here) and `signals.log` (empty file; the watcher will append).
-5. Spawn the watcher with env vars pointing at the new paths.
+5. Spawn the watcher with env vars pointing at the new paths. A new env var `HARNESS_WATCHER_RUN_ID` carries the composite `run_id` so the watcher can look up its own entry via `FindEntryByRunID(cfg.RunID)` instead of `FindEntry(cfg.SensorID)` (see Callsite rewrites). Existing env vars (`HARNESS_WATCHER_RAW`, `HARNESS_WATCHER_SIGNALS`, `HARNESS_WATCHER_REGISTRY_ROOT`, ...) are preserved.
 6. Write the registry entry with `blocking:true`, the composite `run_id`, `log_dir=<run-id>`.
 7. Emit `metadata.kind=started`.
 
@@ -182,11 +219,12 @@ The error envelope contract (a synthetic Signal printed on early failure) is unc
 
 ## Invariants
 
-1. Every registry entry has its `log_dir` on disk with `raw.log` and `signals.log` created (possibly empty).
+1. Every registry entry has its `log_dir` on disk with `raw.log` and `signals.log` created (possibly empty). Legacy entries (`run_id` ending in `-legacy`) use the flat `.runtime/sensors/<id>/` path instead.
 2. `run_id` is globally unique across active entries.
 3. `blocking:false` entry implies the foreground runner is alive (PID-checked by `/list-sensors`); there is no watcher to inspect.
 4. `/run-sensor`'s stdout last line is the aggregate Signal.
 5. `raw.log` and `signals.log` are append-only (no `O_TRUNC` on any code path).
+6. **Cascade-skipped sensors never touch the registry or create a `<run-id>/`.** When `RunDeps` emits a cascade Signal for a sensor whose dep failed, that sensor's `RunOne` is not called; therefore no `mkdir`, no entry insert, no `defer` cleanup. Only the cascade Signal lands on stdout.
 
 ## Edge cases
 
@@ -204,7 +242,7 @@ The error envelope contract (a synthetic Signal printed on early failure) is unc
 ## Definition of Done (binary)
 
 1. `/run-sensor X` (`blocking:false`) creates `.runtime/sensors/X/<pid>-<uuid8>/{raw.log,signals.log}` and removes the entry from `running_sensors.json` on exit.
-2. The last line of `/run-sensor`'s stdout is the aggregate Signal — byte-identical to a baseline pre-change run.
+2. The last line of `/run-sensor`'s stdout is the aggregate Signal — byte-identical to a baseline pre-change run, except for the per-invocation fields that legitimately change shape: `run_id` (now composite), `started_at`, `finished_at`, `cost_actual.latency_ms`.
 3. `signals.log` contains exactly the same Signals (individuals + aggregate) emitted on stdout, in the same order.
 4. `/list-sensors` invoked from another session during `/run-sensor X` returns an entry with `blocking:false` and a composite `run_id`.
 5. `/start-sensor Y` writes its artifacts to `.runtime/sensors/Y/<pid>-<uuid8>/` (layout parity).
