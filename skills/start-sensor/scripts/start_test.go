@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"syscall"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
@@ -124,7 +126,7 @@ func TestStart_RejectsAlreadyRunning(t *testing.T) {
 	if err := registry.Save(r, registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "loop", PID: registry.SelfPID(), PGID: registry.SelfPID(), HeldBy: []registry.HeldByEntry{{Kind: "manual"}}},
+			{SensorID: "loop", Blocking: true, PID: registry.SelfPID(), PGID: registry.SelfPID(), HeldBy: []registry.HeldByEntry{{Kind: "manual"}}},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -184,23 +186,26 @@ func blockingFixtureBody() map[string]interface{} {
 
 // writeBlockingTarget writes a fixture sensor at <root>/sensors/<id>.json
 // with execution.blocking=true and a stream output_parsing pattern.
-// Adds depends_on if non-nil, prepare[] if non-nil.
+// Adds requires[kind=sensor] if dependsOn is non-nil, prepare[] if non-nil.
 func writeBlockingTarget(t *testing.T, root, id string, dependsOn []string, prepare []map[string]string) {
 	t.Helper()
 	body := blockingFixtureBody()
 	if len(dependsOn) > 0 {
-		ds := []interface{}{}
+		rs := []interface{}{}
 		for _, d := range dependsOn {
-			ds = append(ds, d)
+			rs = append(rs, map[string]interface{}{"kind": "sensor", "id": d})
 		}
-		body["depends_on"] = ds
+		body["requires"] = rs
 	}
 	if len(prepare) > 0 {
-		ps := []interface{}{}
-		for _, p := range prepare {
-			ps = append(ps, map[string]interface{}{"command": p["command"]})
+		var rs []interface{}
+		if existing, ok := body["requires"].([]interface{}); ok {
+			rs = existing
 		}
-		body["execution"].(map[string]interface{})["prepare"] = ps
+		for _, p := range prepare {
+			rs = append(rs, map[string]interface{}{"kind": "step", "command": p["command"]})
+		}
+		body["requires"] = rs
 	}
 	writeFixtureSensor(t, root, id, body)
 }
@@ -299,14 +304,25 @@ func cleanupStartedTarget(t *testing.T, root, id string) {
 }
 
 // cleanupBlockingDep detaches/stops a blocking dep that was attached
-// during the test, so the temp dir can be safely cleaned up.
+// during the test, so the temp dir can be safely cleaned up. Resolves
+// the live blocking entry by sensor id and addresses Detach by
+// (id, run_id); silently noops if the entry is no longer present.
 func cleanupBlockingDep(t *testing.T, root, depID, holderID string) {
 	t.Helper()
 	v, code := schema.LoadValidator(testfixtures.RepoSchemasDir(t), io.Discard)
 	if code != 0 {
 		return
 	}
-	orchestrator.DetachLiveDep(depID, root, holderID, v, io.Discard, io.Discard)
+	r := registry.NewRoot(root)
+	rs, err := registry.Load(r)
+	if err != nil {
+		return
+	}
+	entry := rs.FindBlockingEntry(depID)
+	if entry == nil {
+		return
+	}
+	orchestrator.DetachLiveDep(orchestrator.LiveDep{ID: depID, RunID: entry.RunID}, root, holderID, v, io.Discard, io.Discard)
 }
 
 func TestStart_WithSetupDepPASS(t *testing.T) {
@@ -456,10 +472,13 @@ func TestStart_WithBlockingDepAttach(t *testing.T) {
 	preExistingHolder := registry.HeldByEntry{
 		Kind: "sensor", ID: "pre-existing-holder", PID: os.Getpid(), AttachedAt: "2026-05-10T00:00:00Z",
 	}
+	preExistingRunID := "preexisting-runid"
 	if err := registry.Save(r, registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{{
 			SensorID:  "blocking-tick",
+			RunID:     preExistingRunID,
+			Blocking:  true,
 			PID:       os.Getpid(),
 			PGID:      os.Getpid(),
 			StartedAt: "2026-05-10T00:00:00Z",
@@ -546,5 +565,94 @@ func TestStart_PrepareFAIL_DetachesLiveStack(t *testing.T) {
 	}
 	if rs.FindEntry("target") != nil {
 		t.Error("target should NOT be in registry after prepare fail")
+	}
+}
+
+// TestStart_WritesNewRunIDLayout asserts that /start-sensor places
+// raw.log / signals.log under <SensorDir>/<runID>/ where runID matches
+// the composite <pid>-<short-uuid8> shape. Also verifies the started
+// Signal's metadata.run_id, the registry entry's RunID, Blocking:true,
+// and LogDir all carry the same composite value.
+func TestStart_WritesNewRunIDLayout(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureSensor(t, root, "longrun", blockingFixtureBody())
+
+	exit, sig := runStart(testResult(root), []string{"longrun"})
+	defer cleanupStartedTarget(t, root, "longrun")
+
+	if exit != 0 {
+		t.Fatalf("exit=%d sig=%+v", exit, sig)
+	}
+	md, _ := sig["metadata"].(map[string]interface{})
+	if md == nil {
+		t.Fatalf("missing metadata: %+v", sig)
+	}
+	if md["kind"] != "started" {
+		t.Fatalf("metadata.kind: got %v, want started", md["kind"])
+	}
+	runID, _ := sig["run_id"].(string)
+	composite := regexp.MustCompile(`^\d+-[0-9a-f]{8}$`)
+	if !composite.MatchString(runID) {
+		t.Fatalf("run_id %q does not match <pid>-<short-uuid8> shape", runID)
+	}
+
+	r := registry.NewRoot(root)
+	rawPath := r.RawLogRun("longrun", runID)
+	if _, err := os.Stat(rawPath); err != nil {
+		t.Fatalf("raw.log not at new path %s: %v", rawPath, err)
+	}
+	sigsPath := r.SignalsLogRun("longrun", runID)
+	if _, err := os.Stat(sigsPath); err != nil {
+		t.Fatalf("signals.log not at new path %s: %v", sigsPath, err)
+	}
+
+	rs, _ := registry.Load(r)
+	entry := rs.FindEntry("longrun")
+	if entry == nil {
+		t.Fatal("longrun should be in registry after started")
+	}
+	if entry.RunID != runID {
+		t.Errorf("entry.RunID: got %q, want %q", entry.RunID, runID)
+	}
+	if !entry.Blocking {
+		t.Errorf("entry.Blocking: got false, want true")
+	}
+	wantLogDir := filepath.Join(".runtime", "sensors", "longrun", runID)
+	if entry.LogDir != wantLogDir {
+		t.Errorf("entry.LogDir: got %q, want %q", entry.LogDir, wantLogDir)
+	}
+}
+
+func TestStart_AllowsStartWhenOnlyNonBlockingEntryExists(t *testing.T) {
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureSensor(t, proj, "shared", blockingFixtureBody())
+
+	// Pre-seed a NON-blocking entry of the same sensor; it must NOT block /start-sensor.
+	r := registry.NewRoot(proj)
+	_ = os.MkdirAll(r.SensorsDir(), 0o755)
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{{
+		SensorID: "shared", RunID: "999-runX", Blocking: false,
+		PID: os.Getpid(), PGID: os.Getpid(), StartedAt: "2026-05-11T00:00:00Z",
+	}}}
+	_ = registry.Save(r, rs)
+
+	exit, sig := runStart(testResult(proj), []string{"shared"})
+	if exit != 0 {
+		t.Fatalf("exit=%d, sig=%+v", exit, sig)
+	}
+	md, _ := sig["metadata"].(map[string]interface{})
+	if md["kind"] != "started" {
+		t.Errorf("expected started, got %v", md["kind"])
+	}
+
+	// cleanup
+	after, _ := registry.Load(r)
+	for _, e := range after.Entries {
+		if e.Blocking {
+			_ = syscall.Kill(-e.PGID, syscall.SIGKILL)
+		}
 	}
 }

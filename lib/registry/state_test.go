@@ -231,11 +231,24 @@ func TestLoadSanitized_MigratesLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reports) != 1 || reports[0].Field != "watcher_pid" {
-		t.Errorf("reports: %+v", reports)
+	// Legacy entry has no run_id → expect watcher_pid + run_id reports.
+	var foundWatcherPID, foundRunID bool
+	for _, rpt := range reports {
+		if rpt.Field == "watcher_pid" {
+			foundWatcherPID = true
+		}
+		if rpt.Field == "run_id" {
+			foundRunID = true
+		}
+	}
+	if !foundWatcherPID || !foundRunID {
+		t.Errorf("reports: expected watcher_pid and run_id reports; got %+v", reports)
 	}
 	if rs.Entries[0].WatcherPID != 0 {
 		t.Errorf("WatcherPID in memory: got %d, want 0", rs.Entries[0].WatcherPID)
+	}
+	if rs.Entries[0].RunID != "90006-legacy" {
+		t.Errorf("RunID in memory: got %q, want %q", rs.Entries[0].RunID, "90006-legacy")
 	}
 	// Re-Save persisted on disk:
 	rs2, err := registry.Load(r)
@@ -253,7 +266,7 @@ func TestLoadSanitized_NoOpOnHealthy(t *testing.T) {
 	healthy := registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "ok", PID: 100, PGID: 100, WatcherPID: 101,
+			{SensorID: "ok", RunID: "100-xyz", Blocking: true, PID: 100, PGID: 100, WatcherPID: 101,
 				StartedAt: "t", Command: "c", LogDir: "d",
 				HeldBy: []registry.HeldByEntry{{Kind: "manual", AttachedAt: "t"}}},
 		},
@@ -291,5 +304,99 @@ func TestLoadSanitized_ReturnsEmptyOnMissingFile(t *testing.T) {
 	}
 	if len(reports) != 0 {
 		t.Errorf("reports: got %d, want 0", len(reports))
+	}
+}
+
+func TestFindBlockingEntry(t *testing.T) {
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{SensorID: "alpha", RunID: "1-aa", Blocking: false, PID: 1, PGID: 1},
+		{SensorID: "alpha", RunID: "2-bb", Blocking: true, PID: 2, PGID: 2},
+		{SensorID: "beta", RunID: "3-cc", Blocking: false, PID: 3, PGID: 3},
+	}}
+	e := rs.FindBlockingEntry("alpha")
+	if e == nil || e.RunID != "2-bb" {
+		t.Fatalf("expected RunID=2-bb, got %+v", e)
+	}
+	if rs.FindBlockingEntry("beta") != nil {
+		t.Error("expected nil for beta (no blocking entry)")
+	}
+	if rs.FindBlockingEntry("gamma") != nil {
+		t.Error("expected nil for missing id")
+	}
+}
+
+func TestFindEntries(t *testing.T) {
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{SensorID: "alpha", RunID: "1-aa", PID: 1, PGID: 1},
+		{SensorID: "alpha", RunID: "2-bb", PID: 2, PGID: 2},
+		{SensorID: "beta", RunID: "3-cc", PID: 3, PGID: 3},
+	}}
+	es := rs.FindEntries("alpha")
+	if len(es) != 2 {
+		t.Fatalf("expected 2 entries for alpha, got %d", len(es))
+	}
+	if rs.FindEntries("missing") != nil && len(rs.FindEntries("missing")) != 0 {
+		t.Error("expected empty/nil for missing id")
+	}
+}
+
+func TestFindEntryByRunID(t *testing.T) {
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{SensorID: "alpha", RunID: "1-aa", PID: 1, PGID: 1},
+		{SensorID: "alpha", RunID: "2-bb", PID: 2, PGID: 2},
+	}}
+	e := rs.FindEntryByRunID("2-bb")
+	if e == nil || e.SensorID != "alpha" || e.PID != 2 {
+		t.Fatalf("got %+v", e)
+	}
+	if rs.FindEntryByRunID("missing") != nil {
+		t.Error("expected nil for missing run_id")
+	}
+}
+
+func TestRemoveEntryByRunID(t *testing.T) {
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{SensorID: "alpha", RunID: "1-aa", PID: 1, PGID: 1},
+		{SensorID: "alpha", RunID: "2-bb", PID: 2, PGID: 2},
+	}}
+	rs.RemoveEntryByRunID("1-aa")
+	if len(rs.Entries) != 1 || rs.Entries[0].RunID != "2-bb" {
+		t.Fatalf("after remove: %+v", rs.Entries)
+	}
+	rs.RemoveEntryByRunID("missing") // no-op
+	if len(rs.Entries) != 1 {
+		t.Fatalf("no-op removed entries: %+v", rs.Entries)
+	}
+}
+
+func TestRunningSensorEntry_RunIDBlockingRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	r := registry.NewRoot(dir)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{{
+		SensorID: "alpha", RunID: "12345-abc12345", Blocking: true,
+		PID: 100, PGID: 100, WatcherPID: 101,
+		StartedAt: "2026-05-11T00:00:00Z", Command: "echo hi",
+		LogDir: ".runtime/sensors/alpha/12345-abc12345",
+		HeldBy: []registry.HeldByEntry{},
+	}}}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := registry.Load(r)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(got.Entries))
+	}
+	e := got.Entries[0]
+	if e.RunID != "12345-abc12345" {
+		t.Errorf("RunID = %q, want %q", e.RunID, "12345-abc12345")
+	}
+	if !e.Blocking {
+		t.Errorf("Blocking = false, want true")
 	}
 }

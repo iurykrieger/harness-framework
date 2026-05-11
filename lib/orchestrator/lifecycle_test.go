@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
@@ -289,6 +291,147 @@ func TestRunOne_AbortsOnMissingRequiresEnv(t *testing.T) {
 	if rem == nil || !strings.Contains(rem["instructions"].(string), "HARNESS_TEST_NEVER_SET") {
 		t.Fatalf("remediation should name missing var: %+v", rem)
 	}
+}
+
+// TestRunOne_WithRoot_CreatesAndRemovesEntry verifies the persistence
+// contract of RunOneWithRoot: a <run-id>/ directory and a registry
+// entry are created around the spawned subprocess, the entry is removed
+// on successful exit, and the aggregate Signal is written to BOTH
+// stdout and <run-id>/signals.log.
+func TestRunOne_WithRoot_CreatesAndRemovesEntry(t *testing.T) {
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sensorPath := filepath.Join(proj, "sensors", "echo.json")
+	if err := os.WriteFile(sensorPath, []byte(`{
+      "id": "echo", "version": "0.0.0", "kind": "observation",
+      "type": "computational", "output": "single",
+      "cost": {"compute": "low"},
+      "execution": {"command": "echo hi", "exit_code_map": [{"exit_code": 0, "verdict": "pass", "severity": "info"}]}
+    }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := registry.NewRoot(proj)
+	s, err := loadSensorForTest(sensorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	sig, code := RunOneWithRoot(context.Background(), s, "", nil, &root, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d, stderr=%s", code, stderr.String())
+	}
+	if sig["verdict"] != "pass" {
+		t.Errorf("verdict=%v", sig["verdict"])
+	}
+
+	rs, _ := registry.Load(root)
+	if len(rs.Entries) != 0 {
+		t.Errorf("entry not removed: %+v", rs.Entries)
+	}
+	// The <run-id>/ directory must exist and contain signals.log with the aggregate.
+	runID, _ := sig["run_id"].(string)
+	if runID == "" {
+		t.Fatal("aggregate signal missing run_id")
+	}
+	sigsPath := root.SignalsLogRun("echo", runID)
+	if _, err := os.Stat(sigsPath); err != nil {
+		t.Fatalf("signals.log missing at %s: %v", sigsPath, err)
+	}
+}
+
+// TestRunOne_WithRoot_RegistryInsertFailureCleansUpDir verifies that when the
+// registry insert fails after os.MkdirAll succeeds, the just-created <run-id>/
+// directory is removed (no orphan), the aggregate Signal does not claim a
+// run_id that has a corresponding on-disk artifact, and the function still
+// returns a valid (non-zero-code) signal.
+//
+// Cleanup contract:
+//   - persistOK = false due to registry insert failure → os.RemoveAll(runDir) is called
+//   - runDir is cleared to "" → signals.log append is skipped
+//   - envelope.RunID is NOT updated to the pid-composite → aggregate run_id is
+//     the pre-spawn plain UUID from sensor.BuildEnvelope
+func TestRunOne_WithRoot_RegistryInsertFailureCleansUpDir(t *testing.T) {
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sensorPath := filepath.Join(proj, "sensors", "echo.json")
+	if err := os.WriteFile(sensorPath, []byte(`{
+      "id": "echo", "version": "0.0.0", "kind": "observation",
+      "type": "computational", "output": "single",
+      "cost": {"compute": "low"},
+      "execution": {"command": "echo hi", "exit_code_map": [{"exit_code": 0, "verdict": "pass", "severity": "info"}]}
+    }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := registry.NewRoot(proj)
+	s, err := loadSensorForTest(sensorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Sabotage: pre-create a DIRECTORY at the path where registry.Save
+	// would write running_sensors.json. The lock file is a sibling, so the
+	// lock still works, but the Save's atomic rename onto a directory
+	// returns EISDIR (or equivalent), failing the registry insert.
+	regFilePath := root.RegistryFile()
+	if err := os.MkdirAll(regFilePath, 0o755); err != nil {
+		t.Fatal("sabotage mkdir:", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	sig, code := RunOneWithRoot(context.Background(), s, "", nil, &root, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d, stderr=%s", code, stderr.String())
+	}
+	// Signal must still be emitted (degraded, but valid JSON).
+	if sig == nil {
+		t.Fatal("expected non-nil signal even on persistence failure")
+	}
+
+	// The <run-id>/ directory under .runtime/sensors/echo/ must NOT exist
+	// after cleanup. Walk the sensor log dir and confirm no child dirs.
+	sensorLogDir := filepath.Join(proj, ".runtime", "sensors", "echo")
+	entries, readErr := os.ReadDir(sensorLogDir)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatalf("unexpected error reading sensor log dir: %v", readErr)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			t.Errorf("orphan run dir left on disk: %s", filepath.Join(sensorLogDir, e.Name()))
+		}
+	}
+
+	// The aggregate run_id must NOT correspond to a pid-composite directory
+	// that was created and then removed — it should be a plain UUID (the
+	// pre-spawn envelope value), not the pid-prefixed composite.
+	runID, _ := sig["run_id"].(string)
+	if runID == "" {
+		t.Fatal("aggregate signal missing run_id")
+	}
+	// A pid-composite looks like "<integer>-<8hex>" so its first segment
+	// is a decimal number. A plain UUID starts with a hex group that can
+	// overlap, but the key invariant is: no corresponding on-disk dir.
+	sigsPath := root.SignalsLogRun("echo", runID)
+	if _, statErr := os.Stat(sigsPath); statErr == nil {
+		t.Errorf("signals.log should NOT exist when persistence failed, found: %s", sigsPath)
+	}
+}
+
+// loadSensorForTest is a tiny helper to load a Sensor struct as RunOne expects.
+func loadSensorForTest(path string) (Sensor, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return Sensor{}, err
+	}
+	var j map[string]interface{}
+	if err := json.Unmarshal(b, &j); err != nil {
+		return Sensor{}, err
+	}
+	id, _ := j["id"].(string)
+	return Sensor{ID: id, Path: path, JSON: j}, nil
 }
 
 // The aggregate Signal emitted on stdout is valid JSON and the LAST line.

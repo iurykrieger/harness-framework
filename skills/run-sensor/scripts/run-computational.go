@@ -22,10 +22,33 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 )
+
+// signalCancellableContext returns a context that is cancelled on SIGINT
+// or SIGTERM. The orchestrator's RunOne/RunOneWithRoot inspects ctx.Err()
+// when building the aggregate and flips metadata.terminated_externally to
+// true when non-nil. exec.CommandContext propagates the cancellation to
+// the subprocess via SIGKILL, so the runner exits cleanly instead of
+// leaving an orphaned subprocess (and, when persistence is on, a stale
+// registry entry).
+func signalCancellableContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-ch:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
 
 func main() {
 	cwd, _ := os.Getwd()
@@ -72,5 +95,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	return orchestrator.RunWithDepsRoot(context.Background(), id, projectRoot, schemasDir, stdout, stderr)
+	ctx, cancel := signalCancellableContext()
+	defer cancel()
+	return orchestrator.RunWithDepsRoot(ctx, id, projectRoot, schemasDir, stdout, stderr)
 }

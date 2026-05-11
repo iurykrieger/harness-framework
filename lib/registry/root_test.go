@@ -375,8 +375,18 @@ func TestLookupSanitized_MigratesAndReturnsReports(t *testing.T) {
 	if !res.Exists {
 		t.Errorf("Exists: got false, want true")
 	}
-	if len(reports) != 1 || reports[0].Field != "watcher_pid" {
-		t.Errorf("reports: %+v", reports)
+	// Legacy entry has no run_id → expect watcher_pid + run_id reports.
+	var foundWatcherPID, foundRunID bool
+	for _, rpt := range reports {
+		if rpt.Field == "watcher_pid" {
+			foundWatcherPID = true
+		}
+		if rpt.Field == "run_id" {
+			foundRunID = true
+		}
+	}
+	if !foundWatcherPID || !foundRunID {
+		t.Errorf("reports: expected watcher_pid and run_id reports; got %+v", reports)
 	}
 	if res.State.Entries[0].WatcherPID != 0 {
 		t.Errorf("WatcherPID: got %d, want 0", res.State.Entries[0].WatcherPID)
