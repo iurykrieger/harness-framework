@@ -655,3 +655,38 @@ func TestFakeGhClient_SearchReturnsScripted(t *testing.T) {
 		t.Fatalf("got %+v err=%v", got, err)
 	}
 }
+
+func TestParseGitRemote(t *testing.T) {
+	cases := []struct {
+		remote  string
+		want    string
+		wantErr bool
+	}{
+		{"git@github.com:iurykrieger/harness-framework.git", "iurykrieger/harness-framework", false},
+		{"git@github.com:iurykrieger/harness-framework", "iurykrieger/harness-framework", false},
+		{"https://github.com/iurykrieger/harness-framework.git", "iurykrieger/harness-framework", false},
+		{"https://github.com/iurykrieger/harness-framework", "iurykrieger/harness-framework", false},
+		{"ssh://git@github.com/iurykrieger/harness-framework.git", "iurykrieger/harness-framework", false},
+		{"git@gitlab.com:foo/bar.git", "", true},
+		{"https://bitbucket.org/foo/bar", "", true},
+		{"", "", true},
+		{"not-a-url", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.remote, func(t *testing.T) {
+			got, err := parseGitRemote(tc.remote)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q", tc.remote)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}

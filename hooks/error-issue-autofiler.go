@@ -654,6 +654,35 @@ func (ghCLI) Comment(repo string, num int, body string) error {
 	return nil
 }
 
+var reGitRemote = regexp.MustCompile(`(?i)(?:git@github\.com:|https?://github\.com/|ssh://git@github\.com/)([\w.-]+)/([\w.-]+?)(?:\.git)?/?$`)
+
+// parseGitRemote turns a git remote URL into "owner/repo" if and only
+// if the host is github.com. Returns an error for non-GitHub remotes
+// or unparseable input.
+func parseGitRemote(remote string) (string, error) {
+	remote = strings.TrimSpace(remote)
+	if remote == "" {
+		return "", fmt.Errorf("empty remote")
+	}
+	m := reGitRemote.FindStringSubmatch(remote)
+	if m == nil {
+		return "", fmt.Errorf("not a github.com remote: %q", remote)
+	}
+	return m[1] + "/" + m[2], nil
+}
+
+// resolveRepo runs `git -C projectRoot remote get-url origin` and
+// parses the result. Only the origin remote is consulted; forks with
+// upstream or other named remotes are intentionally ignored.
+func resolveRepo(projectRoot string) (string, error) {
+	cmd := exec.Command("git", "-C", projectRoot, "remote", "get-url", "origin")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git remote get-url origin: %w", err)
+	}
+	return parseGitRemote(string(out))
+}
+
 func (ghCLI) Create(repo, title, body string, labels []string) (issueRef, error) {
 	args := []string{"issue", "create",
 		"--repo", repo,
