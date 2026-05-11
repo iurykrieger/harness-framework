@@ -203,7 +203,9 @@ Skills replace exactly one call:
 | `list-sensors/scripts/list.go:30` | `res, err := registry.Lookup(startDir)` | `res, reports, err := registry.LookupSanitized(startDir)` |
 | `tail-sensor/scripts/tail.go:32` | same | same |
 | `stop-sensor/scripts/stop.go:39` | same | same |
-| `start-sensor/scripts/start.go` (its `Lookup` call site) | same | same |
+| `start-sensor/scripts/start.go:28-34` | `root, err := os.Getwd()` then `runStart(root, …)` | `startDir, err := os.Getwd()` then `res, reports, err := registry.LookupSanitized(startDir)` then `runStart(res.ProjectRoot, …)` |
+
+`start-sensor` is migrated to `LookupSanitized` for uniformity with the other three skills (it currently calls `os.Getwd()` directly instead of going through `Lookup`; this PR closes that small inconsistency at no extra cost). The other three skills already call `Lookup`; the rename is one line each.
 
 The deeper `registry.Load(r)` invocations under flock (`start.go:168`, `stop.go:74`, `stop.go:132`) are **not** migrated — they continue to use `Load`. By the time they execute, `LookupSanitized` has already persisted sanitized state to disk, so `Load` sees clean entries.
 
