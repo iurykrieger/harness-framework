@@ -113,6 +113,49 @@ func (rs *RunningSensors) RemoveEntry(id string) {
 	rs.Entries = out
 }
 
+// FindBlockingEntry returns the single blocking:true entry for id, or nil.
+// Non-blocking entries are ignored.
+func (rs *RunningSensors) FindBlockingEntry(id string) *RunningSensorEntry {
+	for i := range rs.Entries {
+		if rs.Entries[i].SensorID == id && rs.Entries[i].Blocking {
+			return &rs.Entries[i]
+		}
+	}
+	return nil
+}
+
+// FindEntries returns all entries for id (any blocking value).
+func (rs *RunningSensors) FindEntries(id string) []*RunningSensorEntry {
+	var out []*RunningSensorEntry
+	for i := range rs.Entries {
+		if rs.Entries[i].SensorID == id {
+			out = append(out, &rs.Entries[i])
+		}
+	}
+	return out
+}
+
+// FindEntryByRunID returns the unique entry with the given run_id, or nil.
+func (rs *RunningSensors) FindEntryByRunID(runID string) *RunningSensorEntry {
+	for i := range rs.Entries {
+		if rs.Entries[i].RunID == runID {
+			return &rs.Entries[i]
+		}
+	}
+	return nil
+}
+
+// RemoveEntryByRunID deletes the entry matching run_id (no-op if absent).
+func (rs *RunningSensors) RemoveEntryByRunID(runID string) {
+	out := rs.Entries[:0]
+	for _, e := range rs.Entries {
+		if e.RunID != runID {
+			out = append(out, e)
+		}
+	}
+	rs.Entries = out
+}
+
 // LoadOrEmpty reads running_sensors.json and reports existence
 // explicitly:
 //   - file present and parseable → (state, true, nil)

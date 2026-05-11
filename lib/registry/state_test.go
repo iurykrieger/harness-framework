@@ -294,6 +294,68 @@ func TestLoadSanitized_ReturnsEmptyOnMissingFile(t *testing.T) {
 	}
 }
 
+func TestFindBlockingEntry(t *testing.T) {
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{SensorID: "alpha", RunID: "1-aa", Blocking: false, PID: 1, PGID: 1},
+		{SensorID: "alpha", RunID: "2-bb", Blocking: true, PID: 2, PGID: 2},
+		{SensorID: "beta", RunID: "3-cc", Blocking: false, PID: 3, PGID: 3},
+	}}
+	e := rs.FindBlockingEntry("alpha")
+	if e == nil || e.RunID != "2-bb" {
+		t.Fatalf("expected RunID=2-bb, got %+v", e)
+	}
+	if rs.FindBlockingEntry("beta") != nil {
+		t.Error("expected nil for beta (no blocking entry)")
+	}
+	if rs.FindBlockingEntry("gamma") != nil {
+		t.Error("expected nil for missing id")
+	}
+}
+
+func TestFindEntries(t *testing.T) {
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{SensorID: "alpha", RunID: "1-aa", PID: 1, PGID: 1},
+		{SensorID: "alpha", RunID: "2-bb", PID: 2, PGID: 2},
+		{SensorID: "beta", RunID: "3-cc", PID: 3, PGID: 3},
+	}}
+	es := rs.FindEntries("alpha")
+	if len(es) != 2 {
+		t.Fatalf("expected 2 entries for alpha, got %d", len(es))
+	}
+	if rs.FindEntries("missing") != nil && len(rs.FindEntries("missing")) != 0 {
+		t.Error("expected empty/nil for missing id")
+	}
+}
+
+func TestFindEntryByRunID(t *testing.T) {
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{SensorID: "alpha", RunID: "1-aa", PID: 1, PGID: 1},
+		{SensorID: "alpha", RunID: "2-bb", PID: 2, PGID: 2},
+	}}
+	e := rs.FindEntryByRunID("2-bb")
+	if e == nil || e.SensorID != "alpha" || e.PID != 2 {
+		t.Fatalf("got %+v", e)
+	}
+	if rs.FindEntryByRunID("missing") != nil {
+		t.Error("expected nil for missing run_id")
+	}
+}
+
+func TestRemoveEntryByRunID(t *testing.T) {
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{SensorID: "alpha", RunID: "1-aa", PID: 1, PGID: 1},
+		{SensorID: "alpha", RunID: "2-bb", PID: 2, PGID: 2},
+	}}
+	rs.RemoveEntryByRunID("1-aa")
+	if len(rs.Entries) != 1 || rs.Entries[0].RunID != "2-bb" {
+		t.Fatalf("after remove: %+v", rs.Entries)
+	}
+	rs.RemoveEntryByRunID("missing") // no-op
+	if len(rs.Entries) != 1 {
+		t.Fatalf("no-op removed entries: %+v", rs.Entries)
+	}
+}
+
 func TestRunningSensorEntry_RunIDBlockingRoundtrip(t *testing.T) {
 	dir := t.TempDir()
 	r := registry.NewRoot(dir)
