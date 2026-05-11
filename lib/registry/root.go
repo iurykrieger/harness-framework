@@ -167,6 +167,39 @@ func Lookup(startDir string) (Result, error) {
 	}, nil
 }
 
+// LookupSanitized is the skill-facing entry point that combines root
+// discovery with PID-invariant sanitation. Same Result, same error
+// semantics as Lookup. The []SanitizeReport return is non-empty when
+// LoadSanitized rewrote or dropped one or more entries from
+// running_sensors.json; the caller surfaces it as a warn Signal.
+//
+// When the registry file does not exist on disk, returns Exists=false
+// with an empty state — same as Lookup — and an empty reports slice.
+func LookupSanitized(startDir string) (Result, []SanitizeReport, error) {
+	root, source, err := Discover(startDir)
+	if err != nil {
+		return Result{}, nil, err
+	}
+	r := NewRoot(root)
+	state, reports, err := LoadSanitized(r)
+	if err != nil {
+		return Result{}, nil, err
+	}
+	// Existence is derived from whether running_sensors.json is on
+	// disk. LoadSanitized does not surface this directly, so stat it.
+	exists := true
+	if _, statErr := os.Stat(r.RegistryFile()); statErr != nil {
+		exists = false
+	}
+	return Result{
+		Root:        r,
+		ProjectRoot: root,
+		Source:      source,
+		Exists:      exists,
+		State:       state,
+	}, reports, nil
+}
+
 // DiagnoseMetadata returns the standard registry-discovery diagnostic
 // fields for embedding in any Signal's metadata. Skills should use this
 // instead of inlining the three-field literal so adding or renaming a
