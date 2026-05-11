@@ -158,6 +158,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 	type spawnResult struct {
 		det         subprocess.DetachResult
 		watcherProc *os.Process
+		watcherPID  int
 		envelope    libsensor.Envelope
 	}
 	var spawned spawnResult
@@ -217,6 +218,10 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 			}
 			return fmt.Errorf("start watcher: %w", err)
 		}
+		// Capture the watcher pid BEFORE Release() — on Unix, Release
+		// resets Process.Pid to -1, which would violate the registry
+		// PID non-negativity invariant when Save validates the entry.
+		watcherPID := watcherProc.Pid
 		_ = watcherProc.Release()
 
 		rs.RemoveEntry(id)
@@ -224,7 +229,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 			SensorID:   id,
 			PID:        det.PID,
 			PGID:       det.PGID,
-			WatcherPID: watcherProc.Pid,
+			WatcherPID: watcherPID,
 			StartedAt:  envelope.StartedAt,
 			Command:    command,
 			LogDir:     filepath.Join(".runtime", "sensors", id),
@@ -236,7 +241,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 			return err
 		}
 
-		spawned = spawnResult{det: det, watcherProc: watcherProc, envelope: envelope}
+		spawned = spawnResult{det: det, watcherProc: watcherProc, watcherPID: watcherPID, envelope: envelope}
 		return nil
 	})
 
@@ -274,7 +279,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 
 	aux := map[string]interface{}{
 		"pid":         spawned.det.PID,
-		"watcher_pid": spawned.watcherProc.Pid,
+		"watcher_pid": spawned.watcherPID,
 		"log_dir":     filepath.Join(".runtime", "sensors", id),
 		"next_cursor": 0,
 	}
@@ -293,7 +298,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 	}
 
 	sig := finalSignal(id, sensorJSON, "started", "", aux,
-		fmt.Sprintf("sensor %q started, pid=%d, watcher_pid=%d", id, spawned.det.PID, spawned.watcherProc.Pid))
+		fmt.Sprintf("sensor %q started, pid=%d, watcher_pid=%d", id, spawned.det.PID, spawned.watcherPID))
 	sig["run_id"] = spawned.envelope.RunID
 	sig["started_at"] = spawned.envelope.StartedAt
 	return 0, validateSignal(v, sig, id)
