@@ -184,23 +184,20 @@ func blockingFixtureBody() map[string]interface{} {
 
 // writeBlockingTarget writes a fixture sensor at <root>/sensors/<id>.json
 // with execution.blocking=true and a stream output_parsing pattern.
-// Adds depends_on if non-nil, prepare[] if non-nil.
+// Adds requires[] entries if non-nil: dependsOn entries become {kind:"sensor", id:X}
+// (sensor entries first), and prepare entries become {kind:"step", command:Y}.
 func writeBlockingTarget(t *testing.T, root, id string, dependsOn []string, prepare []map[string]string) {
 	t.Helper()
 	body := blockingFixtureBody()
-	if len(dependsOn) > 0 {
-		ds := []interface{}{}
-		for _, d := range dependsOn {
-			ds = append(ds, d)
-		}
-		body["depends_on"] = ds
+	requires := []interface{}{}
+	for _, d := range dependsOn {
+		requires = append(requires, map[string]interface{}{"kind": "sensor", "id": d})
 	}
-	if len(prepare) > 0 {
-		ps := []interface{}{}
-		for _, p := range prepare {
-			ps = append(ps, map[string]interface{}{"command": p["command"]})
-		}
-		body["execution"].(map[string]interface{})["prepare"] = ps
+	for _, p := range prepare {
+		requires = append(requires, map[string]interface{}{"kind": "step", "command": p["command"]})
+	}
+	if len(requires) > 0 {
+		body["requires"] = requires
 	}
 	writeFixtureSensor(t, root, id, body)
 }
