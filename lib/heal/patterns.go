@@ -5,7 +5,7 @@
 // metadata.heal_hint contract (consumed by rule_heal_hint.go):
 //
 //   heal_hint := <shape> ":" <detail>
-//   shape     := "missing-env" | "binary-not-found" | "env-file-absent" | "service-unavailable"
+//   shape     := "missing-env" | "binary-not-found" | "env-file-absent" | "service-unavailable" | "missing-context"
 //   detail    := opaque string (var name, binary name, path, service)
 //
 // Adding a shape is a versioned plugin change; deleting one is a
@@ -19,11 +19,25 @@ type stderrPattern struct {
 	shape Shape
 }
 
+// stderrPatternCapturing is like stderrPattern but the regex must
+// contain exactly one capture group; the captured text is returned as
+// the detail string by MatchStderrPatternCapturing.
+type stderrPatternCapturing struct {
+	re    *regexp.Regexp
+	shape Shape
+}
+
 var stderrPatterns = []stderrPattern{
 	{re: regexp.MustCompile(`\bENOENT\b.*\.env\b|\.env\b.*\bENOENT\b`), shape: ShapeEnvFileAbsent},
 	{re: regexp.MustCompile(`permission denied:.*\.env\b`), shape: ShapeEnvFileAbsent},
 	{re: regexp.MustCompile(`connection refused.*\b(postgres|mysql|redis|kafka)\b`), shape: ShapeServiceUnavailable},
 	{re: regexp.MustCompile(`\bcommand not found\b`), shape: ShapeBinaryNotFound},
+}
+
+// stderrCapturingPatterns holds patterns whose first capture group is
+// a meaningful detail string (e.g. a tool name).
+var stderrCapturingPatterns = []stderrPatternCapturing{
+	{re: regexp.MustCompile(`Required tool "([^"]+)" is not on PATH`), shape: ShapeBinaryNotFound},
 }
 
 // MatchStderrPattern returns the shape associated with the first
@@ -35,4 +49,16 @@ func MatchStderrPattern(text string) (Shape, bool) {
 		}
 	}
 	return "", false
+}
+
+// MatchStderrPatternCapturing returns the shape and captured detail
+// string for the first capturing pattern that matches text, or
+// ok=false when none match.
+func MatchStderrPatternCapturing(text string) (Shape, string, bool) {
+	for _, p := range stderrCapturingPatterns {
+		if m := p.re.FindStringSubmatch(text); m != nil {
+			return p.shape, m[1], true
+		}
+	}
+	return "", "", false
 }

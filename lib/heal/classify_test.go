@@ -56,12 +56,13 @@ func TestShape_IsKnown(t *testing.T) {
 		heal.ShapeBinaryNotFound:     true,
 		heal.ShapeEnvFileAbsent:      true,
 		heal.ShapeServiceUnavailable: true,
+		heal.ShapeMissingContext:     true, // NEW
 		heal.Shape("nonsense"):       false,
 		heal.Shape(""):               false,
 	}
 	for s, want := range cases {
 		if got := s.IsKnown(); got != want {
-			t.Errorf("IsKnown(%q) = %v, want %v", s, got, want)
+			t.Errorf("Shape(%q).IsKnown() = %v, want %v", s, got, want)
 		}
 	}
 }

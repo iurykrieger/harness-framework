@@ -18,6 +18,7 @@ import "github.com/iurykrieger/harness-framework/lib/heal"
 func Registered() []heal.Rule {
 	return []heal.Rule{
 		missingEnv{},
+		missingContext{}, // NEW — place right after missingEnv
 		healHint{},
 		exitCode127{},
 		prepareTemplateCopy{},
