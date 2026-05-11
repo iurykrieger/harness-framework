@@ -37,6 +37,20 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// testResult builds a minimal registry.Result usable by runStart in
+// tests. The diagnostic fields it carries (registry_path, _source,
+// _exists) populate every emitted signal's metadata; tests that need to
+// assert those values can also use this helper.
+func testResult(projectRoot string) registry.Result {
+	return registry.Result{
+		Root:        registry.NewRoot(projectRoot),
+		ProjectRoot: projectRoot,
+		Source:      registry.SourceWalkUp,
+		Exists:      false,
+		State:       registry.RunningSensors{Version: 1},
+	}
+}
+
 func writeFixtureSensor(t *testing.T, projectRoot, id string, body map[string]interface{}) string {
 	t.Helper()
 	dir := filepath.Join(projectRoot, "sensors")
@@ -88,7 +102,7 @@ func TestStart_RejectsNonBlocking(t *testing.T) {
 			},
 		},
 	})
-	exit, sig := runStart(root, []string{"not-blocking"})
+	exit, sig := runStart(testResult(root), []string{"not-blocking"})
 	if exit != 2 {
 		t.Fatalf("expected exit 2, got %d", exit)
 	}
@@ -116,7 +130,7 @@ func TestStart_RejectsAlreadyRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFixtureSensor(t, root, "loop", blockingFixtureBody())
-	exit, sig := runStart(root, []string{"loop"})
+	exit, sig := runStart(testResult(root), []string{"loop"})
 	if exit != 1 {
 		t.Fatalf("expected exit 1, got %d", exit)
 	}
@@ -300,7 +314,7 @@ func TestStart_WithSetupDepPASS(t *testing.T) {
 	writeNonBlockingSetupDep(t, root, "setup-pass", "true")
 	writeBlockingTarget(t, root, "target", []string{"setup-pass"}, nil)
 
-	exit, sig := runStart(root, []string{"target"})
+	exit, sig := runStart(testResult(root), []string{"target"})
 	defer cleanupStartedTarget(t, root, "target")
 
 	if exit != 0 {
@@ -326,7 +340,7 @@ func TestStart_WithSetupDepFAIL(t *testing.T) {
 	writeNonBlockingSetupDep(t, root, "setup-fail", "false")
 	writeBlockingTarget(t, root, "target", []string{"setup-fail"}, nil)
 
-	exit, sig := runStart(root, []string{"target"})
+	exit, sig := runStart(testResult(root), []string{"target"})
 
 	if exit != 1 {
 		t.Fatalf("exit: got %d, want 1; sig=%+v", exit, sig)
@@ -354,7 +368,7 @@ func TestStart_WithBlockingDepStartFresh(t *testing.T) {
 	writeBlockingDepFixtureForStart(t, root, "blocking-tick")
 	writeBlockingTarget(t, root, "target", []string{"blocking-tick"}, nil)
 
-	exit, sig := runStart(root, []string{"target"})
+	exit, sig := runStart(testResult(root), []string{"target"})
 	defer cleanupStartedTarget(t, root, "target")
 	defer cleanupBlockingDep(t, root, "blocking-tick", "target")
 
@@ -395,7 +409,7 @@ func TestStart_PrepareFAIL(t *testing.T) {
 		{"command": "false"},
 	})
 
-	exit, sig := runStart(root, []string{"target"})
+	exit, sig := runStart(testResult(root), []string{"target"})
 
 	if exit != 1 {
 		t.Fatalf("exit: got %d, want 1; sig=%+v", exit, sig)
@@ -458,7 +472,7 @@ func TestStart_WithBlockingDepAttach(t *testing.T) {
 	}
 	preExistingDepPID := os.Getpid()
 
-	exit, sig := runStart(root, []string{"target"})
+	exit, sig := runStart(testResult(root), []string{"target"})
 	defer cleanupStartedTarget(t, root, "target")
 	defer cleanupBlockingDep(t, root, "blocking-tick", "target")
 	defer cleanupBlockingDep(t, root, "blocking-tick", "pre-existing-holder")
@@ -515,7 +529,7 @@ func TestStart_PrepareFAIL_DetachesLiveStack(t *testing.T) {
 		{"command": "false"},
 	})
 
-	exit, sig := runStart(root, []string{"target"})
+	exit, sig := runStart(testResult(root), []string{"target"})
 
 	if exit != 1 {
 		t.Fatalf("exit: got %d, want 1; sig=%+v", exit, sig)

@@ -39,7 +39,7 @@ func main() {
 	if len(reports) > 0 {
 		_ = json.NewEncoder(os.Stdout).Encode(registry.RegistryMigratedSignal(res, reports, "start-sensor"))
 	}
-	exit, sig := runStart(res.ProjectRoot, os.Args[1:])
+	exit, sig := runStart(res, os.Args[1:])
 	if sig != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(sig)
 	}
@@ -49,14 +49,21 @@ func main() {
 // runStart performs the full /start-sensor lifecycle for sensor id given
 // in args[0]. Returns (exitCode, finalSignal). The signal is encoded by
 // the caller; tests inspect it directly.
-func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
+//
+// res carries the discovered registry root plus the diagnostic fields
+// (registry_path, registry_source, registry_exists) injected into every
+// signal's metadata for cross-skill uniformity with /list-sensors and
+// /stop-sensor.
+func runStart(res registry.Result, args []string) (int, map[string]interface{}) {
+	projectRoot := res.ProjectRoot
+	diagnose := registry.DiagnoseMetadata(res)
 	v, vCode := schema.LoadValidator("", os.Stderr)
 	if vCode != 0 {
-		return vCode, finalSignal("unknown", nil, "failed", "bootstrap_failed", nil, "schema validator init failed")
+		return vCode, finalSignal("unknown", nil, "failed", "bootstrap_failed", nil, "schema validator init failed", diagnose)
 	}
 
 	if len(args) < 1 {
-		return 2, finalSignal("unknown", nil, "failed", "bootstrap_failed", nil, "missing sensor id argument")
+		return 2, finalSignal("unknown", nil, "failed", "bootstrap_failed", nil, "missing sensor id argument", diagnose)
 	}
 	id := args[0]
 
@@ -64,27 +71,27 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 	if err != nil {
 		return 2, validateSignal(v, finalSignal(id, nil, "failed", "resolve_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("resolve: %v", err)), id)
+			fmt.Sprintf("resolve: %v", err), diagnose), id)
 	}
 
 	sensorJSON, err := loadSensorJSON(path)
 	if err != nil {
 		return 2, validateSignal(v, finalSignal(id, nil, "failed", "resolve_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			err.Error()), id)
+			err.Error(), diagnose), id)
 	}
 
 	if err := v.Validate(schema.TargetSensor, sensorJSON); err != nil {
 		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "schema_invalid",
 			map[string]interface{}{"error_excerpt": fmt.Sprintf("%v", err)},
-			fmt.Sprintf("schema: %v", err)), id)
+			fmt.Sprintf("schema: %v", err), diagnose), id)
 	}
 
 	execMap, _ := sensorJSON["execution"].(map[string]interface{})
 	blocking, _ := execMap["blocking"].(bool)
 	if !blocking {
 		return 2, validateSignal(v, finalSignal(id, sensorJSON, "failed", "not_blocking", nil,
-			"sensor is not blocking; use /run-sensor instead"), id)
+			"sensor is not blocking; use /run-sensor instead", diagnose), id)
 	}
 
 	// Pre-flight: resolve DAG, run deps, detect cascade.
@@ -102,7 +109,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 	if pre.ExitCode != 0 {
 		detachAll()
 		return pre.ExitCode, validateSignal(v, finalSignal(id, sensorJSON, "failed", "preflight_failed", nil,
-			"pre-flight failed; see earlier signals or stderr"), id)
+			"pre-flight failed; see earlier signals or stderr", diagnose), id)
 	}
 	if pre.CascadeSig != nil {
 		md, _ := pre.CascadeSig["metadata"].(map[string]interface{})
@@ -116,7 +123,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		failedVerdict, _ := md["failed_dep_verdict"].(string)
 		detachAll()
 		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "dep_cascade", aux,
-			fmt.Sprintf("dependency %q produced verdict=%s; root not started", failedID, failedVerdict)), id)
+			fmt.Sprintf("dependency %q produced verdict=%s; root not started", failedID, failedVerdict), diagnose), id)
 	}
 
 	target := pre.Order[len(pre.Order)-1]
@@ -129,7 +136,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 			"lifecycle": map[string]interface{}{"prepare": prepResults},
 		}
 		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "prepare_failed", aux,
-			"target prepare[] failed"), id)
+			"target prepare[] failed", diagnose), id)
 	}
 
 	// Singleton + spawn detached + watcher + registry write.
@@ -140,19 +147,19 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		detachAll()
 		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("mkdir log dir: %v", err)), id)
+			fmt.Sprintf("mkdir log dir: %v", err), diagnose), id)
 	}
 	if err := os.WriteFile(r.RawLog(id), nil, 0o644); err != nil {
 		detachAll()
 		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("create raw.log: %v", err)), id)
+			fmt.Sprintf("create raw.log: %v", err), diagnose), id)
 	}
 	if err := os.WriteFile(r.SignalsLog(id), nil, 0o644); err != nil {
 		detachAll()
 		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "registry_write_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("create signals.log: %v", err)), id)
+			fmt.Sprintf("create signals.log: %v", err), diagnose), id)
 	}
 
 	watcherPath, err := watcherBinaryPath()
@@ -160,7 +167,7 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		detachAll()
 		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "watcher_spawn_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("watcher binary: %v", err)), id)
+			fmt.Sprintf("watcher binary: %v", err), diagnose), id)
 	}
 
 	type spawnResult struct {
@@ -271,14 +278,14 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 		detachAll()
 		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", cause,
 			map[string]interface{}{"error_excerpt": lockErr.Error()},
-			fmt.Sprintf("write registry: %v", lockErr)), id)
+			fmt.Sprintf("write registry: %v", lockErr), diagnose), id)
 	}
 
 	if alreadyRunning {
 		detachAll()
 		return 1, validateSignal(v, finalSignal(id, sensorJSON, "rejected", "",
 			map[string]interface{}{"existing_pid": alreadyRunningPID},
-			fmt.Sprintf("sensor %q already running with pid %d", id, alreadyRunningPID)), id)
+			fmt.Sprintf("sensor %q already running with pid %d", id, alreadyRunningPID), diagnose), id)
 	}
 
 	// Rebind: dep holders go from placeholderPID to spawned.det.PID.
@@ -313,7 +320,8 @@ func runStart(projectRoot string, args []string) (int, map[string]interface{}) {
 	}
 
 	sig := finalSignal(id, sensorJSON, "started", "", aux,
-		fmt.Sprintf("sensor %q started, pid=%d, watcher_pid=%d", id, spawned.det.PID, spawned.watcherPID))
+		fmt.Sprintf("sensor %q started, pid=%d, watcher_pid=%d", id, spawned.det.PID, spawned.watcherPID),
+		diagnose)
 	sig["run_id"] = spawned.envelope.RunID
 	sig["started_at"] = spawned.envelope.StartedAt
 	return 0, validateSignal(v, sig, id)
@@ -355,6 +363,11 @@ func readTimeoutMS(s map[string]interface{}) int {
 // required for kind="failed" and ignored for "started"/"rejected".
 // aux is merged into metadata, carrying kind-specific fields per the
 // design spec's table.
+//
+// diagnose, when non-nil, is merged into metadata last so every signal
+// emitted by /start-sensor carries the standard registry-discovery
+// diagnostic fields (registry_path, registry_source, registry_exists)
+// matching the convention used by /list-sensors and /stop-sensor.
 func finalSignal(
 	id string,
 	sensorJSON map[string]interface{},
@@ -362,6 +375,7 @@ func finalSignal(
 	cause string,
 	aux map[string]interface{},
 	rationale string,
+	diagnose map[string]interface{},
 ) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	verdict := "error"
@@ -382,6 +396,9 @@ func finalSignal(
 		md["cause"] = cause
 	}
 	for k, val := range aux {
+		md[k] = val
+	}
+	for k, val := range diagnose {
 		md[k] = val
 	}
 	return map[string]interface{}{
