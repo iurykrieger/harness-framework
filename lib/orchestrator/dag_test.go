@@ -3,23 +3,21 @@ package orchestrator
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func writeSensorJSON(t *testing.T, root, id string, depsOn []string) {
 	t.Helper()
-	deps := "[]"
+	reqs := "[]"
 	if len(depsOn) > 0 {
-		var s string
-		for i, d := range depsOn {
-			if i > 0 {
-				s += ","
-			}
-			s += `"` + d + `"`
+		var parts []string
+		for _, d := range depsOn {
+			parts = append(parts, `{"kind":"sensor","id":"`+d+`"}`)
 		}
-		deps = "[" + s + "]"
+		reqs = "[" + strings.Join(parts, ",") + "]"
 	}
-	body := `{"id":"` + id + `","depends_on":` + deps + `}`
+	body := `{"id":"` + id + `","requires":` + reqs + `}`
 	if err := os.WriteFile(filepath.Join(root, id+".json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -40,10 +40,10 @@ func TestRunPreparePhase_AllPass(t *testing.T) {
 		JSON: map[string]interface{}{
 			"execution": map[string]interface{}{
 				"command": "true",
-				"prepare": []interface{}{
-					map[string]interface{}{"command": "true"},
-					map[string]interface{}{"command": "true"},
-				},
+			},
+			"requires": []interface{}{
+				map[string]interface{}{"kind": "step", "command": "true"},
+				map[string]interface{}{"kind": "step", "command": "true"},
 			},
 		},
 	}
@@ -87,10 +87,10 @@ func TestRunPreparePhase_FirstFails_FailFast(t *testing.T) {
 		JSON: map[string]interface{}{
 			"execution": map[string]interface{}{
 				"command": "true",
-				"prepare": []interface{}{
-					map[string]interface{}{"command": "false"},
-					map[string]interface{}{"command": "true"},
-				},
+			},
+			"requires": []interface{}{
+				map[string]interface{}{"kind": "step", "command": "false"},
+				map[string]interface{}{"kind": "step", "command": "true"},
 			},
 		},
 	}
@@ -126,11 +126,11 @@ func writeNonBlockingDep(t *testing.T, root, id string, depsOn []string, command
 	t.Helper()
 	s := testfixtures.ValidSensorComputational()
 	if len(depsOn) > 0 {
-		ds := []interface{}{}
+		reqs := []interface{}{}
 		for _, d := range depsOn {
-			ds = append(ds, d)
+			reqs = append(reqs, map[string]interface{}{"kind": "sensor", "id": d})
 		}
-		s["depends_on"] = ds
+		s["requires"] = reqs
 	}
 	exec := s["execution"].(map[string]interface{})
 	exec["command"] = command
@@ -175,11 +175,11 @@ func writeBlockingDepFixture(t *testing.T, root, id string, depsOn []string) {
 		},
 	}
 	if len(depsOn) > 0 {
-		ds := []interface{}{}
+		reqs := []interface{}{}
 		for _, d := range depsOn {
-			ds = append(ds, d)
+			reqs = append(reqs, map[string]interface{}{"kind": "sensor", "id": d})
 		}
-		body["depends_on"] = ds
+		body["requires"] = reqs
 	}
 	writeSensorJSON(t, root, id, body)
 }

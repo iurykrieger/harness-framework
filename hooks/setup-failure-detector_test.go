@@ -54,10 +54,8 @@ func TestHook_SetupShape_EmitsInjection(t *testing.T) {
 	}
 	sensor := map[string]interface{}{
 		"id": "run-x",
-		"requires": map[string]interface{}{
-			"env": []interface{}{
-				map[string]interface{}{"name": "RSA_PRIVATE_KEY"},
-			},
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env", "name": "RSA_PRIVATE_KEY"},
 		},
 	}
 	path := writeTranscript(t, failingSignal, sensor)
@@ -105,7 +103,7 @@ func TestHook_AlreadyHealed_NoLoop(t *testing.T) {
 		"evidence": []interface{}{map[string]interface{}{"rationale": "Required environment variable FOO not set"}},
 		"metadata": map[string]interface{}{"kind": "aggregate"},
 	}
-	sensor := map[string]interface{}{"id": "run-x", "requires": map[string]interface{}{"env": []interface{}{map[string]interface{}{"name": "FOO"}}}}
+	sensor := map[string]interface{}{"id": "run-x", "requires": []interface{}{map[string]interface{}{"kind": "env", "name": "FOO"}}}
 
 	sigBytes, _ := json.Marshal(failingSignal)
 	sensorBytes, _ := json.Marshal(sensor)
@@ -171,15 +169,13 @@ func TestHook_CascadeFromFailedDep_TargetsDep(t *testing.T) {
 
 	// Sensor files: requested + dep (resolved via filepath.Dir(originalSensorPath)).
 	requestedSensor := map[string]interface{}{
-		"id":         "run-project",
-		"depends_on": []string{"setup-env"},
+		"id":       "run-project",
+		"requires": []interface{}{map[string]interface{}{"kind": "sensor", "id": "setup-env"}},
 	}
 	depSensor := map[string]interface{}{
 		"id": "setup-env",
-		"requires": map[string]interface{}{
-			"env": []interface{}{
-				map[string]interface{}{"name": "RSA_PRIVATE_KEY"},
-			},
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env", "name": "RSA_PRIVATE_KEY"},
 		},
 	}
 	requestedBytes, _ := json.Marshal(requestedSensor)
@@ -240,7 +236,7 @@ func TestHook_ContentArrayForm_StillParses(t *testing.T) {
 	}
 	sensor := map[string]interface{}{
 		"id":       "run-x",
-		"requires": map[string]interface{}{"env": []interface{}{map[string]interface{}{"name": "FOO"}}},
+		"requires": []interface{}{map[string]interface{}{"kind": "env", "name": "FOO"}},
 	}
 
 	sigBytes, _ := json.Marshal(failingSignal)
@@ -329,10 +325,8 @@ func TestHook_StartSensor_BareID_EmitsInjection(t *testing.T) {
 		"metadata": map[string]interface{}{"kind": "start_failed"},
 	}
 	sensor := map[string]interface{}{
-		"requires": map[string]interface{}{
-			"env": []interface{}{
-				map[string]interface{}{"name": "RSA_PRIVATE_KEY"},
-			},
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env", "name": "RSA_PRIVATE_KEY"},
 		},
 	}
 	tPath, cwd := writeBareIDTranscript(t, "/start-sensor", "watch-logs", failingSignal, sensor)
@@ -371,10 +365,8 @@ func TestHook_StopSensor_BareID_EmitsInjection(t *testing.T) {
 		"metadata": map[string]interface{}{"kind": "aggregate"},
 	}
 	sensor := map[string]interface{}{
-		"requires": map[string]interface{}{
-			"env": []interface{}{
-				map[string]interface{}{"name": "DATABASE_URL"},
-			},
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env", "name": "DATABASE_URL"},
 		},
 	}
 	tPath, cwd := writeBareIDTranscript(t, "/stop-sensor", "run-project", failingSignal, sensor)
@@ -406,7 +398,7 @@ func TestHook_StopSensor_FlagBeforeID_ResolvesCorrectly(t *testing.T) {
 	os.MkdirAll(sensorsDir, 0o755)
 	sensor := map[string]interface{}{
 		"id":       "my-sensor",
-		"requires": map[string]interface{}{"env": []interface{}{map[string]interface{}{"name": "FOO"}}},
+		"requires": []interface{}{map[string]interface{}{"kind": "env", "name": "FOO"}},
 	}
 	sensorBytes, _ := json.Marshal(sensor)
 	os.WriteFile(filepath.Join(sensorsDir, "my-sensor.json"), sensorBytes, 0o644)
