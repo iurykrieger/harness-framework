@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
@@ -16,11 +17,18 @@ import (
 // failed. The aggregate Signal of the requested sensor is the LAST line
 // on stdout (contract preserved from the prior streaming-sensors design).
 //
+// sensorPath must be located at <projectRoot>/sensors/<id>.json so that
+// RunDeps can discover siblings via filepath.Join(projectRoot, "sensors").
+//
 // Exit codes:
 //
-//	0 — every requested-or-implied sensor produced a Signal (some may be
-//	     cascade or fail/error; emission is what matters for exit 0).
-//	1 — DAG resolution failed (cycle, missing dep, malformed sensor JSON).
+//	0 — root sensor ran via RunOne and its aggregate was emitted (verdict
+//	     pass/warn/fail/error baked into the Signal — exit code reflects
+//	     emission, not verdict).
+//	1 — root sensor did not run: either DAG resolution failed (cycle,
+//	     missing dep, malformed sensor JSON), or a dep produced
+//	     fail/error and the root was cascade-skipped. A cascade Signal is
+//	     still emitted to stdout before the non-zero exit.
 //	2 — schema/io error opening the sensor or schemas.
 func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, stderr io.Writer) int {
 	abs, err := filepath.Abs(sensorPath)
@@ -28,7 +36,7 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 		fmt.Fprintln(stderr, "error: abs path:", err)
 		return 2
 	}
-	root := filepath.Dir(abs)
+	projectRoot := filepath.Dir(filepath.Dir(abs))
 
 	v, code := schema.LoadValidator(schemasDir, stderr)
 	if code != 0 {
@@ -36,66 +44,30 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 	}
 
 	rootID := StripJSONExt(filepath.Base(abs))
-	order, err := Resolve(rootID, root)
-	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
-		return 1
-	}
-
-	// Validate every sensor in the graph against schemas/sensor.json before
-	// running anything. Dependencies that fail validation should abort
-	// the run, not be discovered mid-pipeline.
-	for _, s := range order {
-		if err := v.Validate(schema.TargetSensor, s.JSON); err != nil {
-			schema.PrintValidationOrPlain(err, stderr)
-			return 1
-		}
-	}
-
-	signals := map[string]map[string]interface{}{}
-	var liveStack []string
-
-	projectRoot := filepath.Dir(filepath.Dir(abs))
+	holderPID := os.Getpid()
+	pre := RunDeps(ctx, rootID, projectRoot, schemasDir, rootID, holderPID, v, stdout, stderr)
 
 	defer func() {
-		// Detach in reverse order. Even if RunWithDeps panics or returns
-		// early, blocking deps must come down.
-		for i := len(liveStack) - 1; i >= 0; i-- {
-			DetachLiveDep(liveStack[i], projectRoot, rootID, v, stdout, stderr)
+		for i := len(pre.LiveStack) - 1; i >= 0; i-- {
+			DetachLiveDep(pre.LiveStack[i], projectRoot, rootID, v, stdout, stderr)
 		}
 	}()
 
-	for _, s := range order {
-		execMap, _ := s.JSON["execution"].(map[string]interface{})
-		blocking, _ := execMap["blocking"].(bool)
-		if blocking && s.ID != rootID {
-			depID, err := AttachLiveDep(ctx, s, projectRoot, rootID, v, stdout, stderr)
-			if err != nil {
-				cascade := buildSimpleSignal(rootID, "error", "high", "dep_start_failed", err.Error())
-				_ = json.NewEncoder(stdout).Encode(cascade)
-				return 1
-			}
-			liveStack = append(liveStack, depID)
-			signals[s.ID] = map[string]interface{}{"verdict": "pass"}
-			continue
-		}
-		if blocker := FirstFailedDep(s, signals); blocker != nil {
-			cascade := BuildCascadeSignal(s, blocker)
-			if err := v.Validate(schema.TargetSignal, cascade); err != nil {
-				schema.PrintValidationOrPlain(err, stderr)
-				return 1
-			}
-			_ = json.NewEncoder(stdout).Encode(cascade)
-			signals[s.ID] = cascade
-			continue
-		}
-		sig, sigCode := RunOne(ctx, s, schemasDir, v, stdout, stderr)
-		if sigCode != 0 {
-			return sigCode
-		}
-		signals[s.ID] = sig
+	if pre.ExitCode != 0 {
+		return pre.ExitCode
 	}
-	return 0
+	if pre.CascadeSig != nil {
+		if err := v.Validate(schema.TargetSignal, pre.CascadeSig); err != nil {
+			schema.PrintValidationOrPlain(err, stderr)
+			return 1
+		}
+		_ = json.NewEncoder(stdout).Encode(pre.CascadeSig)
+		return 1
+	}
+
+	target := pre.Order[len(pre.Order)-1]
+	_, code = RunOne(ctx, target, schemasDir, v, stdout, stderr)
+	return code
 }
 
 // FirstFailedDep returns the Signal of the first dep id (in declaration

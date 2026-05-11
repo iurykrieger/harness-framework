@@ -68,7 +68,7 @@ func runTail(res registry.Result, args []string, stdout, stderr io.Writer) int {
 	rs := res.State
 	entry := rs.FindEntry(id)
 	if entry == nil {
-		_ = json.NewEncoder(stdout).Encode(validateSignal(v, simpleErrSignal(res, id, "tail_not_running", fmt.Sprintf("no live entry for %q", id)), id, stderr))
+		_ = json.NewEncoder(stdout).Encode(validateSignal(v, simpleErrSignal(res, id, "not_running", fmt.Sprintf("no live entry for %q", id)), id, stderr))
 		return 1
 	}
 
@@ -97,7 +97,7 @@ func runTail(res registry.Result, args []string, stdout, stderr io.Writer) int {
 func tailEnvelope(res registry.Result, id string, nextCursor int) map[string]interface{} {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	md := registry.DiagnoseMetadata(res)
-	md["kind"] = "tail_envelope"
+	md["kind"] = "envelope"
 	md["next_cursor"] = nextCursor
 	md["sensor_id"] = id // legacy field, do not remove
 	return map[string]interface{}{

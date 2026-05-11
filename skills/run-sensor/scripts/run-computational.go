@@ -10,7 +10,9 @@
 // Stdout is JSONL: every dep's aggregate Signal first, then the requested
 // sensor's individual Signals (one per matched output line), terminated by
 // the requested sensor's aggregate Signal as the LAST line. Exit codes:
-// 0 ok (Signals printed), 1 schema/DAG failure, 2 usage or I/O error.
+// 0 ok (root ran and emitted its aggregate), 1 root did not run (DAG
+// failure or dep cascade — a cascade Signal is still emitted to stdout),
+// 2 usage or I/O error.
 package main
 
 import (
