@@ -1,9 +1,9 @@
 // Package orchestrator resolves and runs sensor dependency graphs. A
-// sensor's depends_on declares ids of other sensors that must run and
-// pass before it; this package walks that closure, sorts topologically
-// (deps first), and runs each sensor's prepare → command → teardown
-// lifecycle. Failures cascade: dependents of a failed sensor never run
-// and emit cascade Signals instead.
+// sensor's `requires[]` entries of `kind=sensor` declare ids of other
+// sensors that must run and pass before it. This package walks that closure,
+// sorts topologically (deps first), and runs each sensor's
+// requires[kind=step] → command → teardown lifecycle. Failures cascade:
+// dependents of a failed sensor never run and emit cascade Signals instead.
 package orchestrator
 
 import (
@@ -23,7 +23,7 @@ type Sensor struct {
 }
 
 // Resolve loads the sensor identified by rootID from sensorRoot, walks
-// its depends_on transitively, and returns the slice topo-sorted (leaves
+// its requires[kind=sensor] transitively, and returns the slice topo-sorted (leaves
 // first, rootID last). Cycles (including self-loops A → A) and missing
 // dependency files cause an error and an empty slice.
 func Resolve(rootID, sensorRoot string) ([]Sensor, error) {
@@ -74,10 +74,10 @@ func loadRecursive(id, root string, sensors map[string]Sensor, deps map[string][
 }
 
 func readDepsArray(s map[string]interface{}) []string {
-	raw, _ := s["depends_on"].([]interface{})
-	out := make([]string, 0, len(raw))
-	for _, item := range raw {
-		if id, ok := item.(string); ok {
+	items := sensor.Project(s, "sensor")
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if id, ok := item["id"].(string); ok && id != "" {
 			out = append(out, id)
 		}
 	}

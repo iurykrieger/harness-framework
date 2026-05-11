@@ -29,7 +29,7 @@ func TestCheckRequiredEnv_NoRequires(t *testing.T) {
 
 func TestCheckRequiredEnv_EmptyEnv(t *testing.T) {
 	got := CheckRequiredEnv(map[string]interface{}{
-		"requires": map[string]interface{}{"env": []interface{}{}},
+		"requires": []interface{}{},
 	})
 	if got != nil {
 		t.Fatalf("expected nil, got %#v", got)
@@ -39,11 +39,9 @@ func TestCheckRequiredEnv_EmptyEnv(t *testing.T) {
 func TestCheckRequiredEnv_RequiredMissing(t *testing.T) {
 	withFakeEnv(t, map[string]string{})
 	got := CheckRequiredEnv(map[string]interface{}{
-		"requires": map[string]interface{}{
-			"env": []interface{}{
-				map[string]interface{}{"name": "GITHUB_TOKEN", "description": "PAT"},
-				map[string]interface{}{"name": "GCP_PROJECT"},
-			},
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env", "name": "GITHUB_TOKEN", "description": "PAT"},
+			map[string]interface{}{"kind": "env", "name": "GCP_PROJECT"},
 		},
 	})
 	want := []MissingEnv{
@@ -58,10 +56,8 @@ func TestCheckRequiredEnv_RequiredMissing(t *testing.T) {
 func TestCheckRequiredEnv_RequiredPresent(t *testing.T) {
 	withFakeEnv(t, map[string]string{"GITHUB_TOKEN": "ghp_xxx"})
 	got := CheckRequiredEnv(map[string]interface{}{
-		"requires": map[string]interface{}{
-			"env": []interface{}{
-				map[string]interface{}{"name": "GITHUB_TOKEN"},
-			},
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env", "name": "GITHUB_TOKEN"},
 		},
 	})
 	if got != nil {
@@ -72,11 +68,9 @@ func TestCheckRequiredEnv_RequiredPresent(t *testing.T) {
 func TestCheckRequiredEnv_OptionalMissingIsIgnored(t *testing.T) {
 	withFakeEnv(t, map[string]string{})
 	got := CheckRequiredEnv(map[string]interface{}{
-		"requires": map[string]interface{}{
-			"env": []interface{}{
-				map[string]interface{}{"name": "DEBUG", "optional": true},
-				map[string]interface{}{"name": "REGION"},
-			},
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env", "name": "DEBUG", "optional": true},
+			map[string]interface{}{"kind": "env", "name": "REGION"},
 		},
 	})
 	if len(got) != 1 || got[0].Name != "REGION" {
@@ -87,14 +81,12 @@ func TestCheckRequiredEnv_OptionalMissingIsIgnored(t *testing.T) {
 func TestCheckRequiredEnv_MalformedEntriesIgnored(t *testing.T) {
 	withFakeEnv(t, map[string]string{})
 	got := CheckRequiredEnv(map[string]interface{}{
-		"requires": map[string]interface{}{
-			"env": []interface{}{
-				"not-an-object",
-				map[string]interface{}{},                      // no name
-				map[string]interface{}{"name": ""},            // empty name
-				map[string]interface{}{"name": "REAL_ONE"},    // counted
-				map[string]interface{}{"description": "orphan"}, // missing name
-			},
+		"requires": []interface{}{
+			"not-an-object",
+			map[string]interface{}{"kind": "env"},                               // no name
+			map[string]interface{}{"kind": "env", "name": ""},                   // empty name
+			map[string]interface{}{"kind": "env", "name": "REAL_ONE"},           // counted
+			map[string]interface{}{"kind": "env", "description": "orphan"},      // missing name
 		},
 	})
 	if len(got) != 1 || got[0].Name != "REAL_ONE" {

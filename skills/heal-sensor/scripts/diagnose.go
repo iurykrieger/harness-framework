@@ -5,7 +5,7 @@
 // the calling agent uses to fill in the Setup Plan slots.
 //
 // The script does NOT do LLM reasoning. It collects the deterministic
-// inputs (signal contents, declared requires.*, README/CLAUDE/AGENTS
+// inputs (signal contents, declared requires[], README/CLAUDE/AGENTS
 // excerpts, .env.example presence and contents) so the calling agent
 // has them in one place and SKILL.md prose can deterministically
 // reference what's available.

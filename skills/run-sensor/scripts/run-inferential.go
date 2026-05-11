@@ -106,7 +106,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 
 	output, _ := sensorJSON["output"].(string)
 
-	// Resolve depends_on graph. Run every dep via orchestrator.RunOne;
+	// Resolve requires[kind=sensor] graph. Run every dep via orchestrator.RunOne;
 	// blocking deps are started/attached via AttachLiveDep and detached
 	// after the requested sensor completes.
 	sensorRoot := filepath.Dir(sensorAbsPath)

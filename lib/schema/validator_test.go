@@ -3,6 +3,7 @@ package schema_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -331,31 +332,26 @@ func TestValidator_KindEnumRejectsUnknown(t *testing.T) {
 	}
 }
 
-func TestValidator_DependsOnAcceptsIDArray(t *testing.T) {
+func TestValidator_DependsOnRejectedAsV1Field(t *testing.T) {
 	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := testfixtures.ValidSensorComputational()
 	s["depends_on"] = []interface{}{"start-postgres", "setup-env"}
-	if err := v.Validate(schema.TargetSensor, s); err != nil {
-		t.Fatalf("expected valid depends_on to validate: %v", err)
+	err = v.Validate(schema.TargetSensor, s)
+	if err == nil {
+		t.Fatal("expected depends_on to be rejected as v1 field after hard-cut")
+	}
+	if !strings.Contains(err.Error(), "depends_on") {
+		t.Fatalf("expected error to mention depends_on, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "migrate-requires.go") {
+		t.Fatalf("expected error to reference migration script, got: %v", err)
 	}
 }
 
-func TestValidator_DependsOnRejectsBadID(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := testfixtures.ValidSensorComputational()
-	s["depends_on"] = []interface{}{"Bad-ID"} // uppercase rejected
-	if err := v.Validate(schema.TargetSensor, s); err == nil {
-		t.Fatal("expected validation to fail for uppercase id in depends_on")
-	}
-}
-
-func TestValidator_PrepareTeardownAccepted(t *testing.T) {
+func TestValidator_ExecutionPrepareRejectedAsV1Field(t *testing.T) {
 	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
@@ -365,11 +361,27 @@ func TestValidator_PrepareTeardownAccepted(t *testing.T) {
 	exec["prepare"] = []interface{}{
 		map[string]interface{}{"command": "echo prep", "timeout_ms": 1000},
 	}
+	err = v.Validate(schema.TargetSensor, s)
+	if err == nil {
+		t.Fatal("expected execution.prepare to be rejected as v1 field after hard-cut")
+	}
+	if !strings.Contains(err.Error(), "execution.prepare") {
+		t.Fatalf("expected error to mention execution.prepare, got: %v", err)
+	}
+}
+
+func TestValidator_TeardownAccepted(t *testing.T) {
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testfixtures.ValidSensorComputational()
+	exec := s["execution"].(map[string]interface{})
 	exec["teardown"] = []interface{}{
 		map[string]interface{}{"command": "echo down"},
 	}
 	if err := v.Validate(schema.TargetSensor, s); err != nil {
-		t.Fatalf("expected prepare+teardown to validate: %v", err)
+		t.Fatalf("expected teardown to validate: %v", err)
 	}
 }
 
@@ -385,5 +397,105 @@ func TestValidator_UpstreamSensorsRemoved(t *testing.T) {
 	s["requires"] = requires
 	if err := v.Validate(schema.TargetSensor, s); err == nil {
 		t.Fatal("expected requires.upstream_sensors to be rejected (additionalProperties false)")
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// requires v2 array (discriminated union)
+// ──────────────────────────────────────────────────────────────────────
+
+func TestValidator_Sensor_RequiresArrayV2(t *testing.T) {
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{
+		"id": "ex-v2",
+		"version": "1.0.0",
+		"name": "ex",
+		"description": "desc",
+		"kind": "observation",
+		"type": "computational",
+		"regulation": "behaviour",
+		"phase": "on-demand",
+		"determinism": "high",
+		"output": "single",
+		"cost": {"class":"cheap","compute":{"cpu":"low","memory_mb":64},"latency":{"p50_ms":1,"p95_ms":1,"timeout_ms":1000}},
+		"triggers": [{"on":"manual"}],
+		"requires": [
+			{"kind":"sensor","id":"setup-touch-file"},
+			{"kind":"tool","name":"docker"},
+			{"kind":"env","name":"GH_TOKEN","optional":false},
+			{"kind":"context","path":"docs/"},
+			{"kind":"permission","scope":"repo:read"},
+			{"kind":"step","command":"true"}
+		],
+		"execution": {"command":"true","exit_code_map":[{"exit_code":0,"verdict":"pass","severity":"info"}]},
+		"verification": {"golden_cases":[{"fixture":"f","expected_verdict":"pass","expected_severity":"info"}]}
+	}`)
+	var instance map[string]interface{}
+	if err := json.Unmarshal(body, &instance); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Validate(schema.TargetSensor, instance); err != nil {
+		t.Fatalf("expected v2 requires[] to validate, got: %v", err)
+	}
+}
+
+
+func TestValidator_Sensor_RequiresArrayV2_Rejections(t *testing.T) {
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Minimal valid sensor skeleton with requires replaced per case.
+	const skeleton = `{
+		"id": "ex-v2-reject",
+		"version": "1.0.0",
+		"name": "ex",
+		"description": "desc",
+		"kind": "observation",
+		"type": "computational",
+		"regulation": "behaviour",
+		"phase": "on-demand",
+		"determinism": "high",
+		"output": "single",
+		"cost": {"class":"cheap","compute":{"cpu":"low","memory_mb":64},"latency":{"p50_ms":1,"p95_ms":1,"timeout_ms":1000}},
+		"triggers": [{"on":"manual"}],
+		"requires": %s,
+		"execution": {"command":"true","exit_code_map":[{"exit_code":0,"verdict":"pass","severity":"info"}]},
+		"verification": {"golden_cases":[{"fixture":"f","expected_verdict":"pass","expected_severity":"info"}]}
+	}`
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "unknown kind in v2 array item",
+			body: `[{"kind":"port","addr":"5432"}]`,
+		},
+		{
+			name: "RequireSensor item missing required id field",
+			body: `[{"kind":"sensor"}]`,
+		},
+		{
+			name: "RequireEnv item with lowercase name violates pattern",
+			body: `[{"kind":"env","name":"lowercase"}]`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(fmt.Sprintf(skeleton, tc.body))
+			var instance map[string]interface{}
+			if err := json.Unmarshal(raw, &instance); err != nil {
+				t.Fatalf("fixture JSON is invalid: %v", err)
+			}
+			if err := v.Validate(schema.TargetSensor, instance); err == nil {
+				t.Fatalf("expected validation to fail for case %q, but it passed", tc.name)
+			}
+		})
 	}
 }

@@ -231,9 +231,11 @@ func TestRunInferential_MissingRequiredEnvAborts(t *testing.T) {
 	b, _ := os.ReadFile(sensorPath)
 	var s map[string]interface{}
 	_ = json.Unmarshal(b, &s)
-	s["requires"] = map[string]interface{}{
-		"env": []interface{}{
-			map[string]interface{}{"name": "DETECT_SENSORS_INF_GHOST", "description": "intentionally unset"},
+	s["requires"] = []interface{}{
+		map[string]interface{}{
+			"kind":        "env",
+			"name":        "DETECT_SENSORS_INF_GHOST",
+			"description": "intentionally unset",
 		},
 	}
 	nb, _ := json.Marshal(s)
@@ -303,7 +305,9 @@ func TestRun_InferentialWithComputationalDep(t *testing.T) {
 	// Inferential requested sensor that depends on the setup.
 	infJSON := testfixtures.ValidSensorInferential()
 	infJSON["id"] = "inf-with-dep"
-	infJSON["depends_on"] = []interface{}{"setup-x"}
+	infJSON["requires"] = []interface{}{
+		map[string]interface{}{"kind": "sensor", "id": "setup-x"},
+	}
 	infExec := infJSON["execution"].(map[string]interface{})
 	infExec["user_prompt_template"] = "static prompt"
 	infExec["command"] = `echo '{"sensor_id":"inf-with-dep","version":"0.1.0","run_id":"r","started_at":"2026-05-08T00:00:00Z","finished_at":"2026-05-08T00:00:01Z","verdict":"pass","severity":"info","confidence":0.9,"evidence":[],"cost_actual":{"latency_ms":100}}'`

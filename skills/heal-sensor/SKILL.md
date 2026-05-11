@@ -45,8 +45,8 @@ Read `/tmp/heal-input.json` and write a Setup Plan to `/tmp/heal-plan.json` that
   "auto_apply": [
     { "kind": "copy-template", "src": "<absolute path>", "dst": "<absolute path>" },
     { "kind": "set-env-in-file", "file": "<.env path>", "name": "<VAR>", "value_source": "ask-user" },
-    { "kind": "mkdir", "dir": "<path under requires.context>" },
-    { "kind": "touch", "file": "<path under requires.context>" }
+    { "kind": "mkdir", "dir": "<path under requires[kind=context]>" },
+    { "kind": "touch", "file": "<path under requires[kind=context]>" }
   ],
   "propose_only": [
     { "kind": "shell", "command": "<unsafe or non-allowlisted>", "rationale": "..." }
@@ -64,7 +64,7 @@ Rules for filling in the slots:
 
 - `shape`: pick from the closed enum. Match the rule that fired (the hook's injection message names it).
 - `auto_apply[]`: only the four kinds listed above. Anything else (`pnpm install`, `docker compose up`, `gcloud auth login`, custom Makefile targets) goes into `propose_only[]`. The `lib/heal.Apply` allowlist will reject anything else even if you list it.
-- `sensor_patches[]`: when the failing sensor would benefit from declaring an additional `requires.env[]` entry or wiring `depends_on` to a new setup sensor — emit the patched full JSON. Don't emit a JSON patch document; emit the new full sensor object. `apply-sensors.go` will run `lib/heal/version.BumpPatch` before persisting.
+- `sensor_patches[]`: when the failing sensor would benefit from declaring an additional `requires[kind=env]` entry or wiring a `requires[kind=sensor]` reference to a new setup sensor — emit the patched full JSON. Don't emit a JSON patch document; emit the new full sensor object. `apply-sensors.go` will run `lib/heal/version.BumpPatch` before persisting.
 - `new_setup_sensors[]`: when the project would benefit from a reusable setup sensor (e.g., `setup-env-from-example`) — emit the full new sensor JSON at version `0.1.0` with `kind: "setup"`.
 
 ### 3. Apply file mutations
@@ -79,7 +79,7 @@ go run ./skills/heal-sensor/scripts/apply-safe.go \
 Inspect `/tmp/heal-apply.json`. For each result with `needs_input: true`:
 
 1. Find the matching `auto_apply[]` item (by file/name).
-2. Read the failed sensor's `requires.env[<NAME>].description` for context.
+2. Read the failed sensor's `requires[kind=env]` entry for `<NAME>` and its `description` for context.
 3. Invoke the `AskUserQuestion` tool synchronously with the description as the question; let the user paste the value.
 4. Edit the Plan: set the `value` field on the matching auto_apply item to the user's answer; remove `value_source`.
 5. Re-run `apply-safe.go` against the patched Plan — it will write the line via `WriteEnvVar` (chmod 600).

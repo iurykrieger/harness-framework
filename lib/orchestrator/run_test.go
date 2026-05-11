@@ -23,11 +23,11 @@ func writeSensorWithDeps(t *testing.T, projectRoot, id string, depsOn []string, 
 	s := testfixtures.ValidSensorComputational()
 	s["id"] = id
 	if len(depsOn) > 0 {
-		ds := []interface{}{}
+		reqs := []interface{}{}
 		for _, d := range depsOn {
-			ds = append(ds, d)
+			reqs = append(reqs, map[string]interface{}{"kind": "sensor", "id": d})
 		}
-		s["depends_on"] = ds
+		s["requires"] = reqs
 	}
 	exec := s["execution"].(map[string]interface{})
 	exec["command"] = command

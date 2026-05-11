@@ -6,6 +6,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -68,10 +69,94 @@ func NewValidator(schemasDir string) (*Validator, error) {
 func (v *Validator) Validate(target Target, instance interface{}) error {
 	switch target {
 	case TargetSensor:
+		raw, _ := json.Marshal(instance)
+		if fields, ok := detectLegacyShape(raw); ok {
+			id := "<unknown>"
+			if m, mok := instance.(map[string]interface{}); mok {
+				if s, sok := m["id"].(string); sok {
+					id = s
+				}
+			}
+			return fmt.Errorf(
+				"sensor %s uses v1 schema fields (%s).\nRun `go run ./scripts/migrate-requires.go <path>` to upgrade to v2.",
+				id, strings.Join(fields, ", "),
+			)
+		}
+		if idx, k, ok := detectUnknownKind(raw); ok {
+			id := "<unknown>"
+			if m, mok := instance.(map[string]interface{}); mok {
+				if s, sok := m["id"].(string); sok {
+					id = s
+				}
+			}
+			return fmt.Errorf(
+				"sensor %s requires[%d] has unknown kind %q. Valid kinds: sensor, tool, env, context, permission, step.",
+				id, idx, k,
+			)
+		}
 		return v.sensor.Validate(instance)
 	case TargetSignal:
 		return v.signal.Validate(instance)
 	default:
 		return fmt.Errorf("unknown target %q", target)
 	}
+}
+
+// detectLegacyShape returns the names of v1 schema fields present in the
+// raw sensor JSON. ok is true when at least one is found. Used by Validate
+// to short-circuit with an actionable migration message that points at
+// scripts/migrate-requires.go even after the v1 fields are removed from
+// the schema (since the JSON Schema rejection message for an unknown
+// top-level property is opaque).
+func detectLegacyShape(raw []byte) ([]string, bool) {
+	var s map[string]interface{}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, false
+	}
+	var found []string
+	if _, ok := s["depends_on"]; ok {
+		found = append(found, "depends_on")
+	}
+	if _, ok := s["requires"].(map[string]interface{}); ok {
+		found = append(found, "requires (object)")
+	}
+	if exec, ok := s["execution"].(map[string]interface{}); ok {
+		if _, ok := exec["prepare"]; ok {
+			found = append(found, "execution.prepare")
+		}
+	}
+	return found, len(found) > 0
+}
+
+// detectUnknownKind returns the index and value of the first requires[]
+// entry whose kind is not one of the six known kinds. ok is true when
+// found. Translates the opaque "oneOf failed: 0 of 6 schemas matched"
+// rejection into an actionable error message.
+func detectUnknownKind(raw []byte) (int, string, bool) {
+	var s map[string]interface{}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return 0, "", false
+	}
+	arr, ok := s["requires"].([]interface{})
+	if !ok {
+		return 0, "", false
+	}
+	known := map[string]bool{
+		"sensor": true, "tool": true, "env": true,
+		"context": true, "permission": true, "step": true,
+	}
+	for i, raw := range arr {
+		item, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		k, ok := item["kind"].(string)
+		if !ok {
+			continue
+		}
+		if !known[k] {
+			return i, k, true
+		}
+	}
+	return 0, "", false
 }

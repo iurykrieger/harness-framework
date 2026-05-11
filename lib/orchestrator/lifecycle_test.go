@@ -53,11 +53,11 @@ func TestRunOne_PrepareFailFast(t *testing.T) {
 	v, _ := schema.NewValidator(schemasDir)
 	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
 	exec := js["execution"].(map[string]interface{})
-	exec["prepare"] = []interface{}{
-		map[string]interface{}{"command": "false"},
-		map[string]interface{}{"command": "echo should-not-run"},
-	}
 	exec["command"] = "echo should-not-run-either"
+	js["requires"] = []interface{}{
+		map[string]interface{}{"kind": "step", "command": "false"},
+		map[string]interface{}{"kind": "step", "command": "echo should-not-run"},
+	}
 	s := Sensor{ID: js["id"].(string), JSON: js}
 
 	var out, errBuf bytes.Buffer
@@ -239,12 +239,11 @@ func TestRunOne_AbortsOnMissingRequiresEnv(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
 	v, _ := schema.NewValidator(schemasDir)
 	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
-	js["requires"] = map[string]interface{}{
-		"env": []interface{}{
-			map[string]interface{}{
-				"name":        "HARNESS_TEST_NEVER_SET",
-				"description": "intentionally unset for this test",
-			},
+	js["requires"] = []interface{}{
+		map[string]interface{}{
+			"kind":        "env",
+			"name":        "HARNESS_TEST_NEVER_SET",
+			"description": "intentionally unset for this test",
 		},
 	}
 	exec := js["execution"].(map[string]interface{})

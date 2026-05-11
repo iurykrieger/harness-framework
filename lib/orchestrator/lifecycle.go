@@ -45,7 +45,7 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 	execMap, _ := s.JSON["execution"].(map[string]interface{})
 	output, _ := s.JSON["output"].(string)
 
-	// Phase 0: enforce sensor.requires.env BEFORE prepare runs.
+	// Phase 0: enforce requires[kind=env] BEFORE prepare runs.
 	// A missing non-optional env var means the sensor cannot run at all —
 	// skip prepare, command, and teardown entirely and emit a single
 	// verdict=error aggregate Signal whose per-var evidence rationale is
@@ -67,8 +67,8 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 
 	timeoutMS := readTimeoutMS(s.JSON)
 
-	// Phase 1: prepare (fail-fast).
-	prepResults, prepFailed := runLifecyclePhase(ctx, execMap, "prepare", timeoutMS, true)
+	// Phase 1: prepare (fail-fast). Reads requires[kind=step] via sensor.Project().
+	prepResults, prepFailed := runPreparePhase(ctx, s.JSON, timeoutMS)
 
 	var aggregateMD map[string]interface{}
 	var aggVerdict, aggSeverity string
@@ -146,7 +146,7 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 	}
 
 	// Phase 3: teardown (best-effort, runs regardless of prepare/command outcome).
-	tdResults, _ := runLifecyclePhase(ctx, execMap, "teardown", timeoutMS, false)
+	tdResults := runTeardownPhase(ctx, execMap, timeoutMS)
 
 	if aggregateMD == nil {
 		aggregateMD = map[string]interface{}{
@@ -194,12 +194,47 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 	return sig, 0
 }
 
-// runLifecyclePhase walks execMap[phase] (prepare or teardown), runs each
-// step via subprocess.RunStep, and returns a slice of result maps shaped
-// for inclusion under metadata.lifecycle. On failFast=true, the first
-// non-pass step short-circuits (returns prepFailed=true).
-func runLifecyclePhase(ctx context.Context, execMap map[string]interface{}, phase string, defaultTimeoutMS int, failFast bool) ([]interface{}, bool) {
-	steps, _ := execMap[phase].([]interface{})
+// runPreparePhase reads requires[kind=step] from the sensor JSON (via
+// sensor.Project) and runs each step fail-fast. Per-step results are folded
+// into metadata.lifecycle.prepare (the metadata key keeps its name; it is
+// the phase name, not the schema field name).
+func runPreparePhase(ctx context.Context, sensorJSON map[string]interface{}, defaultTimeoutMS int) ([]interface{}, bool) {
+	steps := sensor.Project(sensorJSON, "step")
+	var out []interface{}
+	for _, step := range steps {
+		cmd, _ := step["command"].(string)
+		t := defaultTimeoutMS
+		if v, ok := step["timeout_ms"]; ok {
+			t = int(asNumber(v))
+		}
+		res, _ := subprocess.RunStep(ctx, subprocess.StepConfig{Command: cmd, TimeoutMS: t})
+		ecMap, _ := step["exit_code_map"].([]interface{})
+		verdict, severity := mapStepExitCode(res.ExitCode, ecMap, "prepare")
+		entry := map[string]interface{}{
+			"command":    cmd,
+			"exit_code":  res.ExitCode,
+			"latency_ms": res.ElapsedMS,
+			"timed_out":  res.TimedOut,
+			"verdict":    verdict,
+			"severity":   severity,
+		}
+		if res.StderrExcerpt != "" {
+			entry["stderr_excerpt"] = res.StderrExcerpt
+		}
+		out = append(out, entry)
+		if verdict != "pass" {
+			return out, true
+		}
+	}
+	return out, false
+}
+
+// runTeardownPhase walks execMap["teardown"] best-effort and returns the
+// per-step result entries. Teardown lives in execution.teardown[];
+// sensor-local setup steps live in requires[kind=step] (consumed by
+// runPreparePhase).
+func runTeardownPhase(ctx context.Context, execMap map[string]interface{}, defaultTimeoutMS int) []interface{} {
+	steps, _ := execMap["teardown"].([]interface{})
 	var out []interface{}
 	for _, raw := range steps {
 		step, ok := raw.(map[string]interface{})
@@ -213,7 +248,7 @@ func runLifecyclePhase(ctx context.Context, execMap map[string]interface{}, phas
 		}
 		res, _ := subprocess.RunStep(ctx, subprocess.StepConfig{Command: cmd, TimeoutMS: t})
 		ecMap, _ := step["exit_code_map"].([]interface{})
-		verdict, severity := mapStepExitCode(res.ExitCode, ecMap, phase)
+		verdict, severity := mapStepExitCode(res.ExitCode, ecMap, "teardown")
 		entry := map[string]interface{}{
 			"command":    cmd,
 			"exit_code":  res.ExitCode,
@@ -226,11 +261,8 @@ func runLifecyclePhase(ctx context.Context, execMap map[string]interface{}, phas
 			entry["stderr_excerpt"] = res.StderrExcerpt
 		}
 		out = append(out, entry)
-		if failFast && verdict != "pass" {
-			return out, true
-		}
 	}
-	return out, false
+	return out
 }
 
 // mapStepExitCode applies the step's exit_code_map (if any), or the

@@ -95,7 +95,7 @@ func writeConsumer(t *testing.T, root, id string) {
 "phase": "on-demand",
 "triggers": [{"on": "manual"}],
 "verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
-"depends_on": ["blocking-tick"],
+"requires": [{"kind":"sensor","id":"blocking-tick"}],
 "cost": {
   "class": "cheap",
   "compute": {"cpu":"low","memory_mb":32},
