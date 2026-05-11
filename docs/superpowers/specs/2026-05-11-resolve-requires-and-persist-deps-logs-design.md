@@ -143,9 +143,11 @@ type GateOpts struct {
 }
 
 // CheckRequiresGate runs each check in fixed order — tool → context → env —
-// and collects all failures (no fail-fast). kind=sensor / kind=step / kind=permission
-// entries are ignored: sensor is handled by the orchestrator DAG, step by the
-// prepare phase, permission by Claude Code's permission engine.
+// and collects all failures (no fail-fast). Within a kind, failures appear
+// in the same order as the corresponding entries appear in requires[].
+// kind=sensor / kind=step / kind=permission entries are ignored: sensor is
+// handled by the orchestrator DAG, step by the prepare phase, permission by
+// Claude Code's permission engine.
 func CheckRequiresGate(sensorJSON map[string]interface{}, opts GateOpts) Gate
 
 // BuildRequiresGateSignal constructs the verdict=error Signal emitted by the
@@ -319,17 +321,20 @@ New helper in `lib/orchestrator/`:
 // point in the orchestrator: cascade signals, dep_attached, dep_detached,
 // dep_started, aggregate, RunOne aggregate, runtime_dir_failed.
 //
+// Single source of truth for run_id: ALWAYS read from sig["run_id"]. The helper
+// signature deliberately omits a separate runID parameter to prevent two
+// conventions in the same function. If sig["run_id"] is absent (shouldn't
+// happen post-schema-validation), the helper falls back to
+// time.Now().UTC().UnixNano() formatted as a sortable string and logs a
+// warning to stderr.
+//
 // stdout is wrapped in a MultiWriter only for the duration of one Encode call;
 // the helper takes care of opening/closing signals.log to avoid keeping FDs
 // across nested calls.
-func emitSignalWithPersistence(sig map[string]interface{}, stdout io.Writer, projectRoot, sensorID, runID string) error
+func emitSignalWithPersistence(sig map[string]interface{}, stdout io.Writer, projectRoot, sensorID string) error
 ```
 
 All current `json.NewEncoder(stdout).Encode(...)` calls in `live_deps.go` and `preflight.go` are replaced with this helper. Tests verify that each emission point produces the same byte sequence in stdout and signals.log.
-
-### Cascade run_id
-
-`BuildCascadeSignal` already includes `run_id` in the Signal envelope. The helper extracts `sig["run_id"]` as the path segment when emitting a cascade Signal for sensor X. If `run_id` is absent (shouldn't happen post-schema-validation), the helper falls back to `time.Now().UTC().UnixNano()` formatted as a sortable string and logs a warning to stderr.
 
 ## 12. `lib/orchestrator/live_deps.go::startBlockingDep` changes
 
