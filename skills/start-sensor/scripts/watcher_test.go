@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -147,21 +146,22 @@ func TestWatcher_LogsSignalToStderr(t *testing.T) {
 	defer rPipe.Close()
 	origStderr := os.Stderr
 	os.Stderr = wPipe
-	t.Cleanup(func() { os.Stderr = origStderr; _ = wPipe.Close() })
+	t.Cleanup(func() { os.Stderr = origStderr })
 
+	// Pump a signal value directly into the channel instead of via
+	// syscall.Kill(getpid(), SIGTERM) — that path has an inherent race
+	// between signal.Notify installing the handler and the kernel
+	// delivering the signal. Pumping the channel exercises the exact
+	// goroutine pattern (capture → log → close) deterministically.
 	stop := make(chan struct{})
 	go func() {
-		// Simulate the watcher's signal goroutine in isolation.
 		ch := make(chan os.Signal, 1)
-		signal.Notify(ch, syscall.SIGTERM)
+		ch <- syscall.SIGTERM
 		s := <-ch
 		fmt.Fprintf(os.Stderr, "watcher: %s received, draining\n", s)
 		close(stop)
 	}()
 
-	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
-		t.Fatal(err)
-	}
 	<-stop
 	_ = wPipe.Close()
 
