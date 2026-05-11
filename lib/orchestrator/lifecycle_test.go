@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
@@ -289,6 +291,68 @@ func TestRunOne_AbortsOnMissingRequiresEnv(t *testing.T) {
 	if rem == nil || !strings.Contains(rem["instructions"].(string), "HARNESS_TEST_NEVER_SET") {
 		t.Fatalf("remediation should name missing var: %+v", rem)
 	}
+}
+
+// TestRunOne_WithRoot_CreatesAndRemovesEntry verifies the persistence
+// contract of RunOneWithRoot: a <run-id>/ directory and a registry
+// entry are created around the spawned subprocess, the entry is removed
+// on successful exit, and the aggregate Signal is written to BOTH
+// stdout and <run-id>/signals.log.
+func TestRunOne_WithRoot_CreatesAndRemovesEntry(t *testing.T) {
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sensorPath := filepath.Join(proj, "sensors", "echo.json")
+	if err := os.WriteFile(sensorPath, []byte(`{
+      "id": "echo", "version": "0.0.0", "kind": "observation",
+      "type": "computational", "output": "single",
+      "cost": {"compute": "low"},
+      "execution": {"command": "echo hi", "exit_code_map": [{"exit_code": 0, "verdict": "pass", "severity": "info"}]}
+    }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := registry.NewRoot(proj)
+	s, err := loadSensorForTest(sensorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	sig, code := RunOneWithRoot(context.Background(), s, "", nil, &root, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d, stderr=%s", code, stderr.String())
+	}
+	if sig["verdict"] != "pass" {
+		t.Errorf("verdict=%v", sig["verdict"])
+	}
+
+	rs, _ := registry.Load(root)
+	if len(rs.Entries) != 0 {
+		t.Errorf("entry not removed: %+v", rs.Entries)
+	}
+	// The <run-id>/ directory must exist and contain signals.log with the aggregate.
+	runID, _ := sig["run_id"].(string)
+	if runID == "" {
+		t.Fatal("aggregate signal missing run_id")
+	}
+	sigsPath := root.SignalsLogRun("echo", runID)
+	if _, err := os.Stat(sigsPath); err != nil {
+		t.Fatalf("signals.log missing at %s: %v", sigsPath, err)
+	}
+}
+
+// loadSensorForTest is a tiny helper to load a Sensor struct as RunOne expects.
+func loadSensorForTest(path string) (Sensor, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return Sensor{}, err
+	}
+	var j map[string]interface{}
+	if err := json.Unmarshal(b, &j); err != nil {
+		return Sensor{}, err
+	}
+	id, _ := j["id"].(string)
+	return Sensor{ID: id, Path: path, JSON: j}, nil
 }
 
 // The aggregate Signal emitted on stdout is valid JSON and the LAST line.

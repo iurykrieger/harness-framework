@@ -24,7 +24,8 @@ import (
 // requested sensor runs and stopped/detached after.
 func RunWithDepsRoot(ctx context.Context, id, projectRoot, schemasDir string, stdout, stderr io.Writer) int {
 	path := filepath.Join(projectRoot, "sensors", id+".json")
-	return RunWithDeps(ctx, path, schemasDir, stdout, stderr)
+	root := registry.NewRoot(projectRoot)
+	return runWithDepsImpl(ctx, path, schemasDir, &root, stdout, stderr)
 }
 
 // AttachLiveDep starts (or attaches to) a blocking dep. Emits a

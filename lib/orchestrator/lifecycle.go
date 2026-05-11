@@ -5,9 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/iurykrieger/harness-framework/lib/heal"
+	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
@@ -191,6 +197,264 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 		}
 	}
 	_ = json.NewEncoder(stdout).Encode(sig)
+	return sig, 0
+}
+
+// RunOneWithRoot is RunOne plus runtime persistence. When root is non-nil:
+//
+//   - After cmd.Start() returns, compute run_id = <pid>-<short-uuid8>
+//   - mkdir <run-id>/, open raw.log and signals.log (via subprocess.StreamHandle)
+//   - Insert a RunningSensorEntry with blocking=<sensor.execution.blocking>
+//   - defer remove the entry on any exit path
+//
+// When root is nil, behavior is identical to RunOne.
+func RunOneWithRoot(
+	ctx context.Context, s Sensor, schemasDir string, v *schema.Validator,
+	root *registry.Root, stdout, stderr io.Writer,
+) (map[string]interface{}, int) {
+	if root == nil {
+		return RunOne(ctx, s, schemasDir, v, stdout, stderr)
+	}
+	return runOneWithPersistence(ctx, s, schemasDir, v, *root, stdout, stderr)
+}
+
+// runOneWithPersistence mirrors RunOne but persists a <run-id>/ directory
+// and a running_sensors.json entry around the streaming subprocess. The
+// entry is best-effort removed on every exit path (mkdir failure,
+// registry insert failure, normal exit). Aggregate Signals are written
+// to both stdout and <run-id>/signals.log.
+func runOneWithPersistence(
+	ctx context.Context, s Sensor, schemasDir string, v *schema.Validator,
+	root registry.Root, stdout, stderr io.Writer,
+) (map[string]interface{}, int) {
+	envelope, err := sensor.BuildEnvelope(s.JSON)
+	if err != nil {
+		fmt.Fprintln(stderr, "error: envelope:", err)
+		return nil, 2
+	}
+	execMap, _ := s.JSON["execution"].(map[string]interface{})
+	output, _ := s.JSON["output"].(string)
+
+	// Phase 0: requires[kind=env] guard. Same fast-path as RunOne — no
+	// subprocess to manage, so no persistence required.
+	if missing := sensor.CheckRequiredEnv(s.JSON); len(missing) > 0 {
+		sig := sensor.BuildMissingEnvSignal(envelope, output, missing)
+		if v != nil {
+			if err := v.Validate(schema.TargetSignal, sig); err != nil {
+				schema.PrintValidationOrPlain(err, stderr)
+				return nil, 1
+			}
+		}
+		_ = json.NewEncoder(stdout).Encode(sig)
+		return sig, 0
+	}
+
+	timeoutMS := readTimeoutMS(s.JSON)
+
+	// Phase 1: prepare (fail-fast). No subprocess yet, no persistence.
+	prepResults, prepFailed := runPreparePhase(ctx, s.JSON, timeoutMS)
+
+	var aggregateMD map[string]interface{}
+	var aggVerdict, aggSeverity string
+	var commandRun string
+	var elapsedMS int
+	// runID is the synthesized <pid>-<short> identifier; populated only
+	// when the command phase actually spawned a subprocess.
+	var runID string
+
+	if prepFailed {
+		aggVerdict, aggSeverity = "error", "high"
+		commandRun, _ = execMap["command"].(string)
+	} else {
+		command, _ := execMap["command"].(string)
+		blocking, _ := execMap["blocking"].(bool)
+		envExtra := readEnvMap(execMap)
+
+		var patterns []signal.Pattern
+		if op, ok := execMap["output_parsing"].(map[string]interface{}); ok {
+			raw, _ := op["patterns"].([]interface{})
+			ps, perr := signal.CompilePatterns(raw)
+			if perr != nil {
+				fmt.Fprintln(stderr, "error:", perr)
+				return nil, 1
+			}
+			patterns = ps
+		}
+
+		cfg := subprocess.StreamConfig{
+			Command:   command,
+			Env:       envExtra,
+			TimeoutMS: timeoutMS,
+			Patterns:  patterns,
+			Envelope:  envelope,
+			Validator: v,
+			Stdout:    stdout,
+			Stderr:    stderr,
+		}
+		handle, startErr := subprocess.Start(ctx, cfg)
+		if startErr != nil {
+			// Couldn't even spawn — fall through to degraded aggregate.
+			aggVerdict, aggSeverity = "error", "high"
+			commandRun = command
+			fmt.Fprintf(stderr, "error: stream start: %v\n", startErr)
+		} else {
+			// PID known: synthesize run_id and prepare <run-id>/ on disk.
+			runID = fmt.Sprintf("%d-%s", handle.PID, uuid.NewString()[:8])
+			envelope.RunID = runID
+			runDir := root.RunDir(envelope.SensorID, runID)
+
+			persistOK := true
+			if mkErr := os.MkdirAll(runDir, 0o755); mkErr != nil {
+				fmt.Fprintf(stderr, "warning: mkdir run dir: %v\n", mkErr)
+				_ = handle.Kill()
+				persistOK = false
+			}
+
+			if persistOK {
+				if regErr := registry.WithFileLock(root.LockFile(), func() error {
+					rs, lerr := registry.Load(root)
+					if lerr != nil {
+						return lerr
+					}
+					if rs.FindEntryByRunID(runID) != nil {
+						return fmt.Errorf("run_id collision: %s", runID)
+					}
+					now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+					rs.Entries = append(rs.Entries, registry.RunningSensorEntry{
+						SensorID:   envelope.SensorID,
+						RunID:      runID,
+						Blocking:   blocking,
+						PID:        handle.PID,
+						PGID:       handle.PGID,
+						WatcherPID: 0,
+						StartedAt:  now,
+						Command:    command,
+						LogDir:     filepath.Join(".runtime", "sensors", envelope.SensorID, runID),
+						HeldBy:     []registry.HeldByEntry{},
+					})
+					return registry.Save(root, rs)
+				}); regErr != nil {
+					fmt.Fprintf(stderr, "warning: registry insert: %v\n", regErr)
+					_ = handle.Kill()
+					persistOK = false
+				}
+			}
+
+			// Ensure the entry is removed on every exit path.
+			defer func() {
+				if !persistOK {
+					return
+				}
+				_ = registry.WithFileLock(root.LockFile(), func() error {
+					rs, lerr := registry.Load(root)
+					if lerr != nil {
+						return lerr
+					}
+					rs.RemoveEntryByRunID(runID)
+					return registry.Save(root, rs)
+				})
+			}()
+
+			if persistOK {
+				handle.SetRunDir(runDir)
+				handle.SetEnvelope(envelope)
+			}
+
+			res := handle.Run()
+			ecMap, _ := execMap["exit_code_map"].([]interface{})
+			exitVerd, exitSev := signal.MapExitCode(res.ExitCode, ecMap)
+			streamVerd, streamSev := signal.MaxStreamVerdict(res.Individuals)
+			agg := signal.Aggregate(signal.AggregateInput{
+				ExitVerdict:    exitVerd,
+				ExitSeverity:   exitSev,
+				StreamVerdict:  streamVerd,
+				StreamSeverity: streamSev,
+				TimedOut:       res.TimedOut,
+				Blocking:       blocking,
+			})
+			aggVerdict, aggSeverity = agg.Verdict, agg.Severity
+			commandRun = command
+			elapsedMS = res.ElapsedMS
+
+			aggregateMD = map[string]interface{}{
+				"kind":        "aggregate",
+				"output_mode": output,
+				"command":     command,
+				"exit_code":   res.ExitCode,
+				"timed_out":   res.TimedOut,
+				"counts":      signal.CountVerdicts(res.Individuals),
+			}
+			if blocking {
+				aggregateMD["blocking"] = true
+			}
+			if hint, ok := buildHealHint(output, aggVerdict, res.StderrExcerpt); ok {
+				aggregateMD["heal_hint"] = hint
+			}
+		}
+	}
+
+	// Phase 3: teardown (best-effort).
+	tdResults := runTeardownPhase(ctx, execMap, timeoutMS)
+
+	if aggregateMD == nil {
+		aggregateMD = map[string]interface{}{
+			"kind":        "aggregate",
+			"output_mode": output,
+			"command":     commandRun,
+			"exit_code":   nil,
+			"timed_out":   false,
+			"counts":      map[string]int{"pass": 0, "warn": 0, "fail": 0, "error": 1},
+		}
+	}
+	if len(prepResults) > 0 || len(tdResults) > 0 {
+		lc := map[string]interface{}{}
+		if len(prepResults) > 0 {
+			lc["prepare"] = prepResults
+		}
+		if len(tdResults) > 0 {
+			lc["teardown"] = tdResults
+		}
+		aggregateMD["lifecycle"] = lc
+	}
+
+	finished := sensor.NowFn().Format("2006-01-02T15:04:05Z")
+	finalRunID := envelope.RunID
+	if finalRunID == "" {
+		finalRunID = runID
+	}
+	sig := map[string]interface{}{
+		"sensor_id":   envelope.SensorID,
+		"version":     envelope.Version,
+		"run_id":      finalRunID,
+		"started_at":  envelope.StartedAt,
+		"finished_at": finished,
+		"verdict":     aggVerdict,
+		"severity":    aggSeverity,
+		"confidence":  1.0,
+		"evidence":    buildLifecycleEvidence(prepResults, tdResults),
+		"cost_actual": map[string]interface{}{"latency_ms": elapsedMS},
+		"metadata":    aggregateMD,
+	}
+
+	if v != nil {
+		if err := v.Validate(schema.TargetSignal, sig); err != nil {
+			schema.PrintValidationOrPlain(err, stderr)
+			return nil, 1
+		}
+	}
+	_ = json.NewEncoder(stdout).Encode(sig)
+
+	// Persist aggregate to signals.log when we created a run dir.
+	if runID != "" {
+		sigsPath := root.SignalsLogRun(envelope.SensorID, runID)
+		if f, ferr := os.OpenFile(sigsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); ferr == nil {
+			_ = json.NewEncoder(f).Encode(sig)
+			_ = f.Close()
+		} else {
+			fmt.Fprintf(stderr, "warning: append signals.log: %v\n", ferr)
+		}
+	}
+
 	return sig, 0
 }
 
