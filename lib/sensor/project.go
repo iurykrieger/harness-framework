@@ -8,9 +8,12 @@ package sensor
 //
 // TRANSITIONAL: while v1 sensors are still on disk, Project also accepts
 // the v1 shape (top-level depends_on, requires as object, execution.prepare)
-// and synthesizes the v2 array internally. The synthesis lives at the top
-// of this function in a single dispatch on the runtime type of requires;
-// commit 5 of the unification PR removes it.
+// via asV2Array → synthesizeV2. When commit 5 of the unification PR lands,
+// delete asV2Array and synthesizeV2 and inline the v2 read directly:
+//
+//	arr, _ := sensor["requires"].([]interface{})
+//
+// at the start of Project.
 func Project(sensor map[string]interface{}, kind string) []map[string]interface{} {
 	v2 := asV2Array(sensor)
 	if len(v2) == 0 {

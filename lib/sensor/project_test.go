@@ -53,12 +53,16 @@ func TestProject_V2Array_SkipsMalformed(t *testing.T) {
 }
 
 func TestProject_EmptyAndMissing(t *testing.T) {
-	if got := Project(map[string]interface{}{}, "sensor"); got != nil {
-		t.Fatalf("missing requires: expected nil, got %#v", got)
-	}
-	if got := Project(map[string]interface{}{"requires": []interface{}{}}, "sensor"); got != nil {
-		t.Fatalf("empty requires: expected nil, got %#v", got)
-	}
+	t.Run("missing requires key", func(t *testing.T) {
+		if got := Project(map[string]interface{}{}, "sensor"); got != nil {
+			t.Fatalf("expected nil, got %#v", got)
+		}
+	})
+	t.Run("empty requires array", func(t *testing.T) {
+		if got := Project(map[string]interface{}{"requires": []interface{}{}}, "sensor"); got != nil {
+			t.Fatalf("expected nil, got %#v", got)
+		}
+	})
 }
 
 func TestProject_V1Fallback_DependsOn(t *testing.T) {
@@ -107,6 +111,26 @@ func TestProject_V1Fallback_ExecutionPrepare(t *testing.T) {
 	got := Project(s, "step")
 	if len(got) != 1 || got[0]["command"] != "cp .env.example .env" {
 		t.Fatalf("prepare fallback: %#v", got)
+	}
+}
+
+func TestProject_V1Fallback_SkipsMalformedEnv(t *testing.T) {
+	s := map[string]interface{}{
+		"requires": map[string]interface{}{
+			"env": []interface{}{
+				"not-a-map",
+				map[string]interface{}{"name": "GH_TOKEN"},
+				42,
+				map[string]interface{}{"name": "GCP_PROJECT", "description": "id"},
+			},
+		},
+	}
+	got := Project(s, "env")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 well-formed env entries, got %d: %#v", len(got), got)
+	}
+	if got[0]["name"] != "GH_TOKEN" || got[1]["name"] != "GCP_PROJECT" {
+		t.Fatalf("env entries not preserved: %#v", got)
 	}
 }
 
