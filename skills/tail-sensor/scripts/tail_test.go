@@ -49,11 +49,22 @@ func setupRunning(t *testing.T, root, id string, signalsLines []string) {
 	_ = filepath.Join // keep import
 }
 
+// runTailBuf is a test helper that calls runTailWithWriter and returns a
+// combined buffer (streamed lines + final signal) plus the exit code.
+func runTailBuf(t *testing.T, res registry.Result, args []string) (int, *bytes.Buffer) {
+	t.Helper()
+	var buf bytes.Buffer
+	exit, sig := runTailWithWriter(res, args, &buf, os.Stderr)
+	if err := json.NewEncoder(&buf).Encode(sig); err != nil {
+		t.Fatalf("encode final signal: %v", err)
+	}
+	return exit, &buf
+}
+
 func TestTail_RegistryFileAbsent_Error(t *testing.T) {
 	root := t.TempDir()
 	res := resultFor(t, root, false)
-	var buf bytes.Buffer
-	exit := runTail(res, []string{"missing", "0"}, &buf, os.Stderr)
+	exit, buf := runTailBuf(t, res, []string{"missing", "0"})
 	if exit != 1 {
 		t.Fatalf("exit: got %d, want 1", exit)
 	}
@@ -80,8 +91,7 @@ func TestTail_Cursor0_ReturnsAll(t *testing.T) {
 		`{"sensor_id":"loop","verdict":"warn","metadata":{"kind":"individual"}}`,
 	})
 	res := resultFor(t, root, true)
-	var buf bytes.Buffer
-	exit := runTail(res, []string{"loop", "0"}, &buf, os.Stderr)
+	exit, buf := runTailBuf(t, res, []string{"loop", "0"})
 	if exit != 0 {
 		t.Fatalf("exit: got %d", exit)
 	}
@@ -113,8 +123,7 @@ func TestTail_CursorMid_ReturnsSuffix(t *testing.T) {
 		`{"sensor_id":"loop","verdict":"fail","metadata":{"kind":"individual"}}`,
 	})
 	res := resultFor(t, root, true)
-	var buf bytes.Buffer
-	exit := runTail(res, []string{"loop", "2"}, &buf, os.Stderr)
+	exit, buf := runTailBuf(t, res, []string{"loop", "2"})
 	if exit != 0 {
 		t.Fatalf("exit: got %d", exit)
 	}
@@ -131,8 +140,7 @@ func TestTail_NotRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := resultFor(t, root, true)
-	var buf bytes.Buffer
-	exit := runTail(res, []string{"missing", "0"}, &buf, os.Stderr)
+	exit, buf := runTailBuf(t, res, []string{"missing", "0"})
 	if exit != 1 {
 		t.Fatalf("exit: got %d", exit)
 	}
@@ -140,5 +148,105 @@ func TestTail_NotRunning(t *testing.T) {
 	_ = json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &sig)
 	if sig["metadata"].(map[string]interface{})["kind"] != "not_running" {
 		t.Fatalf("kind: got %v", sig["metadata"])
+	}
+}
+
+func TestTail_AmbiguousRunReturnsError(t *testing.T) {
+	proj := t.TempDir()
+	r := registry.NewRoot(proj)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{
+			{SensorID: "alpha", RunID: "1-aa", Blocking: false, PID: os.Getpid(), PGID: os.Getpid(), StartedAt: "2026-05-11T00:00:00Z"},
+			{SensorID: "alpha", RunID: "2-bb", Blocking: false, PID: os.Getpid(), PGID: os.Getpid(), StartedAt: "2026-05-11T00:00:00Z"},
+		},
+	}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatal(err)
+	}
+
+	res := resultFor(t, proj, true)
+	exit, buf := runTailBuf(t, res, []string{"alpha", "0"})
+	if exit == 0 {
+		t.Fatal("expected non-zero exit on ambiguous_run")
+	}
+	var sig map[string]interface{}
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &sig); err != nil {
+		t.Fatal(err)
+	}
+	md, _ := sig["metadata"].(map[string]interface{})
+	if md["kind"] != "ambiguous_run" {
+		t.Errorf("kind=%v, want ambiguous_run", md["kind"])
+	}
+}
+
+func TestTail_PathLikeResolvesToSpecificRun(t *testing.T) {
+	proj := t.TempDir()
+	r := registry.NewRoot(proj)
+	runID := "1-aa"
+
+	// Create the run directory and signals.log under proj.
+	runDir := r.RunDir("alpha", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sigsPath := r.SignalsLogRun("alpha", runID)
+	signalLine := `{"sensor_id":"alpha","run_id":"1-aa","verdict":"pass","severity":"info","confidence":1.0,"version":"0.0.0","started_at":"2026-05-11T00:00:00Z","finished_at":"2026-05-11T00:00:01Z","evidence":[],"cost_actual":{"latency_ms":1},"metadata":{"kind":"aggregate"}}` + "\n"
+	if err := os.WriteFile(sigsPath, []byte(signalLine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{
+			{SensorID: "alpha", RunID: runID, Blocking: false, PID: os.Getpid(), PGID: os.Getpid(), StartedAt: "2026-05-11T00:00:00Z", LogDir: r.RunDir("alpha", runID)},
+		},
+	}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatal(err)
+	}
+
+	res := resultFor(t, proj, true)
+	exit, _ := runTailBuf(t, res, []string{"alpha/" + runID, "0"})
+	if exit != 0 {
+		t.Fatalf("exit=%d", exit)
+	}
+}
+
+func TestTail_LegacyRunIDFallback(t *testing.T) {
+	proj := t.TempDir()
+	r := registry.NewRoot(proj)
+
+	// Create legacy flat signals.log under the sensor dir (not under a run subdir).
+	if err := os.MkdirAll(r.SensorDir("beta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := r.LegacySignalsLog("beta")
+	signalLine := `{"sensor_id":"beta","run_id":"x-legacy","verdict":"pass","severity":"info","confidence":1.0,"version":"0.0.0","started_at":"2026-05-11T00:00:00Z","finished_at":"2026-05-11T00:00:01Z","evidence":[],"cost_actual":{"latency_ms":1},"metadata":{"kind":"aggregate"}}` + "\n"
+	if err := os.WriteFile(legacyPath, []byte(signalLine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{
+		Version: 1,
+		Entries: []registry.RunningSensorEntry{
+			{SensorID: "beta", RunID: "x-legacy", Blocking: false, PID: os.Getpid(), PGID: os.Getpid(), StartedAt: "2026-05-11T00:00:00Z"},
+		},
+	}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatal(err)
+	}
+
+	res := resultFor(t, proj, true)
+	exit, buf := runTailBuf(t, res, []string{"beta", "0"})
+	if exit != 0 {
+		t.Fatalf("exit=%d, buf=%s", exit, buf.String())
 	}
 }
