@@ -79,23 +79,27 @@ func runList(res registry.Result, reports []registry.SanitizeReport, stdout, std
 	entries := make([]interface{}, 0, len(rs.Entries))
 	for _, e := range rs.Entries {
 		pidAlive := registry.IsPIDAlive(e.PID)
-		watcherAlive := registry.IsPIDAlive(e.WatcherPID)
 		state := "running"
 		if !pidAlive {
 			state = "orphan"
 		}
-		entries = append(entries, map[string]interface{}{
+		entry := map[string]interface{}{
 			"sensor_id":        e.SensorID,
+			"run_id":           e.RunID,
+			"blocking":         e.Blocking,
 			"pid":              e.PID,
 			"pid_alive":        pidAlive,
-			"watcher_pid":      e.WatcherPID,
-			"watcher_alive":    watcherAlive,
 			"started_at":       e.StartedAt,
 			"command":          e.Command,
 			"held_by":          heldBySummaries(e.HeldBy),
 			"signals_log_path": r.SignalsLog(e.SensorID),
 			"state":            state,
-		})
+		}
+		if e.Blocking {
+			entry["watcher_pid"] = e.WatcherPID
+			entry["watcher_alive"] = registry.IsPIDAlive(e.WatcherPID)
+		}
+		entries = append(entries, entry)
 	}
 	sig := map[string]interface{}{
 		"sensor_id":   "list-sensors",
