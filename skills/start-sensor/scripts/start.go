@@ -23,6 +23,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	libsensor "github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/subprocess"
+	"github.com/iurykrieger/harness-framework/lib/watcher"
 )
 
 func main() {
@@ -162,19 +163,10 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 			fmt.Sprintf("create signals.log: %v", err), diagnose), id)
 	}
 
-	watcherPath, err := watcherBinaryPath()
-	if err != nil {
-		detachAll()
-		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "watcher_spawn_failed",
-			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("watcher binary: %v", err), diagnose), id)
-	}
-
 	type spawnResult struct {
-		det         subprocess.DetachResult
-		watcherProc *os.Process
-		watcherPID  int
-		envelope    libsensor.Envelope
+		det        subprocess.DetachResult
+		watcherPID int
+		envelope   libsensor.Envelope
 	}
 	var spawned spawnResult
 	var alreadyRunning bool
@@ -213,38 +205,22 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 		patternsJSON, _ := json.Marshal(patterns)
 		envelopeJSON, _ := json.Marshal(envelope)
 
-		watcherLogPath := filepath.Join(r.SensorDir(id), "watcher.log")
-		watcherLogFile, err := os.OpenFile(watcherLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			return fmt.Errorf("open watcher.log: %w", err)
-		}
-		watcherProc, err := os.StartProcess(watcherPath, []string{watcherPath}, &os.ProcAttr{
-			Env: []string{
-				fmt.Sprintf("HARNESS_WATCHER_RAW=%s", r.RawLog(id)),
-				fmt.Sprintf("HARNESS_WATCHER_SIGNALS=%s", r.SignalsLog(id)),
-				fmt.Sprintf("HARNESS_WATCHER_PATTERNS=%s", string(patternsJSON)),
-				fmt.Sprintf("HARNESS_WATCHER_ENVELOPE=%s", string(envelopeJSON)),
-				fmt.Sprintf("HARNESS_WATCHER_SUBPROCESS_PID=%d", det.PID),
-				fmt.Sprintf("HARNESS_WATCHER_REGISTRY_ROOT=%s", projectRoot),
-				fmt.Sprintf("HARNESS_WATCHER_SENSOR_ID=%s", id),
-			},
-			Files: []*os.File{nil, nil, watcherLogFile},
-			Sys:   &watcherSysProcAttr,
+		watcherPID, err := watcher.Spawn(watcher.SpawnOpts{
+			ProjectRoot:    projectRoot,
+			SensorID:       id,
+			RunID:          envelope.RunID,
+			RawLogPath:     r.RawLog(id),
+			SignalsLogPath: r.SignalsLog(id),
+			EnvelopeJSON:   envelopeJSON,
+			PatternsJSON:   patternsJSON,
+			SubprocessPID:  det.PID,
 		})
 		if err != nil {
-			// Kill the just-spawned root subprocess so we don't orphan it.
 			if det.PGID > 0 {
 				_ = killGroup(det.PGID)
 			}
-			_ = watcherLogFile.Close()
 			return fmt.Errorf("start watcher: %w", err)
 		}
-		// Capture the watcher pid BEFORE Release() — on Unix, Release
-		// resets Process.Pid to -1, which would violate the registry
-		// PID non-negativity invariant when Save validates the entry.
-		watcherPID := watcherProc.Pid
-		_ = watcherProc.Release()
-		_ = watcherLogFile.Close() // parent's handle; child keeps its own fd open.
 
 		rs.RemoveEntry(id)
 		rs.Entries = append(rs.Entries, registry.RunningSensorEntry{
@@ -263,7 +239,7 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 			return err
 		}
 
-		spawned = spawnResult{det: det, watcherProc: watcherProc, watcherPID: watcherPID, envelope: envelope}
+		spawned = spawnResult{det: det, watcherPID: watcherPID, envelope: envelope}
 		return nil
 	})
 
