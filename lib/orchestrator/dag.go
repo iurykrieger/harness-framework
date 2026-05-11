@@ -1,9 +1,11 @@
 // Package orchestrator resolves and runs sensor dependency graphs. A
-// sensor's depends_on declares ids of other sensors that must run and
-// pass before it; this package walks that closure, sorts topologically
-// (deps first), and runs each sensor's prepare → command → teardown
-// lifecycle. Failures cascade: dependents of a failed sensor never run
-// and emit cascade Signals instead.
+// sensor's `requires[]` entries of `kind=sensor` declare ids of other
+// sensors that must run and pass before it. (The v1 `depends_on` field is
+// read transparently via `sensor.Project()` until the migration completes.)
+// This package walks that closure, sorts topologically (deps first), and
+// runs each sensor's prepare → command → teardown lifecycle. Failures
+// cascade: dependents of a failed sensor never run and emit cascade Signals
+// instead.
 package orchestrator
 
 import (
@@ -74,10 +76,10 @@ func loadRecursive(id, root string, sensors map[string]Sensor, deps map[string][
 }
 
 func readDepsArray(s map[string]interface{}) []string {
-	raw, _ := s["depends_on"].([]interface{})
-	out := make([]string, 0, len(raw))
-	for _, item := range raw {
-		if id, ok := item.(string); ok {
+	items := sensor.Project(s, "sensor")
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if id, ok := item["id"].(string); ok && id != "" {
 			out = append(out, id)
 		}
 	}
