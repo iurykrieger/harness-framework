@@ -1,7 +1,7 @@
 //go:build run_computational
 
 // Command run-computational runs a streaming computational sensor end-to-end,
-// resolving and executing its depends_on graph in topological order.
+// resolving and executing its requires[kind=sensor] dependency graph in topological order.
 //
 // Usage:
 //

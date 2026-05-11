@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -167,21 +166,6 @@ func makeProject(t *testing.T, parent, id, command string) string {
 	return proj
 }
 
-// killWatcherIfAlive sends SIGKILL to a watcher PID after stop-sensor
-// has had a chance to terminate it. Tolerates "process not found" (the
-// happy-path: watcher already exited).
-func killWatcherIfAlive(pid int) {
-	if pid <= 0 {
-		return
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return
-	}
-	// Best-effort SIGKILL; ignore errors (process may already be dead).
-	_ = proc.Signal(syscall.SIGKILL)
-}
-
 // runIn runs binary in dir with optional env overrides. Returns
 // (stdout, stderr, exitCode).
 func runIn(t *testing.T, binary, dir string, args []string, extraEnv map[string]string) (string, string, int) {
@@ -278,20 +262,9 @@ func TestE2E_DiscoverySharesStateAcrossCwds(t *testing.T) {
 		t.Errorf("start registry_path: got %v, want %v", startMD["registry_path"], wantPath)
 	}
 
-	// Capture watcher PID so we can SIGKILL it if stop-sensor leaves it alive.
-	watcherPID := 0
-	if v, ok := startMD["watcher_pid"].(float64); ok {
-		watcherPID = int(v)
-	}
-
 	// Always clean up the sensor process at the end.
 	t.Cleanup(func() {
 		_, _, _ = runIn(t, stopBin, proj, []string{"sleeper"}, nil)
-		// Defensive: if stop-sensor failed to kill the watcher, SIGKILL it
-		// directly so the scratch dir cleanup can remove proj/ (the watcher's
-		// cwd prevents rmdir on macOS otherwise).
-		time.Sleep(50 * time.Millisecond)
-		killWatcherIfAlive(watcherPID)
 	})
 
 	// Give the watcher a beat to settle before the list call.
@@ -375,22 +348,8 @@ func TestE2E_EnvVarOverridesDiscovery(t *testing.T) {
 		t.Fatalf("start exit %d\nstdout=%s\nstderr=%s", exit, stdout, stderr)
 	}
 
-	// Capture watcher PID so we can SIGKILL it if stop-sensor leaves it alive.
-	watcherPID := 0
-	startSig := lastJSON(t, stdout)
-	if md, ok := startSig["metadata"].(map[string]interface{}); ok {
-		if v, ok := md["watcher_pid"].(float64); ok {
-			watcherPID = int(v)
-		}
-	}
-
 	t.Cleanup(func() {
 		_, _, _ = runIn(t, stopBin, proj, []string{"sleeper"}, nil)
-		// Defensive: if stop-sensor failed to kill the watcher, SIGKILL it
-		// directly so the scratch dir cleanup can remove proj/ (the watcher's
-		// cwd prevents rmdir on macOS otherwise).
-		time.Sleep(50 * time.Millisecond)
-		killWatcherIfAlive(watcherPID)
 	})
 
 	time.Sleep(100 * time.Millisecond)
@@ -412,5 +371,84 @@ func TestE2E_EnvVarOverridesDiscovery(t *testing.T) {
 	entries, _ := md["entries"].([]interface{})
 	if len(entries) != 1 || entries[0].(map[string]interface{})["sensor_id"] != "sleeper" {
 		t.Fatalf("entries: got %+v", entries)
+	}
+}
+
+// TestSanitize_LegacyMinusOneViaListSensors verifies that a legacy
+// running_sensors.json containing watcher_pid: -1 is sanitized in place
+// by /list-sensors, and that the skill emits the precedence
+// registry_migrated warn signal ahead of its main list signal.
+func TestSanitize_LegacyMinusOneViaListSensors(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go not in PATH")
+	}
+	ensureBinaries(t)
+
+	parent := makeScratchDir(t)
+	proj := filepath.Join(parent, "proj")
+	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(proj, ".runtime", "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{
+  "version": 1,
+  "entries": [
+    {
+      "sensor_id": "run-api-local", "pid": 90006, "pgid": 90006,
+      "watcher_pid": -1, "started_at": "2026-05-09T13:51:38Z",
+      "command": "docker compose up", "log_dir": ".runtime/sensors/run-api-local",
+      "held_by": [{"kind": "manual", "attached_at": "2026-05-09T13:51:38Z"}]
+    }
+  ]
+}`)
+	regFile := filepath.Join(proj, ".runtime", "sensors", "running_sensors.json")
+	if err := os.WriteFile(regFile, legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, exit := runIn(t, listBin, proj, nil, nil)
+	if exit != 0 {
+		t.Fatalf("list-sensors exit=%d\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+	}
+	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d JSONL lines, want 2 (warn + list).\nstdout:\n%s", len(lines), stdout)
+	}
+	var warn map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[0]), &warn); err != nil {
+		t.Fatalf("parse line 0: %v\nline: %s", err, lines[0])
+	}
+	if warn["verdict"] != "warn" {
+		t.Errorf("line 0 verdict: %v", warn["verdict"])
+	}
+	if md, _ := warn["metadata"].(map[string]interface{}); md["kind"] != "registry_migrated" {
+		t.Errorf("line 0 metadata.kind: %v", md["kind"])
+	}
+	var main map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[1]), &main); err != nil {
+		t.Fatalf("parse line 1: %v\nline: %s", err, lines[1])
+	}
+	if main["verdict"] != "pass" {
+		t.Errorf("line 1 verdict: %v", main["verdict"])
+	}
+
+	// File on disk now has watcher_pid = 0.
+	migrated, err := os.ReadFile(regFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(migrated, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := parsed["entries"].([]interface{})
+	if len(entries) != 1 {
+		t.Fatalf("entries: got %d, want 1", len(entries))
+	}
+	e0, _ := entries[0].(map[string]interface{})
+	if pid, _ := e0["watcher_pid"].(float64); pid != 0 {
+		t.Errorf("on-disk watcher_pid after migration: got %v, want 0", e0["watcher_pid"])
 	}
 }

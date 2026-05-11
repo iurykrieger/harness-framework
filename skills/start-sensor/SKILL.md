@@ -1,6 +1,6 @@
 ---
 name: start-sensor
-description: Use when the user invokes /start-sensor or asks to bring a blocking sensor (one whose command does not terminate on its own) up for observation. Takes a `<sensor.id>` argument and resolves it to `sensors/<id>.json`. Validates the sensor against schemas/sensor.json, requires `execution.blocking: true`, resolves dep graph and brings deps up, runs `execution.prepare[]` fail-fast, spawns the command detached (Setsid, redirected stdout/stderr to .runtime/sensors/<id>/raw.log), spawns a watcher binary that tails raw.log and emits parsed Signals to .runtime/sensors/<id>/signals.log, and writes an entry into .runtime/sensors/running_sensors.json with `held_by: [{kind: "manual", attached_at: ...}]`. Emits a Signal `verdict=pass`, `metadata.kind=started`. Singleton: rejects with `rejected` if the sensor already has a live registry entry.
+description: Use when the user invokes /start-sensor or asks to bring a blocking sensor (one whose command does not terminate on its own) up for observation. Takes a `<sensor.id>` argument and resolves it to `sensors/<id>.json`. Validates the sensor against schemas/sensor.json, requires `execution.blocking: true`, resolves requires[kind=sensor] dep graph and brings deps up, runs requires[kind=step] fail-fast, spawns the command detached (Setsid, redirected stdout/stderr to .runtime/sensors/<id>/raw.log), spawns a watcher binary that tails raw.log and emits parsed Signals to .runtime/sensors/<id>/signals.log, and writes an entry into .runtime/sensors/running_sensors.json with `held_by: [{kind: "manual", attached_at: ...}]`. Emits a Signal `verdict=pass`, `metadata.kind=started`. Singleton: rejects with `rejected` if the sensor already has a live registry entry.
 ---
 
 # start-sensor
@@ -37,11 +37,11 @@ Stdout is JSONL. Multiple Signals can be emitted in order:
 
 ## Lifecycle integration
 
-When the target sensor declares `depends_on`, `/start-sensor` resolves the dep graph and brings deps up before spawning the target:
+When the target sensor declares `requires[kind=sensor]` entries, `/start-sensor` resolves the dep graph and brings deps up before spawning the target:
 
 - Setup or non-blocking deps run via `RunOne` (their command terminates; the result PASS or FAIL).
 - Blocking deps come up via `AttachLiveDep` — if the dep is already alive in the registry, `/start-sensor` adds a holder; otherwise the dep is started fresh.
-- The target's `execution.prepare[]` runs fail-fast after deps are up but before the target subprocess spawns.
+- The target's `requires[kind=step]` entries run fail-fast after deps are up but before the target subprocess spawns.
 - After the target subprocess is spawned, dep holder pids are rebound from `/start-sensor`'s pid to the target subprocess pid, so `/list-sensors` and `/stop-sensor` see a holder that mirrors the target's lifetime.
 - On any failure (cascade, prepare fail, spawn fail, watcher fail, registry write fail), every blocking dep we attached this run is detached in reverse order. If the detach drops a dep's last holder, the dep is stopped (SIGTERM/SIGKILL). State is left as before `/start-sensor` ran.
 

@@ -11,7 +11,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
-// RunWithDeps loads the sensor at sensorPath, resolves its depends_on
+// RunWithDeps loads the sensor at sensorPath, resolves its requires[kind=sensor]
 // transitively, runs each sensor in topo order through RunOne, and emits
 // cascade Signals for any dependent skipped because an earlier sensor
 // failed. The aggregate Signal of the requested sensor is the LAST line

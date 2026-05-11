@@ -38,7 +38,7 @@ func setupRunning(t *testing.T, root, id string, signalsLines []string) {
 	if err := registry.Save(r, registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: id, PID: registry.SelfPID(), HeldBy: []registry.HeldByEntry{{Kind: "manual"}}},
+			{SensorID: id, PID: registry.SelfPID(), PGID: registry.SelfPID(), HeldBy: []registry.HeldByEntry{{Kind: "manual"}}},
 		},
 	}); err != nil {
 		t.Fatal(err)

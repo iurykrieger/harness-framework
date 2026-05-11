@@ -209,7 +209,7 @@ func TestLookup_FilePresentWithEntries(t *testing.T) {
 	want := registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "loop", PID: 1234, StartedAt: "2026-05-10T00:00:00Z"},
+			{SensorID: "loop", PID: 1234, PGID: 1234, StartedAt: "2026-05-10T00:00:00Z"},
 		},
 	}
 	if err := registry.Save(r, want); err != nil {
@@ -335,6 +335,78 @@ func TestDiagnoseMetadata_SourceEnvAndAbsent(t *testing.T) {
 	}
 	if md["registry_exists"] != false {
 		t.Errorf("registry_exists: got %v, want false", md["registry_exists"])
+	}
+}
+
+func TestLookupSanitized_MigratesAndReturnsReports(t *testing.T) {
+	parent := t.TempDir()
+	proj := makeProjectTree(t, parent)
+	t.Setenv("HARNESS_REGISTRY_ROOT", proj)
+
+	// Pre-seed registry with a legacy -1 entry.
+	r := registry.NewRoot(proj)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{
+  "version": 1,
+  "entries": [
+    {
+      "sensor_id": "x", "pid": 1234, "pgid": 1234,
+      "watcher_pid": -1, "started_at": "t", "command": "c", "log_dir": "d",
+      "held_by": [{"kind": "manual", "attached_at": "t"}]
+    }
+  ]
+}`)
+	if err := os.WriteFile(r.RegistryFile(), legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, reports, err := registry.LookupSanitized("/tmp/anything")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ProjectRoot != proj {
+		t.Errorf("ProjectRoot: got %q, want %q", res.ProjectRoot, proj)
+	}
+	if res.Source != registry.SourceEnv {
+		t.Errorf("Source: got %q, want %q", res.Source, registry.SourceEnv)
+	}
+	if !res.Exists {
+		t.Errorf("Exists: got false, want true")
+	}
+	if len(reports) != 1 || reports[0].Field != "watcher_pid" {
+		t.Errorf("reports: %+v", reports)
+	}
+	if res.State.Entries[0].WatcherPID != 0 {
+		t.Errorf("WatcherPID: got %d, want 0", res.State.Entries[0].WatcherPID)
+	}
+}
+
+func TestLookupSanitized_NoRegistryNoReports(t *testing.T) {
+	parent := t.TempDir()
+	proj := makeProjectTree(t, parent)
+	t.Setenv("HARNESS_REGISTRY_ROOT", proj)
+
+	res, reports, err := registry.LookupSanitized("/tmp/anything")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Exists {
+		t.Errorf("Exists: got true, want false")
+	}
+	if len(reports) != 0 {
+		t.Errorf("reports: got %d, want 0", len(reports))
+	}
+}
+
+func TestLookupSanitized_DiscoveryFailurePropagates(t *testing.T) {
+	parent := t.TempDir()
+	// No sensors/ marker, no env var.
+	t.Setenv("HARNESS_REGISTRY_ROOT", "")
+	_, _, err := registry.LookupSanitized(parent)
+	if err == nil {
+		t.Fatal("expected discovery error, got nil")
 	}
 }
 

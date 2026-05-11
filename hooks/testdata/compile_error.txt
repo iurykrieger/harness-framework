@@ -1,0 +1,3 @@
+# github.com/iurykrieger/harness-framework/lib/sensor
+lib/sensor/load.go:42:13: undefined: ResolveSensorPath
+lib/sensor/load.go:58:9: cannot use sensorPath (type string) as type Path

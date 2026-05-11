@@ -11,9 +11,6 @@
       "timeout_ms": 5000
     }
   },
-  "depends_on": [
-    "setup-touch-file"
-  ],
   "description": "Smoke test for the orchestrator: depends on setup-touch-file, runs prepare to verify the sentinel exists, runs the main command (which echoes a known string), then teardown removes the sentinel. Auto-detected via /detect-sensors.",
   "determinism": "high",
   "execution": {
@@ -39,12 +36,6 @@
         }
       ]
     },
-    "prepare": [
-      {
-        "command": "test -f /tmp/harness-smoke-sentinel",
-        "timeout_ms": 1000
-      }
-    ],
     "teardown": [
       {
         "command": "rm -f /tmp/harness-smoke-sentinel",
@@ -58,6 +49,17 @@
   "output": "stream",
   "phase": "on-demand",
   "regulation": "behaviour",
+  "requires": [
+    {
+      "id": "setup-touch-file",
+      "kind": "sensor"
+    },
+    {
+      "command": "test -f /tmp/harness-smoke-sentinel",
+      "kind": "step",
+      "timeout_ms": 1000
+    }
+  ],
   "triggers": [
     {
       "on": "manual"
@@ -73,5 +75,5 @@
       }
     ]
   },
-  "version": "0.1.0"
+  "version": "0.1.1"
 }

@@ -9,7 +9,7 @@ import (
 
 // missingEnv fires when verdict=error AND an evidence rationale
 // matches "required environment variable <NAME> not set" AND <NAME>
-// is declared in the failed sensor's requires.env[].
+// is declared in the failed sensor's requires[kind=env].
 type missingEnv struct{}
 
 var missingEnvRegex = regexp.MustCompile(`(?i)required env(?:ironment)? variable\s+([A-Z_][A-Z0-9_]*)\s+(?:is\s+)?not\s+set`)

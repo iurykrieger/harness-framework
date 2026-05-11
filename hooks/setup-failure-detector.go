@@ -1,3 +1,5 @@
+//go:build !error_autofiler
+
 // hooks/setup-failure-detector.go
 //
 // Claude Code Stop hook that classifies the most-recent
@@ -35,6 +37,7 @@ import (
 
 	"github.com/iurykrieger/harness-framework/lib/heal"
 	"github.com/iurykrieger/harness-framework/lib/heal/rules"
+	"github.com/iurykrieger/harness-framework/lib/sensor"
 )
 
 func main() {
@@ -381,40 +384,36 @@ func signalFromMap(m map[string]interface{}) heal.Signal {
 	return s
 }
 
-type sensorRequiresView struct {
-	ID       string
-	Requires struct {
-		Env []struct {
-			Name string `json:"name"`
-		} `json:"env"`
-		Tools   []string `json:"tools"`
-		Context []string `json:"context"`
-	} `json:"requires"`
-}
-
 func loadFailedSensorView(path string) (heal.FailedSensor, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return heal.FailedSensor{}, err
 	}
-	var v struct {
-		ID       string `json:"id"`
-		Requires struct {
-			Env []struct {
-				Name string `json:"name"`
-			} `json:"env"`
-			Tools   []string `json:"tools"`
-			Context []string `json:"context"`
-		} `json:"requires"`
-	}
-	if err := json.Unmarshal(body, &v); err != nil {
+	var s map[string]interface{}
+	if err := json.Unmarshal(body, &s); err != nil {
 		return heal.FailedSensor{}, err
 	}
-	envs := make([]string, 0, len(v.Requires.Env))
-	for _, e := range v.Requires.Env {
-		envs = append(envs, e.Name)
+	id, _ := s["id"].(string)
+
+	var envs []string
+	for _, e := range sensor.Project(s, "env") {
+		if name, ok := e["name"].(string); ok && name != "" {
+			envs = append(envs, name)
+		}
 	}
-	return heal.FailedSensor{ID: v.ID, EnvNames: envs, Tools: v.Requires.Tools, Context: v.Requires.Context}, nil
+	var tools []string
+	for _, t := range sensor.Project(s, "tool") {
+		if name, ok := t["name"].(string); ok && name != "" {
+			tools = append(tools, name)
+		}
+	}
+	var contexts []string
+	for _, c := range sensor.Project(s, "context") {
+		if p, ok := c["path"].(string); ok && p != "" {
+			contexts = append(contexts, p)
+		}
+	}
+	return heal.FailedSensor{ID: id, EnvNames: envs, Tools: tools, Context: contexts}, nil
 }
 
 func emitInjection(stdout io.Writer, scan scanResult, sensorID string, res heal.Result) {

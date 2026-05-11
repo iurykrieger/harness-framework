@@ -37,6 +37,78 @@
           "items": { "$ref": "#/$defs/ExitCodeMapEntry" }
         }
       }
+    },
+    "Requirement": {
+      "oneOf": [
+        { "$ref": "#/$defs/RequireSensor" },
+        { "$ref": "#/$defs/RequireTool" },
+        { "$ref": "#/$defs/RequireEnv" },
+        { "$ref": "#/$defs/RequireContext" },
+        { "$ref": "#/$defs/RequirePermission" },
+        { "$ref": "#/$defs/RequireStep" }
+      ]
+    },
+    "RequireSensor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "const": "sensor" },
+        "id":   { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+      }
+    },
+    "RequireTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "const": "tool" },
+        "name": { "type": "string" }
+      }
+    },
+    "RequireEnv": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind":        { "const": "env" },
+        "name":        { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" },
+        "description": { "type": "string" },
+        "optional":    { "type": "boolean", "default": false }
+      }
+    },
+    "RequireContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": { "const": "context" },
+        "path": { "type": "string" }
+      }
+    },
+    "RequirePermission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "scope"],
+      "properties": {
+        "kind":  { "const": "permission" },
+        "scope": { "type": "string" }
+      }
+    },
+    "RequireStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "command"],
+      "properties": {
+        "kind":          { "const": "step" },
+        "command":       { "type": "string", "description": "Shell invocation (sh -c). MUST be idempotent." },
+        "timeout_ms":    { "type": "integer", "minimum": 1, "description": "Hard cap; falls back to cost.latency.timeout_ms when omitted." },
+        "exit_code_map": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ExitCodeMapEntry" }
+        }
+      }
     }
   },
 
@@ -80,7 +152,7 @@
     "kind": {
       "type": "string",
       "enum": ["observation", "assertion", "setup"],
-      "description": "Sensor category. observation = observes behavior with no fixed expectation (run-project, fetch-logs, fetch-metrics, trace-request, watch-build); verdict describes the health of the observation. assertion = checks against an expectation (unit-test, integration-test, e2e-test, lint, type-check, build, schema-validate); verdict pass/fail is semantic. setup = idempotent auxiliary sensor that makes a precondition true (start-postgres, setup-env-from-example, install-deps-pnpm, login-gcloud); typically referenced via depends_on. Metadata only — the runner treats all three identically; tooling (detect-sensors, listings) uses it to classify and name."
+      "description": "Sensor category. observation = observes behavior with no fixed expectation (run-project, fetch-logs, fetch-metrics, trace-request, watch-build); verdict describes the health of the observation. assertion = checks against an expectation (unit-test, integration-test, e2e-test, lint, type-check, build, schema-validate); verdict pass/fail is semantic. setup = idempotent auxiliary sensor that makes a precondition true (start-postgres, setup-env-from-example, install-deps-pnpm, login-gcloud); typically referenced via requires[kind=sensor]. Metadata only — the runner treats all three identically; tooling (detect-sensors, listings) uses it to classify and name."
     },
 
     "type": {
@@ -193,40 +265,11 @@
       }
     },
 
-    "depends_on": {
+    "requires": {
       "type": "array",
       "default": [],
-      "description": "IDs of sensors that must run (and PASS) before this one. The runner resolves the transitive closure in topological order and propagates failures. Use to chain setup sensors (start-postgres) or assertion sensors (unit-tests before e2e-tests). Cycles (including self-loops A → A) are detected and abort with exit 1.",
-      "items": {
-        "type": "string",
-        "pattern": "^[a-z][a-z0-9-]*$"
-      },
-      "uniqueItems": true
-    },
-
-    "requires": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "tools":            { "type": "array", "items": { "type": "string" }, "default": [], "description": "Binaries, MCP servers, CLIs the sensor invokes." },
-        "permissions":      { "type": "array", "items": { "type": "string" }, "default": [], "description": "Least-privilege scopes." },
-        "context":          { "type": "array", "items": { "type": "string" }, "default": [], "description": "Repo paths the sensor reads (docs, configs, fixtures)." },
-        "env": {
-          "type": "array",
-          "default": [],
-          "description": "Environment variables the runner forwards from its own environment (os.Environ) into the sensor's subprocess. Use this for secrets, project ids, auth tokens, region/profile selectors — anything that would be wrong to hardcode in the sensor JSON. The runner forwards every listed name whose value is set; if a non-optional name is unset at run time it aborts and emits verdict=error with a remediation pointing at the missing var. Declared env vars document intent — the existence of the sensor never depends on the variable being set right now.",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["name"],
-            "properties": {
-              "name":        { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$", "description": "Env var name (uppercase + underscores)." },
-              "description": { "type": "string", "description": "What the variable is and how to obtain it (e.g., 'GitHub PAT with repo:read scope', 'GCP project id for log queries')." },
-              "optional":    { "type": "boolean", "default": false, "description": "When true, the runner forwards the value if set but does not abort if missing — useful for env vars that change behaviour rather than being mandatory." }
-            }
-          }
-        }
-      }
+      "description": "Preconditions for this sensor. Array of discriminated-union items keyed by `kind` (one of: sensor, tool, env, context, permission, step).",
+      "items": { "$ref": "#/$defs/Requirement" }
     },
 
     "execution": {
@@ -239,19 +282,13 @@
         "blocking": {
           "type": "boolean",
           "default": false,
-          "description": "When true, the sensor does not terminate on its own and must be invoked via /start-sensor / /stop-sensor. Forbids cost.latency.timeout_ms; allows execution.graceful_timeout_ms. Other sensors may declare a blocking sensor in depends_on; the orchestrator will start (or attach to) the blocking dep before the dependent runs and stop it at teardown when no other dependent holds it."
+          "description": "When true, the sensor does not terminate on its own and must be invoked via /start-sensor / /stop-sensor. Forbids cost.latency.timeout_ms; allows execution.graceful_timeout_ms. Other sensors may declare a blocking sensor via requires[kind=sensor]; the orchestrator will start (or attach to) the blocking dep before the dependent runs and stop it at teardown when no other dependent holds it."
         },
         "graceful_timeout_ms": {
           "type": "integer",
           "minimum": 100,
           "default": 5000,
           "description": "Time to wait between SIGTERM and SIGKILL on /stop-sensor. Applies only when execution.blocking is true. Minimum 100ms to ensure the process has a real chance to react to SIGTERM."
-        },
-        "prepare": {
-          "type": "array",
-          "default": [],
-          "description": "Silent shell commands run before execution.command. Used to satisfy the sensor's preconditions (generate files, populate local .env from .env.example, intermediate builds). NOT observed via patterns; per-step verdict is folded into the sensor's aggregate metadata.lifecycle.prepare. Fail-fast: first non-pass step aborts prepare and skips the main command; teardown still runs.",
-          "items": { "$ref": "#/$defs/LifecycleStep" }
         },
         "teardown": {
           "type": "array",

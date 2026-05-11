@@ -1,0 +1,9 @@
+panic: registry: lock acquisition failed: too many open files
+
+goroutine 7 [running]:
+github.com/iurykrieger/harness-framework/lib/registry.WithFileLock(...)
+	/abs/path/to/harness-framework/lib/registry/lock.go:13
+github.com/iurykrieger/harness-framework/skills/start-sensor/scripts.spawnDetached(...)
+	/abs/path/to/harness-framework/skills/start-sensor/scripts/start.go:200
+main.main()
+	/abs/path/to/harness-framework/skills/start-sensor/scripts/start.go:38

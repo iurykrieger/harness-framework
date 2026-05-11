@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,7 @@ func TestList_FileAbsent_Warn(t *testing.T) {
 	root := t.TempDir()
 	res := resultFor(t, root, false)
 	var buf bytes.Buffer
-	exit := runList(res, &buf, os.Stderr)
+	exit := runList(res, nil, &buf, os.Stderr)
 	if exit != 0 {
 		t.Fatalf("exit: got %d, want 0", exit)
 	}
@@ -79,7 +80,7 @@ func TestList_FilePresentEmpty_Pass(t *testing.T) {
 	}
 	res := resultFor(t, root, true)
 	var buf bytes.Buffer
-	exit := runList(res, &buf, os.Stderr)
+	exit := runList(res, nil, &buf, os.Stderr)
 	if exit != 0 {
 		t.Fatalf("exit: got %d", exit)
 	}
@@ -103,15 +104,15 @@ func TestList_AnnotatesOrphan(t *testing.T) {
 	if err := registry.Save(r, registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "alive", PID: registry.SelfPID()},
-			{SensorID: "dead", PID: 3_999_999},
+			{SensorID: "alive", PID: registry.SelfPID(), PGID: registry.SelfPID()},
+			{SensorID: "dead", PID: 3_999_999, PGID: 3_999_999},
 		},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	res := resultFor(t, root, true)
 	var buf bytes.Buffer
-	_ = runList(res, &buf, os.Stderr)
+	_ = runList(res, nil, &buf, os.Stderr)
 	var sig map[string]interface{}
 	_ = json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &sig)
 	entries := sig["metadata"].(map[string]interface{})["entries"].([]interface{})
@@ -133,5 +134,78 @@ func TestList_AnnotatesOrphan(t *testing.T) {
 	}
 	if dead["state"] != "orphan" {
 		t.Errorf("dead state: got %v", dead["state"])
+	}
+}
+
+func TestRunList_EmitsRegistryMigratedSignalFirst(t *testing.T) {
+	dir := t.TempDir()
+	r := registry.NewRoot(dir)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{
+  "version": 1,
+  "entries": [
+    {
+      "sensor_id": "x", "pid": 1234, "pgid": 1234,
+      "watcher_pid": -1, "started_at": "t", "command": "c",
+      "log_dir": ".runtime/sensors/x",
+      "held_by": [{"kind": "manual", "attached_at": "t"}]
+    }
+  ]
+}`)
+	if err := os.WriteFile(r.RegistryFile(), legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Ensure marker dir exists for walk-up.
+	if err := os.MkdirAll(filepath.Join(dir, "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HARNESS_REGISTRY_ROOT", dir)
+
+	res, reports, err := registry.LookupSanitized(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) == 0 {
+		t.Fatal("expected sanitize reports, got none")
+	}
+	var buf bytes.Buffer
+	exit := runList(res, reports, &buf, io.Discard)
+	if exit != 0 {
+		t.Fatalf("exit: got %d, want 0", exit)
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d JSONL line(s); want 2 (warn + list). Output:\n%s", len(lines), buf.String())
+	}
+
+	var warn map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[0]), &warn); err != nil {
+		t.Fatal(err)
+	}
+	if warn["verdict"] != "warn" {
+		t.Errorf("line 0 verdict: %v", warn["verdict"])
+	}
+	md, _ := warn["metadata"].(map[string]interface{})
+	if md["kind"] != "registry_migrated" {
+		t.Errorf("line 0 metadata.kind: %v", md["kind"])
+	}
+
+	var main map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[1]), &main); err != nil {
+		t.Fatal(err)
+	}
+	if main["verdict"] != "pass" {
+		t.Errorf("line 1 verdict: %v", main["verdict"])
+	}
+	mainMD, _ := main["metadata"].(map[string]interface{})
+	entries, _ := mainMD["entries"].([]interface{})
+	if len(entries) != 1 {
+		t.Fatalf("entries: got %d, want 1", len(entries))
+	}
+	e0, _ := entries[0].(map[string]interface{})
+	if pid, _ := e0["watcher_pid"].(float64); pid != 0 {
+		t.Errorf("entry watcher_pid: got %v, want 0", e0["watcher_pid"])
 	}
 }

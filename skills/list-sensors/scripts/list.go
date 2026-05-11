@@ -27,15 +27,18 @@ func main() {
 		fmt.Fprintln(os.Stderr, "list: cwd:", err)
 		os.Exit(2)
 	}
-	res, err := registry.Lookup(startDir)
+	res, reports, err := registry.LookupSanitized(startDir)
 	if err != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(registry.DiscoveryErrorSignal(err, "list-sensors"))
 		os.Exit(1)
 	}
-	os.Exit(runList(res, os.Stdout, os.Stderr))
+	os.Exit(runList(res, reports, os.Stdout, os.Stderr))
 }
 
-func runList(res registry.Result, stdout, stderr io.Writer) int {
+func runList(res registry.Result, reports []registry.SanitizeReport, stdout, stderr io.Writer) int {
+	if len(reports) > 0 {
+		_ = json.NewEncoder(stdout).Encode(registry.RegistryMigratedSignal(res, reports, "list-sensors"))
+	}
 	v, code := schema.LoadValidator("", stderr)
 	if code != 0 {
 		_ = json.NewEncoder(stdout).Encode(errorListSignal(res, "schema validator init failed"))

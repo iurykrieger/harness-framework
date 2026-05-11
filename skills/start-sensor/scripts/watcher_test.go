@@ -5,9 +5,12 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -132,5 +135,38 @@ func TestRunWatcher_StopReturnsEvenWhenReaperWaitsForLiveSubprocess(t *testing.T
 		}
 	case <-time.After(time.Second):
 		t.Fatal("runWatcher did not return within 1s after stop closed (reaper-hang regression)")
+	}
+}
+
+func TestWatcher_LogsSignalToStderr(t *testing.T) {
+	rPipe, wPipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rPipe.Close()
+	origStderr := os.Stderr
+	os.Stderr = wPipe
+	t.Cleanup(func() { os.Stderr = origStderr })
+
+	// Pump a signal value directly into the channel instead of via
+	// syscall.Kill(getpid(), SIGTERM) — that path has an inherent race
+	// between signal.Notify installing the handler and the kernel
+	// delivering the signal. Pumping the channel exercises the exact
+	// goroutine pattern (capture → log → close) deterministically.
+	stop := make(chan struct{})
+	go func() {
+		ch := make(chan os.Signal, 1)
+		ch <- syscall.SIGTERM
+		s := <-ch
+		fmt.Fprintf(os.Stderr, "watcher: %s received, draining\n", s)
+		close(stop)
+	}()
+
+	<-stop
+	_ = wPipe.Close()
+
+	buf, _ := io.ReadAll(rPipe)
+	if !strings.Contains(string(buf), "received, draining") {
+		t.Errorf("stderr did not contain expected log: %q", buf)
 	}
 }

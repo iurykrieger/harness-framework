@@ -10,7 +10,7 @@ import (
 
 // ApplyContext is the deterministic context Apply needs: the project
 // root (used to bound mkdir/touch) and the failed sensor's declared
-// requires.* surfaces.
+// requires[] surfaces (kind=env, kind=context, etc).
 type ApplyContext struct {
 	Root         string
 	FailedSensor FailedSensor
@@ -81,7 +81,7 @@ func applyMkdir(ctx ApplyContext, a Action) ApplyResult {
 		return ApplyResult{Action: a, Reason: "mkdir requires dir"}
 	}
 	if !pathUnderAny(a.Dir, ctx.FailedSensor.Context) {
-		return ApplyResult{Action: a, Reason: "dir not under requires.context"}
+		return ApplyResult{Action: a, Reason: "dir not under requires[kind=context]"}
 	}
 	if err := os.MkdirAll(a.Dir, 0o755); err != nil {
 		return ApplyResult{Action: a, Reason: "mkdir: " + err.Error()}
@@ -94,7 +94,7 @@ func applyTouch(ctx ApplyContext, a Action) ApplyResult {
 		return ApplyResult{Action: a, Reason: "touch requires file"}
 	}
 	if !pathUnderAny(a.File, ctx.FailedSensor.Context) {
-		return ApplyResult{Action: a, Reason: "file not under requires.context"}
+		return ApplyResult{Action: a, Reason: "file not under requires[kind=context]"}
 	}
 	if _, err := os.Stat(a.File); err == nil {
 		return ApplyResult{Action: a, Applied: true} // already exists; idempotent
@@ -119,7 +119,7 @@ func applySetEnvInFile(ctx ApplyContext, a Action) ApplyResult {
 		}
 	}
 	if !declared {
-		return ApplyResult{Action: a, Reason: "var " + a.Name + " not in requires.env"}
+		return ApplyResult{Action: a, Reason: "var " + a.Name + " not in requires[kind=env]"}
 	}
 	if _, err := os.Stat(a.File); err != nil {
 		return ApplyResult{Action: a, Reason: "target file does not exist"}

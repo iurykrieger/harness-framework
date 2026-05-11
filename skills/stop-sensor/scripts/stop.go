@@ -36,10 +36,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "stop: cwd:", err)
 		os.Exit(2)
 	}
-	res, err := registry.Lookup(startDir)
+	res, reports, err := registry.LookupSanitized(startDir)
 	if err != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(registry.DiscoveryErrorSignal(err, ""))
 		os.Exit(1)
+	}
+	if len(reports) > 0 {
+		_ = json.NewEncoder(os.Stdout).Encode(registry.RegistryMigratedSignal(res, reports, "stop-sensor"))
 	}
 	exit, sig := runStop(res, fs.Args(), reap)
 	if sig != nil {
@@ -108,7 +111,7 @@ func runStop(res registry.Result, args []string, reap bool) (int, map[string]int
 	// We are clear to stop. Send SIGTERM to the process group.
 	gracefulMS := readGracefulMS(entry, projectRoot)
 	killedForcefully := terminateWithGrace(entry.PGID, gracefulMS)
-	stopWatcher(entry.WatcherPID)
+	watcherKillForced, watcherKillLatencyMS := stopWatcher(entry.WatcherPID)
 
 	sensorJSON := loadSensorJSONForStop(projectRoot, id)
 	teardownResults := runTeardown(sensorJSON)
@@ -127,6 +130,10 @@ func runStop(res registry.Result, args []string, reap bool) (int, map[string]int
 	})
 
 	sig := buildAggregate(res, id, sensorJSON, entry, individuals, agg, killedForcefully, reaped, teardownResults)
+	if md, ok := sig["metadata"].(map[string]interface{}); ok {
+		md["watcher_kill_forced"] = watcherKillForced
+		md["watcher_kill_latency_ms"] = watcherKillLatencyMS
+	}
 
 	if err := registry.WithFileLock(r.LockFile(), func() error {
 		rs, err := registry.Load(r)
@@ -160,21 +167,33 @@ func terminateWithGrace(pgid int, gracefulMS int) bool {
 	return false
 }
 
-func stopWatcher(pid int) {
+// stopWatcher sends SIGTERM to the watcher pid, polls for up to one
+// second, and escalates to SIGKILL if needed. Returns
+// (killedForcefully, latencyMS):
+//   - killedForcefully = true when the SIGTERM wait timed out and we
+//     fell through to SIGKILL.
+//   - latencyMS is wall-clock elapsed from the first signal to either
+//     observed death or the SIGKILL send-time.
+//
+// Pid <= 0 is a no-op (returns false, 0).
+func stopWatcher(pid int) (killedForcefully bool, latencyMS int) {
 	if pid <= 0 {
-		return
+		return false, 0
 	}
+	start := time.Now()
 	_ = syscall.Kill(pid, syscall.SIGTERM)
-	deadline := time.Now().Add(time.Second)
+	deadline := start.Add(time.Second)
 	for time.Now().Before(deadline) {
 		if !registry.IsPIDAlive(pid) {
-			return
+			return false, int(time.Since(start) / time.Millisecond)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	if registry.IsPIDAlive(pid) {
 		_ = syscall.Kill(pid, syscall.SIGKILL)
+		return true, int(time.Since(start) / time.Millisecond)
 	}
+	return false, int(time.Since(start) / time.Millisecond)
 }
 
 func readGracefulMS(entry *registry.RunningSensorEntry, projectRoot string) int {

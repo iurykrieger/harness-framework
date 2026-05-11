@@ -58,7 +58,9 @@ func TestRun_WithDep(t *testing.T) {
 		s["execution"].(map[string]interface{})["command"] = "true"
 	})
 	mainID := writeSensor(t, root, "main", func(s map[string]interface{}) {
-		s["depends_on"] = []interface{}{"dep"}
+		s["requires"] = []interface{}{
+			map[string]interface{}{"kind": "sensor", "id": "dep"},
+		}
 		s["execution"].(map[string]interface{})["command"] = "true"
 	})
 
