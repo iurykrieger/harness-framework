@@ -25,21 +25,13 @@ var LookupEnvFn = os.LookupEnv
 // The function never panics on malformed input; entries that do not match the
 // schema (missing name, wrong type) are silently ignored. Schema validation
 // is the caller's responsibility (the runner runs it first).
-func CheckRequiredEnv(sensor map[string]interface{}) []MissingEnv {
-	requires, _ := sensor["requires"].(map[string]interface{})
-	if requires == nil {
-		return nil
-	}
-	envSpec, _ := requires["env"].([]interface{})
-	if len(envSpec) == 0 {
+func CheckRequiredEnv(s map[string]interface{}) []MissingEnv {
+	entries := Project(s, "env")
+	if len(entries) == 0 {
 		return nil
 	}
 	var missing []MissingEnv
-	for _, item := range envSpec {
-		m, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
+	for _, m := range entries {
 		name, _ := m["name"].(string)
 		if name == "" {
 			continue
