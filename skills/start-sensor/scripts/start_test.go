@@ -110,7 +110,7 @@ func TestStart_RejectsAlreadyRunning(t *testing.T) {
 	if err := registry.Save(r, registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
-			{SensorID: "loop", PID: registry.SelfPID(), HeldBy: []registry.HeldByEntry{{Kind: "manual"}}},
+			{SensorID: "loop", PID: registry.SelfPID(), PGID: registry.SelfPID(), HeldBy: []registry.HeldByEntry{{Kind: "manual"}}},
 		},
 	}); err != nil {
 		t.Fatal(err)
