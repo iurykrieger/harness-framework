@@ -22,7 +22,7 @@ The goal is a hook that fires after each `Bash` tool call, detects when a framew
 1. **New `hooks/error-issue-autofiler.go`** with `//go:build error_autofiler`. Single-file Go binary implementing the full pipeline (matcher → classify → fingerprint → dedup → file). ~400 LOC.
 2. **New `hooks/error-issue-autofiler_test.go`** with the same build tag. Table-driven tests over pure functions plus integration tests with mocked `gh` and cache.
 3. **`hooks/setup-failure-detector.go` and `hooks/setup-failure-detector_test.go` gain `//go:build !error_autofiler`** to keep `package main` unambiguous when both files live in the same directory under different tags. Behavioral no-op.
-4. **`plugin.json` gains a `PostToolUse` hook entry** with `matcher: "Bash"`, invoking the new build-tagged binary. The existing `Stop` hook entry is untouched.
+4. **`.claude-plugin/plugin.json` gains a `PostToolUse` hook entry** with `matcher: "Bash"`, invoking the new build-tagged binary. The existing `Stop` hook entry is untouched.
 5. **New cache file at `<projectRoot>/.runtime/auto-issues.json`** (created on first write). Project root is resolved via `lib/registry/Lookup(cwd)` so the autofiler reuses the registry root discovery logic — no third discovery strategy in the codebase.
 6. **One new GitHub label expected**: `auto-filed`. Documented in CLAUDE.md; the user creates it once. If absent, `gh issue create --label` fails and the hook silently degrades.
 7. **`CLAUDE.md` gains a short "Auto issue opening" subsection** under Architecture explaining the trigger surface, the kill switch, and the cache location.
@@ -109,7 +109,7 @@ evt   := classify(stdout, stderr, exitCode)
 evt == nil ───▶ exit 0
         │
         ▼
-fp := fingerprint(evt, skill)
+fp := fingerprint(evt)         // evt.Skill is already set by classify()
         │
         ▼
 projectRoot := registry.Lookup(cwd).ProjectRoot
@@ -135,11 +135,13 @@ exit 0
 
 The 7-day re-check window strikes a balance between "open issue may have been closed without telling us" (so we want to re-check sometimes) and "don't burn GH API on every tool call" (so we don't re-check daily).
 
+**Dedup precedence:** the local cache is the **primary** dedup mechanism. `gh issue list --search "harness-fp:<fp>"` is a **backstop** for two scenarios: (a) first-occurrence on a fresh machine where the cache is empty, and (b) cache stale beyond 7 days. GitHub's full-text search has indexing latency (sometimes a few minutes after creation), so two near-simultaneous first-occurrences on different machines may both miss the search and both attempt `Create`. The `422 already_exists` path handles that race — see "Error handling."
+
 ### Matcher
 
 Two layers:
 
-**Layer 1 — declarative in `plugin.json`:**
+**Layer 1 — declarative in `.claude-plugin/plugin.json`:**
 
 ```json
 "hooks": {
@@ -256,7 +258,9 @@ Cache stale threshold: 7 days. A hit older than that triggers a re-check against
 
 ### Project root resolution
 
-The hook reuses `lib/registry.Lookup(cwd)` — same `HARNESS_REGISTRY_ROOT` env → `sensors/` walk-up cascade used by the four blocking-sensor skills. This keeps registry root discovery as a single concept across the codebase. If `Lookup` fails (no env var, no `sensors/` marker anywhere up the tree), the autofiler logs `"cannot resolve project root: <err>"` to stderr and exits 0 — typical for Bash calls in cwds that are not harness projects (e.g., the user is in `~/Workspace/somewhere-else` and ran `go test ./...` on a different repo).
+The hook reuses `lib/registry.Lookup(cwd)` — same `HARNESS_REGISTRY_ROOT` env → `sensors/` walk-up cascade used by the four blocking-sensor skills. This keeps registry root discovery as a single concept across the codebase. The autofiler consumes only `Result.ProjectRoot` and `Result.Source`; `Result.Exists` (whether `running_sensors.json` is on disk) is ignored, because the autofiler's `auto-issues.json` cache is independent of the live-sensors registry — the two cohabit `.runtime/` but never read each other.
+
+If `Lookup` returns an error (no env var, no `sensors/` marker anywhere up the tree), the autofiler logs `"cannot resolve project root: <err>"` to stderr and exits 0 — typical for Bash calls in cwds that are not harness projects (e.g., the user is in `~/Workspace/somewhere-else` and ran `go test ./...` on a different repo).
 
 ### Repo resolution
 
@@ -270,49 +274,49 @@ func resolveRepo(projectRoot string) (string, error) {
 }
 ```
 
-Non-GitHub remote → log "no github remote found", exit 0.
+Only the `origin` remote is consulted. Forks with `upstream` or other named remotes are intentionally ignored — autofiled issues go to whatever the developer is pushing to. Non-GitHub `origin` remote → log "no github remote found", exit 0.
 
 ### Issue title and body
 
 Title: `[auto] <skill>: <summary>`, summary truncated to 80 chars after the colon to keep total title ≤120.
 
-Body (Markdown):
+Body (Markdown, en-US per Project rule #1):
 
 ```markdown
-**Tipo:** <compile_error|panic|signal_error|exit_nonzero>
+**Type:** <compile_error|panic|signal_error|exit_nonzero>
 **Skill:** <skill>
 **Fingerprint:** `<fingerprint>`
-**Primeira ocorrência:** <first_seen ISO8601 UTC>
+**First seen:** <first_seen ISO8601 UTC>
 
-## Comando
+## Command
 
 ```bash
 <tool_input.command>
 ```
 
-## Saída
+## Output
 
 <details>
-<summary>stdout (últimas 50 linhas)</summary>
+<summary>stdout (last 50 lines)</summary>
 
 ```
-<stdout truncado: last 50 lines OR 4KB, whichever first>
+<stdout truncated: last 50 lines OR 4KB, whichever first>
 ```
 </details>
 
 <details>
-<summary>stderr (últimas 50 linhas)</summary>
+<summary>stderr (last 50 lines)</summary>
 
 ```
-<stderr truncado: last 50 lines OR 4KB, whichever first>
+<stderr truncated: last 50 lines OR 4KB, whichever first>
 ```
 </details>
 
-## Contexto
+## Context
 
-- `cwd`: `<tool_input.cwd>` (apresentado relativo a `~` quando possível)
+- `cwd`: `<tool_input.cwd>` (rendered relative to `~` when possible)
 - `exit_code`: <int>
-- Hook: `error-issue-autofiler` em `hooks/`
+- Hook: `error-issue-autofiler` in `hooks/`
 
 <!-- harness-fp:<fingerprint> -->
 ```
@@ -321,10 +325,10 @@ The HTML marker `<!-- harness-fp:<fingerprint> -->` is invisible in rendered Mar
 
 ### `+1 occurrence` comment
 
-When `ghSearch` finds an existing open issue, the hook appends:
+When `ghSearch` finds an existing open issue, the hook appends (en-US):
 
 ```markdown
-+1 ocorrência detectada em <timestamp ISO8601 UTC>.
++1 occurrence detected at <timestamp ISO8601 UTC>.
 
 - `cwd`: `<cwd relativized>`
 - `command`: `<command, truncated to 200 chars>`
@@ -379,7 +383,28 @@ func (ghCLI) Comment(repo string, n int, body string) error
 func (ghCLI) Create(repo, title, body string, labels []string) (issueRef, error)
 ```
 
-Everything is `package main` top-level. The `ghClient` interface exists for test substitution, not for production polymorphism — there will only ever be one production implementation.
+Everything is `package main` top-level inside `hooks/error-issue-autofiler.go`. **No code moves to `lib/`** — the autofiler logic is hook-specific (per CLAUDE.md rule #4, `lib/` is for primitives several skills share). This matches the precedent set by `hooks/setup-failure-detector.go`, which keeps its full pipeline in a single file. The `ghClient` interface exists for test substitution, not for production polymorphism — there will only ever be one production implementation.
+
+Constants for tunables (one declaration, used in pipeline and cache code):
+
+```go
+const (
+    cacheStaleAfter      = 7 * 24 * time.Hour
+    classifierScanWindow = 16 * 1024 // bytes scanned at the tail of stdout/stderr
+    bodyLogLineLimit     = 50        // lines per <details> block
+    bodyLogByteLimit     = 4 * 1024  // bytes per <details> block
+    titleSummaryMaxLen   = 80
+    commandTruncateLen   = 200       // in +1 occurrence comments
+)
+```
+
+The list of framework skill identifiers is declared once (mirroring the `sensorCommands` slice in `setup-failure-detector.go`):
+
+```go
+var sensorSkills = []string{"run", "start", "stop", "tail", "list", "heal", "detect"}
+```
+
+Both `commandTouchesFramework` and `extractSkill` build their regexes from this slice rather than hardcoding the seven names twice.
 
 ## Error handling
 
@@ -438,12 +463,12 @@ A `fakeGhClient` records calls and returns scripted responses. `loadCache` and `
 
 ## Wire-up
 
-### plugin.json
+### .claude-plugin/plugin.json
 
 ```json
 {
   "name": "harness-framework",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "...": "...",
   "hooks": {
     "Stop": [
@@ -495,10 +520,10 @@ A new subsection under "Architecture" (~12 lines):
 - [ ] `hooks/error-issue-autofiler.go` exists and is the only `package main` file built under `-tags=error_autofiler ./hooks`.
 - [ ] `hooks/setup-failure-detector.go` and its test have `//go:build !error_autofiler`. The Stop hook still runs unchanged.
 - [ ] `go vet -tags=error_autofiler ./hooks` and `go test -tags=error_autofiler ./hooks` both pass.
-- [ ] `plugin.json` has a `PostToolUse` entry as specified.
+- [ ] `.claude-plugin/plugin.json` has a `PostToolUse` entry as specified.
 - [ ] When an agent runs `go run ./skills/run-sensor/scripts <broken-sensor>` and the runner panics, a new issue is filed on first run; a second run within the same session adds a `+1 occurrence` comment instead of a duplicate issue.
 - [ ] When `HARNESS_AUTOFILE_ISSUES=0`, no `gh` calls happen for any command.
-- [ ] When the Bash command is unrelated to the framework, the hook exits in under 10ms (no `gh`, no cache I/O).
+- [ ] When the Bash command is unrelated to the framework, the hook performs no `gh` invocations and no cache I/O (verified by `TestRunFlow_NonFrameworkCommand_NoOp`). Low latency is a goal, not an asserted SLO — the matcher short-circuit before any other work makes this naturally fast.
 - [ ] When `gh` is not installed or not authenticated, the hook logs to stderr and exits 0; the agent's turn is unaffected.
 - [ ] When the project root cannot be resolved (no env var, no `sensors/` ancestor), the hook logs to stderr and exits 0.
 - [ ] Cache file `<projectRoot>/.runtime/auto-issues.json` is created on first successful write and uses `flock` for concurrent-access safety.
