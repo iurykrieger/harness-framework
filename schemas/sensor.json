@@ -101,8 +101,8 @@
       "required": ["kind", "command"],
       "properties": {
         "kind":          { "const": "step" },
-        "command":       { "type": "string" },
-        "timeout_ms":    { "type": "integer", "minimum": 1 },
+        "command":       { "type": "string", "description": "Shell invocation (sh -c). MUST be idempotent." },
+        "timeout_ms":    { "type": "integer", "minimum": 1, "description": "Hard cap; falls back to cost.latency.timeout_ms when omitted." },
         "exit_code_map": {
           "type": "array",
           "minItems": 1,
@@ -277,7 +277,7 @@
     },
 
     "requires": {
-      "description": "Preconditions for this sensor. v2 shape: array of discriminated-union items keyed by `kind`. v1 shape (object with tools/permissions/context/env) is still accepted for the duration of this PR; commit 5 drops it.",
+      "description": "Preconditions for this sensor. v2 shape: array of discriminated-union items keyed by `kind`. v1 shape (object with tools/permissions/context/env) is still accepted during the dual-shape transition window for issue #10; the v1 branch will be dropped once all sensors are migrated.",
       "oneOf": [
         {
           "type": "object",

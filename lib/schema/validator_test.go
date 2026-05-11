@@ -3,6 +3,7 @@ package schema_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -427,5 +428,62 @@ func TestValidator_Sensor_RequiresArrayV2(t *testing.T) {
 	}
 	if err := v.Validate(schema.TargetSensor, instance); err != nil {
 		t.Fatalf("expected v2 requires[] to validate, got: %v", err)
+	}
+}
+
+func TestValidator_Sensor_RequiresArrayV2_Rejections(t *testing.T) {
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Minimal valid sensor skeleton with requires replaced per case.
+	const skeleton = `{
+		"id": "ex-v2-reject",
+		"version": "1.0.0",
+		"name": "ex",
+		"description": "desc",
+		"kind": "observation",
+		"type": "computational",
+		"regulation": "behaviour",
+		"phase": "on-demand",
+		"determinism": "high",
+		"output": "single",
+		"cost": {"class":"cheap","compute":{"cpu":"low","memory_mb":64},"latency":{"p50_ms":1,"p95_ms":1,"timeout_ms":1000}},
+		"triggers": [{"on":"manual"}],
+		"requires": %s,
+		"execution": {"command":"true","exit_code_map":[{"exit_code":0,"verdict":"pass","severity":"info"}]},
+		"verification": {"golden_cases":[{"fixture":"f","expected_verdict":"pass","expected_severity":"info"}]}
+	}`
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "unknown kind in v2 array item",
+			body: `[{"kind":"port","addr":"5432"}]`,
+		},
+		{
+			name: "RequireSensor item missing required id field",
+			body: `[{"kind":"sensor"}]`,
+		},
+		{
+			name: "RequireEnv item with lowercase name violates pattern",
+			body: `[{"kind":"env","name":"lowercase"}]`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(fmt.Sprintf(skeleton, tc.body))
+			var instance map[string]interface{}
+			if err := json.Unmarshal(raw, &instance); err != nil {
+				t.Fatalf("fixture JSON is invalid: %v", err)
+			}
+			if err := v.Validate(schema.TargetSensor, instance); err == nil {
+				t.Fatalf("expected validation to fail for case %q, but it passed", tc.name)
+			}
+		})
 	}
 }
