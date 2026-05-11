@@ -180,7 +180,7 @@ Precedence is **fixed by kind**. Array order matters only between items of the s
 |---|---|---|
 | 1 | `requires[kind=sensor]` | Orchestrator resolves topological closure (`lib/orchestrator/dag.go`); runs full lifecycle per dep; cascade on failure. |
 | 2 | `requires[kind=env]` (non-optional) | Preflight check: env var must be set in runner environment. Missing var emits `verdict=error` Signal with remediation (same shape as today's `BuildMissingEnvSignal`). |
-| 3 | `requires[kind=tool / permission / context]` | Declarative metadata. Not blocking. Consumed by heal classifier (`heal.FailedSensor.Tools/Context`) and tooling. |
+| 3 | `requires[kind=tool / permission / context]` | Declarative metadata. Not blocking. `tool` and `context` are consumed by the heal classifier (`heal.FailedSensor.Tools/Context`). `kind=permission` is parsed and schema-validated but has no runtime consumer today; it documents intent and is a forward-looking hook for future least-privilege tooling. |
 | 4 | `requires[kind=step]` | Fail-fast in array order. Per-step result folded into `metadata.lifecycle.prepare[i]`. First non-pass step aborts the array and skips `execution.command`. |
 | 5 | `execution.command` | Runs only if 1–4 passed. |
 | 6 | `execution.teardown[]` | Unchanged. Finally-semantics: runs on prepare failure, command failure, and command timeout. |
@@ -251,6 +251,8 @@ Consumers that do NOT need rewiring (their input contract is unchanged):
 ## 8. Validator: rejecting v1 with an actionable message
 
 The current validator (`lib/schema/validator.go`) uses `santhosh-tekuri/jsonschema/v5`. A naked JSON Schema rejection would emit `additional property "depends_on" not allowed`, which is unhelpful.
+
+The pre-schema sniff persists **even after step 5 of §12** removes the v1 properties from `schemas/sensor.json`. Once the v1 fields are out of the schema, `additionalProperties: false` would already reject them, but with the opaque message above. The sniff exists to translate that opaque message into the actionable one below.
 
 Add a **pre-schema sniff** in `lib/schema/validator.go`:
 
@@ -324,7 +326,7 @@ migrate-requires --dry-run [...]
 Single branch; commits ordered for incremental review. CI must be green at every commit.
 
 1. **`feat(schema)`**: introduce v2 `requires[]` in `schemas/sensor.json` alongside the v1 `requires` object — both shapes accepted **for the duration of this PR only**. Concretely: the top-level `requires` property becomes `{ "oneOf": [ <v1 object schema>, <v2 array schema> ] }`. The v1 `depends_on` and `execution.prepare` properties stay declared. The schema's `additionalProperties: false` continues to hold. Test fixtures still pass; no sensor breaks.
-2. **`feat(lib)`**: introduce `lib/sensor.Project()` with a **transitional fallback**: when `requires` is an object (v1 shape), `Project()` synthesizes the v2 array internally from `depends_on`, `requires.{env,tools,context,permissions}`, and `execution.prepare[]`. Update `orchestrator`, `sensor/env`, `heal`, hook, and runner skills to call `Project()`. Tests cover both shapes. The fallback is opt-in (a single function with a single dispatch on `requires` type); it is removed in step 5 and has no maintenance cost beyond this PR. This intentionally diverges from §4 decision 1 *within the PR* and reconverges in step 5.
+2. **`feat(lib)`**: introduce `lib/sensor.Project()` with a **transitional fallback**: at the top of `Project()`, before any per-kind dispatch, a single `switch` on the runtime type of `requires` synthesizes the v2 array internally from `depends_on`, `requires.{env,tools,context,permissions}`, and `execution.prepare[]` whenever `requires` is an object (v1) or absent. From that point on, the function operates only on the synthesized v2 array — every downstream consumer sees the v2 shape. Update `orchestrator`, `sensor/env`, `heal`, hook, and runner skills to call `Project()`. Tests cover both shapes. The fallback is a single dispatch point with no scattered branching; it is removed in step 5 and has no maintenance cost beyond this PR. This intentionally diverges from §4 decision 1 *within the PR* and reconverges in step 5.
 3. **`feat(scripts)`**: add `scripts/migrate-requires.go` + tests.
 4. **`chore(sensors)`**: run the migrator on the 13 `sensors/*.json`; generated commit shows the rewrites.
 5. **`feat(schema)`**: drop the v1 branch from the `oneOf` (schema now accepts only the v2 array); remove `depends_on` and `execution.prepare` declarations; add the pre-schema sniff in `lib/schema/validator.go` with the actionable error for both v1 fields and unknown `requires[].kind` values; remove the transitional fallback in `lib/sensor.Project()`.
