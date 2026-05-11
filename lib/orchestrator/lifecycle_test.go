@@ -291,6 +291,124 @@ func TestRunOne_AbortsOnMissingRequiresEnv(t *testing.T) {
 	}
 }
 
+func TestRunOne_GateFailure_Tool(t *testing.T) {
+	// Stub LookupEnvFn to neutralize any env requirements (none in this fixture, but be defensive).
+	prevLookup := sensor.LookupEnvFn
+	sensor.LookupEnvFn = func(string) (string, bool) { return "", true }
+	t.Cleanup(func() { sensor.LookupEnvFn = prevLookup })
+
+	s := Sensor{
+		ID:   "needs-docker",
+		Path: "/tmp/needs-docker.json",
+		JSON: map[string]interface{}{
+			"id":      "needs-docker",
+			"version": "0.1.0",
+			"type":    "computational",
+			"output":  "stream",
+			"requires": []interface{}{
+				map[string]interface{}{"kind": "tool", "name": "definitely-not-on-PATH-xyz-1234"},
+			},
+			"execution": map[string]interface{}{
+				"command":       "echo should-not-run",
+				"exit_code_map": []interface{}{},
+				"output_parsing": map[string]interface{}{
+					"patterns": []interface{}{
+						map[string]interface{}{"regex": "x", "verdict": "pass", "severity": "info"},
+					},
+				},
+			},
+		},
+	}
+
+	var stdout, stderr bytes.Buffer
+	sig, code := RunOne(context.Background(), s, "", nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if sig["verdict"] != "error" {
+		t.Fatalf("verdict = %v", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if hh, _ := md["heal_hint"].(string); !strings.HasPrefix(hh, "binary-not-found:") {
+		t.Errorf("heal_hint = %v, want binary-not-found:* prefix", md["heal_hint"])
+	}
+	if strings.Count(stdout.String(), "\n") != 1 {
+		t.Errorf("expected 1 stdout line, got %d (%s)", strings.Count(stdout.String(), "\n"), stdout.String())
+	}
+}
+
+func TestRunOne_GateFailure_Context(t *testing.T) {
+	s := Sensor{
+		ID:   "needs-context",
+		Path: "/tmp/needs-context.json",
+		JSON: map[string]interface{}{
+			"id":      "needs-context",
+			"version": "0.1.0",
+			"type":    "computational",
+			"output":  "stream",
+			"requires": []interface{}{
+				map[string]interface{}{"kind": "context", "path": "/this/path/does/not/exist/12345"},
+			},
+			"execution": map[string]interface{}{
+				"command":       "echo should-not-run",
+				"exit_code_map": []interface{}{},
+				"output_parsing": map[string]interface{}{
+					"patterns": []interface{}{
+						map[string]interface{}{"regex": "x", "verdict": "pass", "severity": "info"},
+					},
+				},
+			},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	sig, _ := RunOne(context.Background(), s, "", nil, &stdout, &stderr)
+	if sig["verdict"] != "error" {
+		t.Fatalf("verdict = %v", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if hh, _ := md["heal_hint"].(string); !strings.HasPrefix(hh, "missing-context:") {
+		t.Errorf("heal_hint = %v", md["heal_hint"])
+	}
+}
+
+func TestRunOne_GateFailure_Env(t *testing.T) {
+	prev := sensor.LookupEnvFn
+	sensor.LookupEnvFn = func(string) (string, bool) { return "", false }
+	t.Cleanup(func() { sensor.LookupEnvFn = prev })
+
+	s := Sensor{
+		ID:   "needs-env",
+		Path: "/tmp/needs-env.json",
+		JSON: map[string]interface{}{
+			"id":      "needs-env",
+			"version": "0.1.0",
+			"type":    "computational",
+			"output":  "stream",
+			"requires": []interface{}{
+				map[string]interface{}{"kind": "env", "name": "DEFINITELY_UNSET_VAR_XYZ"},
+			},
+			"execution": map[string]interface{}{
+				"command":       "echo should-not-run",
+				"exit_code_map": []interface{}{},
+				"output_parsing": map[string]interface{}{
+					"patterns": []interface{}{
+						map[string]interface{}{"regex": "x", "verdict": "pass", "severity": "info"},
+					},
+				},
+			},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	sig, _ := RunOne(context.Background(), s, "", nil, &stdout, &stderr)
+	if sig["verdict"] != "error" {
+		t.Fatalf("verdict = %v", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if hh, _ := md["heal_hint"].(string); !strings.HasPrefix(hh, "missing-env:") {
+		t.Errorf("heal_hint = %v", md["heal_hint"])
+	}
+}
+
 // The aggregate Signal emitted on stdout is valid JSON and the LAST line.
 func TestRunOne_OutputIsValidJSON(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
