@@ -260,7 +260,11 @@ func runOneWithPersistence(
 	var elapsedMS int
 	// runID is the synthesized <pid>-<short> identifier; populated only
 	// when the command phase actually spawned a subprocess.
+	// runDir is the on-disk <run-id>/ directory path; it is set only when
+	// both os.MkdirAll and the registry insert succeed. Either failure path
+	// clears runDir to "" so the post-Run signals.log append is skipped.
 	var runID string
+	var runDir string
 
 	if prepFailed {
 		aggVerdict, aggSeverity = "error", "high"
@@ -299,14 +303,19 @@ func runOneWithPersistence(
 			fmt.Fprintf(stderr, "error: stream start: %v\n", startErr)
 		} else {
 			// PID known: synthesize run_id and prepare <run-id>/ on disk.
+			// envelope.RunID is updated only after BOTH mkdir and registry
+			// insert succeed (persistOK becomes true). This ensures the
+			// aggregate Signal never claims a run_id whose <run-id>/ directory
+			// does not exist on disk.
 			runID = fmt.Sprintf("%d-%s", handle.PID, uuid.NewString()[:8])
-			envelope.RunID = runID
-			runDir := root.RunDir(envelope.SensorID, runID)
+			runDir = root.RunDir(envelope.SensorID, runID)
 
 			persistOK := true
 			if mkErr := os.MkdirAll(runDir, 0o755); mkErr != nil {
 				fmt.Fprintf(stderr, "warning: mkdir run dir: %v\n", mkErr)
 				_ = handle.Kill()
+				// Clear runDir so the post-Run signals.log append is skipped.
+				runDir = ""
 				persistOK = false
 			}
 
@@ -336,11 +345,22 @@ func runOneWithPersistence(
 				}); regErr != nil {
 					fmt.Fprintf(stderr, "warning: registry insert: %v\n", regErr)
 					_ = handle.Kill()
+					// Remove the just-created run dir so no orphan is left on disk.
+					// Best-effort: ignore removal errors.
+					_ = os.RemoveAll(runDir)
+					// Clear runDir so the post-Run signals.log append is skipped.
+					runDir = ""
 					persistOK = false
 				}
 			}
 
-			// Ensure the entry is removed on every exit path.
+			// Only propagate run_id into the envelope (and therefore the
+			// aggregate Signal) when the full persistence setup succeeded.
+			if persistOK {
+				envelope.RunID = runID
+			}
+
+			// Ensure the registry entry is removed on every exit path.
 			defer func() {
 				if !persistOK {
 					return
@@ -418,14 +438,10 @@ func runOneWithPersistence(
 	}
 
 	finished := sensor.NowFn().Format("2006-01-02T15:04:05Z")
-	finalRunID := envelope.RunID
-	if finalRunID == "" {
-		finalRunID = runID
-	}
 	sig := map[string]interface{}{
 		"sensor_id":   envelope.SensorID,
 		"version":     envelope.Version,
-		"run_id":      finalRunID,
+		"run_id":      envelope.RunID,
 		"started_at":  envelope.StartedAt,
 		"finished_at": finished,
 		"verdict":     aggVerdict,
@@ -444,8 +460,12 @@ func runOneWithPersistence(
 	}
 	_ = json.NewEncoder(stdout).Encode(sig)
 
-	// Persist aggregate to signals.log when we created a run dir.
-	if runID != "" {
+	// Persist aggregate to signals.log only when a run dir was successfully
+	// created and the registry insert succeeded (runDir != ""). Both mkdir
+	// failure and registry insert failure clear runDir to the empty string,
+	// ensuring no write is attempted against a directory that does not exist
+	// or was removed during cleanup.
+	if runDir != "" {
 		sigsPath := root.SignalsLogRun(envelope.SensorID, runID)
 		if f, ferr := os.OpenFile(sigsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); ferr == nil {
 			_ = json.NewEncoder(f).Encode(sig)
