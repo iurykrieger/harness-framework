@@ -303,14 +303,25 @@ func cleanupStartedTarget(t *testing.T, root, id string) {
 }
 
 // cleanupBlockingDep detaches/stops a blocking dep that was attached
-// during the test, so the temp dir can be safely cleaned up.
+// during the test, so the temp dir can be safely cleaned up. Resolves
+// the live blocking entry by sensor id and addresses Detach by
+// (id, run_id); silently noops if the entry is no longer present.
 func cleanupBlockingDep(t *testing.T, root, depID, holderID string) {
 	t.Helper()
 	v, code := schema.LoadValidator(testfixtures.RepoSchemasDir(t), io.Discard)
 	if code != 0 {
 		return
 	}
-	orchestrator.DetachLiveDep(depID, root, holderID, v, io.Discard, io.Discard)
+	r := registry.NewRoot(root)
+	rs, err := registry.Load(r)
+	if err != nil {
+		return
+	}
+	entry := rs.FindBlockingEntry(depID)
+	if entry == nil {
+		return
+	}
+	orchestrator.DetachLiveDep(orchestrator.LiveDep{ID: depID, RunID: entry.RunID}, root, holderID, v, io.Discard, io.Discard)
 }
 
 func TestStart_WithSetupDepPASS(t *testing.T) {
@@ -460,10 +471,13 @@ func TestStart_WithBlockingDepAttach(t *testing.T) {
 	preExistingHolder := registry.HeldByEntry{
 		Kind: "sensor", ID: "pre-existing-holder", PID: os.Getpid(), AttachedAt: "2026-05-10T00:00:00Z",
 	}
+	preExistingRunID := "preexisting-runid"
 	if err := registry.Save(r, registry.RunningSensors{
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{{
 			SensorID:  "blocking-tick",
+			RunID:     preExistingRunID,
+			Blocking:  true,
 			PID:       os.Getpid(),
 			PGID:      os.Getpid(),
 			StartedAt: "2026-05-10T00:00:00Z",

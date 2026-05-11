@@ -276,7 +276,7 @@ func TestRunDeps_BlockingDepStartFresh(t *testing.T) {
 	if res.ExitCode != 0 {
 		t.Fatalf("ExitCode: got %d, want 0", res.ExitCode)
 	}
-	if got := res.LiveStack; len(got) != 1 || got[0] != "blocking-tick" {
+	if got := res.LiveStack; len(got) != 1 || got[0].ID != "blocking-tick" {
 		t.Errorf("LiveStack: got %v, want [blocking-tick]", got)
 	}
 

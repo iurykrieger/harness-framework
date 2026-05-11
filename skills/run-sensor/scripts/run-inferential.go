@@ -151,7 +151,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	depSignals := map[string]map[string]interface{}{}
-	var liveStack []string
+	var liveStack []orchestrator.LiveDep
 
 	defer func() {
 		for i := len(liveStack) - 1; i >= 0; i-- {
@@ -163,12 +163,12 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		depExecMap, _ := dep.JSON["execution"].(map[string]interface{})
 		blocking, _ := depExecMap["blocking"].(bool)
 		if blocking {
-			depID, aerr := orchestrator.AttachLiveDep(ctx, dep, projectRoot, rootID, os.Getpid(), v, stdout, stderr)
+			live, aerr := orchestrator.AttachLiveDep(ctx, dep, projectRoot, rootID, os.Getpid(), v, stdout, stderr)
 			if aerr != nil {
 				fmt.Fprintln(stderr, "error: attach live dep:", aerr)
 				return 1
 			}
-			liveStack = append(liveStack, depID)
+			liveStack = append(liveStack, live)
 			depSignals[dep.ID] = map[string]interface{}{"verdict": "pass"}
 			continue
 		}

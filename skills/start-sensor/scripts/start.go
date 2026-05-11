@@ -346,10 +346,10 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 
 	// Rebind: dep holders go from placeholderPID to spawned.det.PID.
 	var rebindWarnings []interface{}
-	for _, depID := range pre.LiveStack {
-		if err := orchestrator.RebindDepHolderPID(depID, projectRoot, id, placeholderPID, spawned.det.PID); err != nil {
+	for _, live := range pre.LiveStack {
+		if err := orchestrator.RebindDepHolderPID(live.ID, projectRoot, id, placeholderPID, spawned.det.PID); err != nil {
 			rebindWarnings = append(rebindWarnings, map[string]interface{}{
-				"dep_id": depID,
+				"dep_id": live.ID,
 				"error":  err.Error(),
 			})
 		}
@@ -367,7 +367,7 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 	if len(pre.LiveStack) > 0 {
 		ds := []interface{}{}
 		for _, d := range pre.LiveStack {
-			ds = append(ds, d)
+			ds = append(ds, d.ID)
 		}
 		aux["dep_chain"] = ds
 	}
