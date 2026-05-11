@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// MissingEnv names a required env var that was declared by sensor.requires.env
+// MissingEnv names a required env var that was declared by requires[kind=env]
 // but is not present in the runner's process environment. The runner uses this
 // to emit a verdict=error Signal with a remediation that names the missing var.
 type MissingEnv struct {
@@ -18,7 +18,7 @@ type MissingEnv struct {
 // override it to inject a synthetic environment without mutating the process.
 var LookupEnvFn = os.LookupEnv
 
-// CheckRequiredEnv reads sensor.requires.env (if present) and returns the list
+// CheckRequiredEnv reads requires[kind=env] entries and returns the list
 // of NON-OPTIONAL env vars whose names are missing from the runner's
 // environment. Optional vars are skipped — they may legitimately be unset.
 //
@@ -50,7 +50,7 @@ func CheckRequiredEnv(s map[string]interface{}) []MissingEnv {
 }
 
 // BuildMissingEnvSignal constructs the verdict=error aggregate Signal the
-// runner emits when sensor.requires.env declares non-optional vars that are
+// runner emits when requires[kind=env] declares non-optional vars that are
 // absent from the runner's environment.
 //
 // The returned Signal has ONE evidence entry per missing var (not one block

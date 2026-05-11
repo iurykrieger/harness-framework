@@ -1,11 +1,9 @@
 // Package orchestrator resolves and runs sensor dependency graphs. A
 // sensor's `requires[]` entries of `kind=sensor` declare ids of other
-// sensors that must run and pass before it. (The v1 `depends_on` field is
-// read transparently via `sensor.Project()` until the migration completes.)
-// This package walks that closure, sorts topologically (deps first), and
-// runs each sensor's prepare → command → teardown lifecycle. Failures
-// cascade: dependents of a failed sensor never run and emit cascade Signals
-// instead.
+// sensors that must run and pass before it. This package walks that closure,
+// sorts topologically (deps first), and runs each sensor's
+// requires[kind=step] → command → teardown lifecycle. Failures cascade:
+// dependents of a failed sensor never run and emit cascade Signals instead.
 package orchestrator
 
 import (

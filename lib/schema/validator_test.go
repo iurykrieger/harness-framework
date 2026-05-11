@@ -332,31 +332,26 @@ func TestValidator_KindEnumRejectsUnknown(t *testing.T) {
 	}
 }
 
-func TestValidator_DependsOnAcceptsIDArray(t *testing.T) {
+func TestValidator_DependsOnRejectedAsV1Field(t *testing.T) {
 	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := testfixtures.ValidSensorComputational()
 	s["depends_on"] = []interface{}{"start-postgres", "setup-env"}
-	if err := v.Validate(schema.TargetSensor, s); err != nil {
-		t.Fatalf("expected valid depends_on to validate: %v", err)
+	err = v.Validate(schema.TargetSensor, s)
+	if err == nil {
+		t.Fatal("expected depends_on to be rejected as v1 field after hard-cut")
+	}
+	if !strings.Contains(err.Error(), "depends_on") {
+		t.Fatalf("expected error to mention depends_on, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "migrate-requires.go") {
+		t.Fatalf("expected error to reference migration script, got: %v", err)
 	}
 }
 
-func TestValidator_DependsOnRejectsBadID(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := testfixtures.ValidSensorComputational()
-	s["depends_on"] = []interface{}{"Bad-ID"} // uppercase rejected
-	if err := v.Validate(schema.TargetSensor, s); err == nil {
-		t.Fatal("expected validation to fail for uppercase id in depends_on")
-	}
-}
-
-func TestValidator_PrepareTeardownAccepted(t *testing.T) {
+func TestValidator_ExecutionPrepareRejectedAsV1Field(t *testing.T) {
 	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
@@ -366,11 +361,27 @@ func TestValidator_PrepareTeardownAccepted(t *testing.T) {
 	exec["prepare"] = []interface{}{
 		map[string]interface{}{"command": "echo prep", "timeout_ms": 1000},
 	}
+	err = v.Validate(schema.TargetSensor, s)
+	if err == nil {
+		t.Fatal("expected execution.prepare to be rejected as v1 field after hard-cut")
+	}
+	if !strings.Contains(err.Error(), "execution.prepare") {
+		t.Fatalf("expected error to mention execution.prepare, got: %v", err)
+	}
+}
+
+func TestValidator_TeardownAccepted(t *testing.T) {
+	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testfixtures.ValidSensorComputational()
+	exec := s["execution"].(map[string]interface{})
 	exec["teardown"] = []interface{}{
 		map[string]interface{}{"command": "echo down"},
 	}
 	if err := v.Validate(schema.TargetSensor, s); err != nil {
-		t.Fatalf("expected prepare+teardown to validate: %v", err)
+		t.Fatalf("expected teardown to validate: %v", err)
 	}
 }
 
@@ -430,6 +441,7 @@ func TestValidator_Sensor_RequiresArrayV2(t *testing.T) {
 		t.Fatalf("expected v2 requires[] to validate, got: %v", err)
 	}
 }
+
 
 func TestValidator_Sensor_RequiresArrayV2_Rejections(t *testing.T) {
 	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))

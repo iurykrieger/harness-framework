@@ -45,7 +45,7 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 	execMap, _ := s.JSON["execution"].(map[string]interface{})
 	output, _ := s.JSON["output"].(string)
 
-	// Phase 0: enforce sensor.requires.env BEFORE prepare runs.
+	// Phase 0: enforce requires[kind=env] BEFORE prepare runs.
 	// A missing non-optional env var means the sensor cannot run at all —
 	// skip prepare, command, and teardown entirely and emit a single
 	// verdict=error aggregate Signal whose per-var evidence rationale is
@@ -67,8 +67,7 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 
 	timeoutMS := readTimeoutMS(s.JSON)
 
-	// Phase 1: prepare (fail-fast). Reads requires[kind=step] via sensor.Project();
-	// the transitional fallback covers v1 execution.prepare[].
+	// Phase 1: prepare (fail-fast). Reads requires[kind=step] via sensor.Project().
 	prepResults, prepFailed := runPreparePhase(ctx, s.JSON, timeoutMS)
 
 	var aggregateMD map[string]interface{}

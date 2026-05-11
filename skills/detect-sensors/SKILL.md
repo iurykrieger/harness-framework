@@ -43,14 +43,14 @@ Every sensor MUST declare `kind` (top-level, required). Pick by purpose:
 
 - **observation** — observes behavior with no fixed expectation. Verdict describes the *health of the observation*, not pass/fail of an assertion. Examples: `run-project-nest`, `fetch-logs-cloudrun`, `fetch-metrics-datadog`, `trace-request`, `watch-build`, `tail-logs-local`. Naming convention: `run-*`, `watch-*`, `fetch-*`, `trace-*`, `tail-*`.
 - **assertion** — checks against an expectation. Verdict pass/fail is semantic. Examples: `lint-eslint`, `unit-test-vitest`, `e2e-playwright`, `type-check-tsc`, `build-vite`, `schema-validate-json`, `validate-plugin-manifest`. Naming convention: `lint-*`, `build-*`, `unit-test-*`, `integration-test-*`, `e2e-*`, `validate-*`, `schema-*`.
-- **setup** — idempotent auxiliary sensor that makes a precondition true. Typically referenced by other sensors via `depends_on`. Examples: `start-postgres`, `setup-env-from-example`, `install-deps-pnpm`, `login-gcloud`, `seed-db`, `provision-tunnel`. Naming convention: `start-*`, `setup-*`, `install-*`, `seed-*`, `login-*`, `provision-*`. Setup sensors MUST be idempotent (re-running with the same input is a no-op when the world is already in the desired state); document the strategy in `description` (`"test -f .env || cp .env.example .env"`, `"docker compose up -d postgres"` is idempotent by default, etc.).
+- **setup** — idempotent auxiliary sensor that makes a precondition true. Typically referenced by other sensors via `requires[kind=sensor]`. Examples: `start-postgres`, `setup-env-from-example`, `install-deps-pnpm`, `login-gcloud`, `seed-db`, `provision-tunnel`. Naming convention: `start-*`, `setup-*`, `install-*`, `seed-*`, `login-*`, `provision-*`. Setup sensors MUST be idempotent (re-running with the same input is a no-op when the world is already in the desired state); document the strategy in `description` (`"test -f .env || cp .env.example .env"`, `"docker compose up -d postgres"` is idempotent by default, etc.).
 
 Inferential setup sensors are technically allowed but **discouraged**: setup operations should be deterministic and idempotent; LLM-driven setup is neither. Do not emit `kind: "setup"` paired with `type: "inferential"`.
 
 Pick the **lifecycle** deliberately too:
 
 - **One-shot** (default, `execution.blocking` omitted or `false`) — the command runs to natural completion. `cost.latency.timeout_ms` is a hard cap; exceeding it forces `verdict=error`. Suits tests, builds, linters, parsers, dry-runs.
-- **Blocking** (`execution.blocking: true`) — the command does not terminate on its own and must be invoked via `/start-sensor` / `/stop-sensor` (not `/run-sensor`). The runner spawns the process, the watcher streams pattern-matched Signals while it runs, and `/stop-sensor` produces the aggregate. `cost.latency.timeout_ms` is forbidden for blocking sensors; instead, `execution.graceful_timeout_ms` controls the SIGTERM→SIGKILL window. Use this for sensors whose value is observation while the process runs (e.g., `npm run dev`, `make watch`, log tailers, replay loops). Pair with `output: stream` (the schema enforces this) and patterns that capture both failure modes (errors, port collisions) and success markers (boot lines, ready probes). Other sensors may declare a blocking sensor in `depends_on`; the orchestrator will start (or attach to) it before the dependent runs and stop it at teardown when no other dependent holds it.
+- **Blocking** (`execution.blocking: true`) — the command does not terminate on its own and must be invoked via `/start-sensor` / `/stop-sensor` (not `/run-sensor`). The runner spawns the process, the watcher streams pattern-matched Signals while it runs, and `/stop-sensor` produces the aggregate. `cost.latency.timeout_ms` is forbidden for blocking sensors; instead, `execution.graceful_timeout_ms` controls the SIGTERM→SIGKILL window. Use this for sensors whose value is observation while the process runs (e.g., `npm run dev`, `make watch`, log tailers, replay loops). Pair with `output: stream` (the schema enforces this) and patterns that capture both failure modes (errors, port collisions) and success markers (boot lines, ready probes). Other sensors may declare a blocking sensor via `requires[kind=sensor]`; the orchestrator will start (or attach to) it before the dependent runs and stop it at teardown when no other dependent holds it.
 
 ### 2. Inspect the project
 
@@ -97,8 +97,8 @@ Add or drop capabilities to match what you see. If the project sets up Sentry, d
 **Mandate: never skip a sensor.** Emit one for every capability the project plausibly has, even when:
 
 - The exact command isn't 100% determined — pick the closest production-shaped invocation (Dockerfile `CMD`, CI step, README "Run locally" recipe), put it in `execution.command`, and document the assumption in `blind_spots[]`.
-- Required config files are gitignored (`.env*`, `config/*.local.*`, RSA keys) — they exist on the developer's machine; reference them in the command, declare the env names you need under `requires.env`, and let the runner abort with a clear remediation if the user runs it without them.
-- The capability needs auth tokens, project ids, or other secrets — declare them under `requires.env`, NEVER hardcode. Sensor existence is independent of credential availability *right now*: the user (or a future agent turn) provides the value out of band when they invoke `/run-sensor`.
+- Required config files are gitignored (`.env*`, `config/*.local.*`, RSA keys) — they exist on the developer's machine; reference them in the command, declare the env names you need under `requires[kind=env]`, and let the runner abort with a clear remediation if the user runs it without them.
+- The capability needs auth tokens, project ids, or other secrets — declare them under `requires[kind=env]`, NEVER hardcode. Sensor existence is independent of credential availability *right now*: the user (or a future agent turn) provides the value out of band when they invoke `/run-sensor`.
 - The command runs continuously (watchers, dev servers, log tailers) — set `execution.blocking: true` and use the `/start-sensor` workflow and pair with `output: "stream"` patterns; do not downgrade to a proxy command just to keep things one-shot. See §1's lifecycle guidance.
 - You aren't sure your patterns will catch every failure mode — that's what §7's iteration loop is for. Ship a v0.1.0 with your best guess and iterate via `/run-sensor` until the output is informative.
 
@@ -140,12 +140,10 @@ When the literal command is uncertain (common for `fetch-logs`, `fetch-metrics`,
     "compute": { "cpu": "medium", "memory_mb": 1024 }
   },
   "triggers": [{ "on": "manual" }],
-  "requires": {
-    "env": [
-      { "name": "DATABASE_URL",        "description": "Postgres connection string used by the app at boot" },
-      { "name": "RSA_PRIVATE_KEY",     "description": "PEM contents for JWT signing — gitignored, lives in config/.env.development on dev machines" }
-    ]
-  },
+  "requires": [
+    { "kind": "env", "name": "DATABASE_URL",    "description": "Postgres connection string used by the app at boot" },
+    { "kind": "env", "name": "RSA_PRIVATE_KEY", "description": "PEM contents for JWT signing — gitignored, lives in config/.env.development on dev machines" }
+  ],
   "execution": {
     "command":             "node ./dist/main.js",
     "blocking":            true,
@@ -177,33 +175,31 @@ When the literal command is uncertain (common for `fetch-logs`, `fetch-metrics`,
 }
 ```
 
-Things to copy from this template into other continuous sensors: `output: "stream"` + `blocking: true`, `graceful_timeout_ms` sized to the process's expected shutdown time, success-marker patterns (boot lines, ready probes) AND failure-marker patterns (crashes, port conflicts, dependency errors), `requires.env` for any value that lives outside the repo, fixtures captured from a real boot.
+Things to copy from this template into other continuous sensors: `output: "stream"` + `blocking: true`, `graceful_timeout_ms` sized to the process's expected shutdown time, success-marker patterns (boot lines, ready probes) AND failure-marker patterns (crashes, port conflicts, dependency errors), `requires[kind=env]` entries for any value that lives outside the repo, fixtures captured from a real boot.
 
-**Never skip a sensor because credentials are missing.** If a capability needs auth tokens, RSA keys, project ids, region selectors, or any other host-supplied secret, declare them in `requires.env` and emit the sensor anyway. The runner forwards every listed env var from its own environment into the subprocess; if a non-optional name is unset at run time, the runner aborts with `verdict=error` and a remediation that names the missing var. The sensor's *existence* is independent of whether you, right now, can run it. Examples:
+**Never skip a sensor because credentials are missing.** If a capability needs auth tokens, RSA keys, project ids, region selectors, or any other host-supplied secret, declare them as `requires[kind=env]` entries and emit the sensor anyway. The runner forwards every listed env var from its own environment into the subprocess; if a non-optional name is unset at run time, the runner aborts with `verdict=error` and a remediation that names the missing var. The sensor's *existence* is independent of whether you, right now, can run it. Examples:
 
 ```jsonc
-"requires": {
-  "env": [
-    { "name": "GITHUB_TOKEN",                     "description": "PAT with repo:read scope" },
-    { "name": "GCP_PROJECT_ID",                   "description": "Project id used by gcloud logging read filters" },
-    { "name": "DATADOG_API_KEY",                  "description": "Datadog API key for metric queries" },
-    { "name": "AWS_PROFILE",  "optional": true,   "description": "Optional named profile; default credentials chain is used when unset" }
-  ]
-}
+"requires": [
+  { "kind": "env", "name": "GITHUB_TOKEN",    "description": "PAT with repo:read scope" },
+  { "kind": "env", "name": "GCP_PROJECT_ID",  "description": "Project id used by gcloud logging read filters" },
+  { "kind": "env", "name": "DATADOG_API_KEY", "description": "Datadog API key for metric queries" },
+  { "kind": "env", "name": "AWS_PROFILE", "optional": true, "description": "Optional named profile; default credentials chain is used when unset" }
+]
 ```
 
-Use `requires.env` for anything secret or per-developer; use `execution.env` only for static, non-secret literals (`LANG`, feature flags, deterministic seeds). Never put a token, key, or per-environment id directly into the sensor JSON — that file is committed to the repo.
+Use `requires[kind=env]` for anything secret or per-developer; use `execution.env` only for static, non-secret literals (`LANG`, feature flags, deterministic seeds). Never put a token, key, or per-environment id directly into the sensor JSON — that file is committed to the repo.
 
-### 4.5 Authoring lifecycle phases (prepare / teardown)
+### 4.5 Authoring lifecycle phases (requires[kind=step] / teardown)
 
-A sensor's `execution` ships three phases: `prepare[]`, `command` (the observed one), and `teardown[]`. Use them to keep the sensor self-contained when its setup is specific to it (vs reusable across many sensors → use a setup sensor + `depends_on`).
+A sensor's `requires[]` and `execution` together drive three phases: `requires[kind=step]` entries (setup steps, run before the command), `execution.command` (the observed one), and `execution.teardown[]`. Use them to keep the sensor self-contained when its setup is specific to it (vs reusable across many sensors → use a setup sensor referenced via `requires[kind=sensor]`).
 
-- **prepare[]** — silent, fail-fast. Each item: `{ command, timeout_ms?, exit_code_map? }`. The first non-pass step aborts and skips the main command (but teardown still runs). Use for: generating intermediate artifacts (`pnpm prisma generate`, `make protos`), populating local config (`test -f .env || cp .env.example .env`), running pre-build steps that aren't worth a separate sensor.
-- **teardown[]** — silent, best-effort. Same item shape. Every step runs regardless of prepare/command outcome (finally semantics). Use for: dropping local DB after E2E (`pnpm prisma migrate reset --force --skip-seed`), stopping containers, removing temp files. Teardown failures contribute warn evidence but do NOT downgrade the sensor's aggregate verdict — the command is the source of truth.
+- **`requires[kind=step]`** — silent, fail-fast. Each item: `{ kind: "step", command, timeout_ms?, exit_code_map? }`. The first non-pass step aborts and skips the main command (but teardown still runs). Use for: generating intermediate artifacts (`pnpm prisma generate`, `make protos`), populating local config (`test -f .env || cp .env.example .env`), running pre-build steps that aren't worth a separate sensor.
+- **teardown[]** — silent, best-effort. Same item shape (without `kind`). Every step runs regardless of requires[kind=step]/command outcome (finally semantics). Use for: dropping local DB after E2E (`pnpm prisma migrate reset --force --skip-seed`), stopping containers, removing temp files. Teardown failures contribute warn evidence but do NOT downgrade the sensor's aggregate verdict — the command is the source of truth.
 
-**When to use prepare vs a setup sensor with depends_on:**
-- Reusable across multiple sensors → setup sensor (`depends_on: ["start-postgres"]`)
-- Specific to this sensor only → `prepare[]`
+**When to use requires[kind=step] vs a setup sensor with requires[kind=sensor]:**
+- Reusable across multiple sensors → setup sensor (e.g. `{ "kind": "sensor", "id": "start-postgres" }` in requires[])
+- Specific to this sensor only → `requires[kind=step]`
 
 Example (E2E sensor with full lifecycle):
 
@@ -211,12 +207,11 @@ Example (E2E sensor with full lifecycle):
 {
   "id": "e2e-tests",
   "kind": "assertion",
-  "depends_on": ["start-postgres", "setup-env-from-example"],
+  "requires": [
+    { "kind": "sensor", "id": "start-postgres" },
+    { "kind": "sensor", "id": "setup-env-from-example" }
+  ],
   "execution": {
-    "prepare": [
-      { "command": "pnpm prisma migrate deploy", "timeout_ms": 30000 },
-      { "command": "pnpm prisma db seed",        "timeout_ms": 15000 }
-    ],
     "command": "pnpm playwright test",
     "exit_code_map": [...],
     "output_parsing": { "patterns": [...] },
