@@ -209,7 +209,8 @@ Example (E2E sensor with full lifecycle):
   "kind": "assertion",
   "requires": [
     { "kind": "sensor", "id": "start-postgres" },
-    { "kind": "sensor", "id": "setup-env-from-example" }
+    { "kind": "sensor", "id": "setup-env-from-example" },
+    { "kind": "step", "command": "pnpm prisma migrate deploy", "timeout_ms": 30000 }
   ],
   "execution": {
     "command": "pnpm playwright test",

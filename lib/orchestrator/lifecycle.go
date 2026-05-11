@@ -230,8 +230,9 @@ func runPreparePhase(ctx context.Context, sensorJSON map[string]interface{}, def
 }
 
 // runTeardownPhase walks execMap["teardown"] best-effort and returns the
-// per-step result entries. Teardown lives in execution.teardown[] in both
-// v1 and v2; only prepare moves to requires[kind=step].
+// per-step result entries. Teardown lives in execution.teardown[];
+// sensor-local setup steps live in requires[kind=step] (consumed by
+// runPreparePhase).
 func runTeardownPhase(ctx context.Context, execMap map[string]interface{}, defaultTimeoutMS int) []interface{} {
 	steps, _ := execMap["teardown"].([]interface{})
 	var out []interface{}
