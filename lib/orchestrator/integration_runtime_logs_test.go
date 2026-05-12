@@ -1,10 +1,8 @@
 //go:build integration
 
-// test/integration_runtime_logs_test.go
-//
 // End-to-end integration test: two concurrent /run-sensor invocations
 // must coexist with distinct run dirs and distinct run_ids (DoD item #6).
-package integration
+package orchestrator_test
 
 import (
 	"encoding/json"

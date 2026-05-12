@@ -16,7 +16,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	watcher "github.com/iurykrieger/harness-framework/lib/watcher"
 )
 
@@ -315,7 +315,7 @@ func cleanupStartedTarget(t *testing.T, root, id string) {
 // (id, run_id); silently noops if the entry is no longer present.
 func cleanupBlockingDep(t *testing.T, root, depID, holderID string) {
 	t.Helper()
-	v, code := schema.LoadValidator(testfixtures.RepoSchemasDir(t), io.Discard)
+	v, code := schema.LoadValidator(schematest.RepoSchemasDir(t), io.Discard)
 	if code != 0 {
 		return
 	}

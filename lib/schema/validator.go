@@ -93,7 +93,7 @@ func (v *Validator) Validate(target Target, instance interface{}) error {
 				}
 			}
 			return fmt.Errorf(
-				"sensor %s uses v1 schema fields (%s).\nRun `go run ./scripts/migrate-requires.go <path>` to upgrade to v2.",
+				"sensor %s uses v1 schema fields (%s). Upgrade to v2 schema manually (v1 migration is complete; no migration script remains).",
 				id, strings.Join(fields, ", "),
 			)
 		}
@@ -121,10 +121,9 @@ func (v *Validator) Validate(target Target, instance interface{}) error {
 
 // detectLegacyShape returns the names of v1 schema fields present in the
 // raw sensor JSON. ok is true when at least one is found. Used by Validate
-// to short-circuit with an actionable migration message that points at
-// scripts/migrate-requires.go even after the v1 fields are removed from
-// the schema (since the JSON Schema rejection message for an unknown
-// top-level property is opaque).
+// to short-circuit with an actionable migration message even after the v1
+// fields are removed from the schema (since the JSON Schema rejection
+// message for an unknown top-level property is opaque).
 func detectLegacyShape(raw []byte) ([]string, bool) {
 	var s map[string]interface{}
 	if err := json.Unmarshal(raw, &s); err != nil {

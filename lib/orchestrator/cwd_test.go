@@ -10,16 +10,17 @@ import (
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 func TestRunWithDepsRoot_SubprocessCwdIsProjectRoot(t *testing.T) {
 	proj := t.TempDir()
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	_ = os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755)
 
 	// Build a valid sensor that writes its cwd to a file under projectRoot.
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["id"] = "cwd-probe"
 	exec := s["execution"].(map[string]interface{})
 	exec["command"] = "pwd > $HARNESS_REGISTRY_ROOT/probe.out"
@@ -29,9 +30,14 @@ func TestRunWithDepsRoot_SubprocessCwdIsProjectRoot(t *testing.T) {
 	t.Setenv("HARNESS_REGISTRY_ROOT", proj)
 
 	// Run from an unrelated cwd to prove the runner's cwd doesn't leak.
+	origCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chdir(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.Chdir(origCwd) })
 
 	var stdout, stderr bytes.Buffer
 	exit := orchestrator.RunWithDepsRoot(context.Background(), "cwd-probe", proj, schemasDir, &stdout, &stderr)

@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
 func TestBuildCascadeSignal_Envelope(t *testing.T) {
@@ -77,7 +77,7 @@ func TestBuildCascadeSignal_Envelope(t *testing.T) {
 }
 
 func TestBuildCascadeSignal_ValidatesAgainstSchema(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	v, err := schema.NewValidator(schemasDir)
 	if err != nil {
 		t.Fatal(err)

@@ -10,7 +10,8 @@ import (
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 // writeSensorWithDeps writes a sensor JSON file to dir/.harness/sensors/<id>.json,
@@ -21,7 +22,7 @@ func writeSensorWithDeps(t *testing.T, projectRoot, id string, depsOn []string, 
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["id"] = id
 	if len(depsOn) > 0 {
 		reqs := []interface{}{}
@@ -39,7 +40,7 @@ func writeSensorWithDeps(t *testing.T, projectRoot, id string, depsOn []string, 
 }
 
 func TestRunWithDeps_ChainPasses(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	writeSensorWithDeps(t, root, "setup-a", nil, "true")
 	writeSensorWithDeps(t, root, "use-a", []string{"setup-a"}, "true")
@@ -61,7 +62,7 @@ func TestRunWithDeps_ChainPasses(t *testing.T) {
 }
 
 func TestRunWithDeps_CascadesOnDepFail(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	writeSensorWithDeps(t, root, "setup-fail", nil, "false")
 	writeSensorWithDeps(t, root, "use-it", []string{"setup-fail"}, "true")
@@ -92,7 +93,7 @@ func TestRunWithDeps_CascadesOnDepFail(t *testing.T) {
 }
 
 func TestRunWithDeps_CycleAborts(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	writeSensorWithDeps(t, root, "a", []string{"b"}, "true")
 	writeSensorWithDeps(t, root, "b", []string{"a"}, "true")

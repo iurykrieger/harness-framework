@@ -9,21 +9,22 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 func TestApplySensors_NewSetupSensor(t *testing.T) {
 	dir := t.TempDir()
 	plan := map[string]interface{}{
 		"diagnosis":         map[string]interface{}{"failed_sensor_id": "x", "shape": "missing-env"},
-		"new_setup_sensors": []interface{}{map[string]interface{}{"id": "smoke-setup", "json": testfixtures.ValidSensorSetup()}},
+		"new_setup_sensors": []interface{}{map[string]interface{}{"id": "smoke-setup", "json": sensortest.LoadSetup(t).AsMap()}},
 	}
 	planPath := filepath.Join(dir, "plan.json")
 	pb, _ := json.Marshal(plan)
 	os.WriteFile(planPath, pb, 0o644)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--plan", planPath, "--out", dir, "--schemas-dir", testfixtures.RepoSchemasDir(t)}, &stdout, &stderr)
+	code := run([]string{"--plan", planPath, "--out", dir, "--schemas-dir", schematest.RepoSchemasDir(t)}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
@@ -34,7 +35,7 @@ func TestApplySensors_NewSetupSensor(t *testing.T) {
 
 func TestApplySensors_PatchBumpsPatchVersion(t *testing.T) {
 	dir := t.TempDir()
-	patched := testfixtures.ValidSensorComputational()
+	patched := sensortest.LoadComputational(t).AsMap()
 	patched["version"] = "0.1.0"
 	patched["description"] = "patched by heal"
 
@@ -47,7 +48,7 @@ func TestApplySensors_PatchBumpsPatchVersion(t *testing.T) {
 	os.WriteFile(planPath, pb, 0o644)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--plan", planPath, "--out", dir, "--schemas-dir", testfixtures.RepoSchemasDir(t)}, &stdout, &stderr)
+	code := run([]string{"--plan", planPath, "--out", dir, "--schemas-dir", schematest.RepoSchemasDir(t)}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
@@ -61,7 +62,7 @@ func TestApplySensors_PatchBumpsPatchVersion(t *testing.T) {
 
 func TestApplySensors_InvalidSensorRejected(t *testing.T) {
 	dir := t.TempDir()
-	bad := testfixtures.ValidSensorComputational()
+	bad := sensortest.LoadComputational(t).AsMap()
 	delete(bad, "regulation")
 
 	plan := map[string]interface{}{
@@ -73,7 +74,7 @@ func TestApplySensors_InvalidSensorRejected(t *testing.T) {
 	os.WriteFile(planPath, pb, 0o644)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--plan", planPath, "--out", dir, "--schemas-dir", testfixtures.RepoSchemasDir(t)}, &stdout, &stderr)
+	code := run([]string{"--plan", planPath, "--out", dir, "--schemas-dir", schematest.RepoSchemasDir(t)}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("expected 1 (validation), got %d (stderr=%s)", code, stderr.String())
 	}

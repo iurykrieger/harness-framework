@@ -10,7 +10,8 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v5"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 // ──────────────────────────────────────────────────────────────────────
@@ -18,13 +19,13 @@ import (
 // ──────────────────────────────────────────────────────────────────────
 
 func TestValidator_AcceptsValidSensors(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, s := range map[string]map[string]interface{}{
-		"computational": testfixtures.ValidSensorComputational(),
-		"inferential":   testfixtures.ValidSensorInferential(),
+		"computational": sensortest.LoadComputational(t).AsMap(),
+		"inferential":   sensortest.LoadInferential(t).AsMap(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := v.Validate(schema.TargetSensor, s); err != nil {
@@ -35,7 +36,7 @@ func TestValidator_AcceptsValidSensors(t *testing.T) {
 }
 
 func TestValidator_RejectsMutations(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
 	clone := func(m map[string]interface{}) map[string]interface{} {
 		raw, _ := json.Marshal(m)
 		var c map[string]interface{}
@@ -50,7 +51,7 @@ func TestValidator_RejectsMutations(t *testing.T) {
 		{
 			name: "computational + tokens (mutual exclusion)",
 			mutator: func() map[string]interface{} {
-				s := clone(testfixtures.ValidSensorComputational())
+				s := clone(sensortest.LoadComputational(t).AsMap())
 				s["cost"].(map[string]interface{})["tokens"] = map[string]interface{}{
 					"model": "x", "input_avg": 1, "output_avg": 1, "max_output": 1,
 				}
@@ -61,7 +62,7 @@ func TestValidator_RejectsMutations(t *testing.T) {
 		{
 			name: "$ref to signal.json#/$defs/Verdict bites in exit_code_map",
 			mutator: func() map[string]interface{} {
-				s := clone(testfixtures.ValidSensorComputational())
+				s := clone(sensortest.LoadComputational(t).AsMap())
 				ec := s["execution"].(map[string]interface{})["exit_code_map"].([]interface{})
 				ec[0].(map[string]interface{})["verdict"] = "broken"
 				return s
@@ -71,7 +72,7 @@ func TestValidator_RejectsMutations(t *testing.T) {
 		{
 			name: "inferential missing calibration",
 			mutator: func() map[string]interface{} {
-				s := clone(testfixtures.ValidSensorInferential())
+				s := clone(sensortest.LoadInferential(t).AsMap())
 				delete(s, "calibration")
 				return s
 			},
@@ -97,8 +98,8 @@ func TestValidator_RejectsMutations(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────
 
 func TestValidator_InferentialRequiresCommand(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	s := testfixtures.ValidSensorInferential()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
+	s := sensortest.LoadInferential(t).AsMap()
 	delete(s["execution"].(map[string]interface{}), "command")
 	if err := v.Validate(schema.TargetSensor, s); err == nil {
 		t.Fatal("expected inferential without command to fail")
@@ -106,8 +107,8 @@ func TestValidator_InferentialRequiresCommand(t *testing.T) {
 }
 
 func TestValidator_ComputationalRequiresCommand(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	s := testfixtures.ValidSensorComputational()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
+	s := sensortest.LoadComputational(t).AsMap()
 	delete(s["execution"].(map[string]interface{}), "command")
 	if err := v.Validate(schema.TargetSensor, s); err == nil {
 		t.Fatal("expected computational without command to fail")
@@ -115,8 +116,8 @@ func TestValidator_ComputationalRequiresCommand(t *testing.T) {
 }
 
 func TestValidator_InferentialAllowsMissingExitCodeMap(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	s := testfixtures.ValidSensorInferential()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
+	s := sensortest.LoadInferential(t).AsMap()
 	// Inferential sensors typically don't declare exit_code_map.
 	if _, has := s["execution"].(map[string]interface{})["exit_code_map"]; has {
 		t.Fatal("fixture should not have exit_code_map")
@@ -127,8 +128,8 @@ func TestValidator_InferentialAllowsMissingExitCodeMap(t *testing.T) {
 }
 
 func TestValidator_ComputationalForbidsLLMFields(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	s := testfixtures.ValidSensorComputational()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
+	s := sensortest.LoadComputational(t).AsMap()
 	s["execution"].(map[string]interface{})["model"] = "anthropic/claude-sonnet-4-6"
 	if err := v.Validate(schema.TargetSensor, s); err == nil {
 		t.Fatal("expected computational with model to fail")
@@ -140,8 +141,8 @@ func TestValidator_ComputationalForbidsLLMFields(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────
 
 func TestValidator_RequiresOutputField(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	s := testfixtures.ValidSensorComputational()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
+	s := sensortest.LoadComputational(t).AsMap()
 	delete(s, "output")
 	if err := v.Validate(schema.TargetSensor, s); err == nil {
 		t.Fatal("expected error when output is missing")
@@ -149,8 +150,8 @@ func TestValidator_RequiresOutputField(t *testing.T) {
 }
 
 func TestValidator_RejectsBadOutputValue(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	s := testfixtures.ValidSensorComputational()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
+	s := sensortest.LoadComputational(t).AsMap()
 	s["output"] = "broken"
 	if err := v.Validate(schema.TargetSensor, s); err == nil {
 		t.Fatal("expected enum violation for output=broken")
@@ -158,8 +159,8 @@ func TestValidator_RejectsBadOutputValue(t *testing.T) {
 }
 
 func TestValidator_SingleForbidsOutputParsing(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	s := testfixtures.ValidSensorComputational()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
+	s := sensortest.LoadComputational(t).AsMap()
 	s["output"] = "single"
 	s["execution"].(map[string]interface{})["output_parsing"] = map[string]interface{}{
 		"patterns": []interface{}{
@@ -172,8 +173,8 @@ func TestValidator_SingleForbidsOutputParsing(t *testing.T) {
 }
 
 func TestValidator_StreamRequiresOutputParsing(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	s := testfixtures.ValidSensorComputational()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
+	s := sensortest.LoadComputational(t).AsMap()
 	s["output"] = "stream"
 	// no output_parsing
 	if err := v.Validate(schema.TargetSensor, s); err == nil {
@@ -182,8 +183,8 @@ func TestValidator_StreamRequiresOutputParsing(t *testing.T) {
 }
 
 func TestValidator_StreamWithEmptyPatternsRejected(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	s := testfixtures.ValidSensorComputational()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
+	s := sensortest.LoadComputational(t).AsMap()
 	s["output"] = "stream"
 	s["execution"].(map[string]interface{})["output_parsing"] = map[string]interface{}{
 		"patterns": []interface{}{}, // minItems: 1 violation
@@ -194,15 +195,15 @@ func TestValidator_StreamWithEmptyPatternsRejected(t *testing.T) {
 }
 
 func TestValidator_AcceptsSingleAndStream(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
 
 	// single (default fixture is already single-shaped)
-	if err := v.Validate(schema.TargetSensor, testfixtures.ValidSensorComputational()); err != nil {
+	if err := v.Validate(schema.TargetSensor, sensortest.LoadComputational(t).AsMap()); err != nil {
 		t.Fatalf("default fixture (single) should validate: %v", err)
 	}
 
 	// stream
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["output"] = "stream"
 	s["execution"].(map[string]interface{})["output_parsing"] = map[string]interface{}{
 		"patterns": []interface{}{
@@ -219,11 +220,11 @@ func TestValidator_AcceptsSingleAndStream(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────
 
 func TestValidator_AcceptsOutputParsing(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["output"] = "stream"
 	s["execution"].(map[string]interface{})["output_parsing"] = map[string]interface{}{
 		"patterns": []interface{}{
@@ -246,8 +247,8 @@ func TestValidator_AcceptsOutputParsing(t *testing.T) {
 }
 
 func TestValidator_RejectsEmptyPatterns(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	s := testfixtures.ValidSensorComputational()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
+	s := sensortest.LoadComputational(t).AsMap()
 	s["output"] = "stream"
 	s["execution"].(map[string]interface{})["output_parsing"] = map[string]interface{}{
 		"patterns": []interface{}{}, // empty — must be rejected
@@ -259,8 +260,8 @@ func TestValidator_RejectsEmptyPatterns(t *testing.T) {
 }
 
 func TestValidator_RejectsBadVerdictInPattern(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
-	s := testfixtures.ValidSensorComputational()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
+	s := sensortest.LoadComputational(t).AsMap()
 	s["output"] = "stream"
 	s["execution"].(map[string]interface{})["output_parsing"] = map[string]interface{}{
 		"patterns": []interface{}{
@@ -274,11 +275,11 @@ func TestValidator_RejectsBadVerdictInPattern(t *testing.T) {
 }
 
 func TestValidator_AcceptsOutputParsingOnInferential(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := testfixtures.ValidSensorInferential()
+	s := sensortest.LoadInferential(t).AsMap()
 	s["output"] = "stream"
 	s["execution"].(map[string]interface{})["output_parsing"] = map[string]interface{}{
 		"patterns": []interface{}{
@@ -309,11 +310,11 @@ func flattenValidationError(err error) string {
 // ──────────────────────────────────────────────────────────────────────
 
 func TestValidator_KindRequired(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	delete(s, "kind")
 	if err := v.Validate(schema.TargetSensor, s); err == nil {
 		t.Fatal("expected validation to fail without kind")
@@ -321,11 +322,11 @@ func TestValidator_KindRequired(t *testing.T) {
 }
 
 func TestValidator_KindEnumRejectsUnknown(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["kind"] = "diagnostic"
 	if err := v.Validate(schema.TargetSensor, s); err == nil {
 		t.Fatal("expected validation to fail for kind='diagnostic'")
@@ -333,11 +334,11 @@ func TestValidator_KindEnumRejectsUnknown(t *testing.T) {
 }
 
 func TestValidator_DependsOnRejectedAsV1Field(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["depends_on"] = []interface{}{"start-postgres", "setup-env"}
 	err = v.Validate(schema.TargetSensor, s)
 	if err == nil {
@@ -346,17 +347,17 @@ func TestValidator_DependsOnRejectedAsV1Field(t *testing.T) {
 	if !strings.Contains(err.Error(), "depends_on") {
 		t.Fatalf("expected error to mention depends_on, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "migrate-requires.go") {
-		t.Fatalf("expected error to reference migration script, got: %v", err)
+	if !strings.Contains(err.Error(), "Upgrade to v2") {
+		t.Fatalf("expected error to reference v2 upgrade, got: %v", err)
 	}
 }
 
 func TestValidator_ExecutionPrepareRejectedAsV1Field(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	exec := s["execution"].(map[string]interface{})
 	exec["prepare"] = []interface{}{
 		map[string]interface{}{"command": "echo prep", "timeout_ms": 1000},
@@ -371,11 +372,11 @@ func TestValidator_ExecutionPrepareRejectedAsV1Field(t *testing.T) {
 }
 
 func TestValidator_TeardownAccepted(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	exec := s["execution"].(map[string]interface{})
 	exec["teardown"] = []interface{}{
 		map[string]interface{}{"command": "echo down"},
@@ -386,11 +387,11 @@ func TestValidator_TeardownAccepted(t *testing.T) {
 }
 
 func TestValidator_UpstreamSensorsRemoved(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	requires := map[string]interface{}{
 		"upstream_sensors": []interface{}{"x"},
 	}
@@ -405,7 +406,7 @@ func TestValidator_UpstreamSensorsRemoved(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────
 
 func TestValidator_Sensor_RequiresArrayV2(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +445,7 @@ func TestValidator_Sensor_RequiresArrayV2(t *testing.T) {
 
 
 func TestValidator_Sensor_RequiresArrayV2_Rejections(t *testing.T) {
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

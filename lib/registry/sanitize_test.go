@@ -9,7 +9,7 @@ import (
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 )
 
 func validEntry() registry.RunningSensorEntry {
@@ -233,7 +233,7 @@ func TestRegistryMigratedSignal_Shape(t *testing.T) {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 
-	v, vCode := schema.LoadValidator(testfixtures.RepoSchemasDir(t), io.Discard)
+	v, vCode := schema.LoadValidator(schematest.RepoSchemasDir(t), io.Discard)
 	if vCode != 0 {
 		t.Fatalf("schema validator init failed (code %d)", vCode)
 	}

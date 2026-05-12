@@ -6,7 +6,22 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
+
+func stableNow() time.Time {
+	return time.Date(2026, 5, 8, 0, 0, 0, 0, time.UTC)
+}
+
+func withFakeEnv(t *testing.T, env map[string]string) {
+	t.Helper()
+	prev := LookupEnvFn
+	LookupEnvFn = func(name string) (string, bool) {
+		v, ok := env[name]
+		return v, ok
+	}
+	t.Cleanup(func() { LookupEnvFn = prev })
+}
 
 // ---------------------------------------------------------------------------
 // 2.1 – Gate / Failure types

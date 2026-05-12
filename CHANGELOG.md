@@ -56,13 +56,7 @@ Refs: issue #10.
 
 ### Migration
 
-For each project that ships sensor JSON files, run the migration tool from the harness-framework checkout:
-
-```
-go run ./scripts/migrate-requires.go --root sensors/
-```
-
-The tool is idempotent (already-v2 files are left untouched), fail-fast on ambiguity, and never dedupes step entries. It bumps each migrated sensor's `version` patch.
+v1 sensors are no longer supported. The migration tool (`go run ./scripts/migrate-requires.go --root sensors/`) has been removed in the structural-refactor cleanup — consult git history if you need it. Apply the v1 → v2 mapping below by hand for any remaining sensors.
 
 ### v1 → v2 mapping
 
@@ -81,4 +75,4 @@ Unchanged. Lifecycle phases, fail-fast semantics, cascade rules, teardown finall
 
 ### Validator
 
-`lib/schema/validator.go` rejects v1 sensors with an actionable message naming the migration script. Unknown `requires[].kind` values produce a message listing the six valid kinds.
+`lib/schema/validator.go` rejects v1 sensors with an actionable message. Unknown `requires[].kind` values produce a message listing the six valid kinds.
