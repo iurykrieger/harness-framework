@@ -20,7 +20,7 @@ func validEntry() registry.RunningSensorEntry {
 		WatcherPID: 101,
 		StartedAt:  "2026-05-11T00:00:00Z",
 		Command:    "true",
-		LogDir:     ".runtime/sensors/ok",
+		LogDir:     ".harness/runtime/ok",
 		HeldBy: []registry.HeldByEntry{
 			{Kind: "manual", AttachedAt: "2026-05-11T00:00:00Z"},
 		},
@@ -245,7 +245,7 @@ func TestRegistryMigratedSignal_Shape(t *testing.T) {
 func TestSanitizeAll_LegacyEntryMigration(t *testing.T) {
 	rs := &registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
 		{SensorID: "alpha", PID: 4242, PGID: 4242, StartedAt: "2026-01-01T00:00:00Z",
-			Command: "old-cmd", LogDir: ".runtime/sensors/alpha"}, // no run_id, no blocking
+			Command: "old-cmd", LogDir: ".harness/runtime/alpha"}, // no run_id, no blocking
 	}}
 	reports := registry.SanitizeAll(rs)
 	if len(rs.Entries) != 1 {

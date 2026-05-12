@@ -10,12 +10,12 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/registry"
 )
 
-// makeProjectTree builds <root>/sensors/ and returns the project root.
+// makeProjectTree builds <root>/.harness/ and returns the project root.
 // Tests use it to anchor the walk-up marker.
 func makeProjectTree(t *testing.T, parent string) string {
 	t.Helper()
 	root := filepath.Join(parent, "proj")
-	if err := os.MkdirAll(filepath.Join(root, "sensors"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, ".harness"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return root
@@ -97,7 +97,7 @@ func TestDiscover_EnvVarSymlinkResolved(t *testing.T) {
 	}
 }
 
-func TestDiscover_WalkUpFindsSensorsTwoLevels(t *testing.T) {
+func TestDiscover_WalkUpFindsHarnessTwoLevels(t *testing.T) {
 	parent := t.TempDir()
 	proj := makeProjectTree(t, parent)
 	deep := filepath.Join(proj, "nested", "deep")
@@ -133,9 +133,9 @@ func TestDiscover_WalkUpFromProjectRoot(t *testing.T) {
 	}
 }
 
-func TestDiscover_WalkUpEmptySensorsDirAcceptable(t *testing.T) {
+func TestDiscover_WalkUpEmptyHarnessDirAcceptable(t *testing.T) {
 	parent := t.TempDir()
-	proj := makeProjectTree(t, parent) // sensors/ created but empty
+	proj := makeProjectTree(t, parent) // .harness/ created but empty
 	t.Setenv("HARNESS_REGISTRY_ROOT", "")
 	got, _, err := registry.Discover(proj)
 	if err != nil {
@@ -147,7 +147,7 @@ func TestDiscover_WalkUpEmptySensorsDirAcceptable(t *testing.T) {
 }
 
 func TestDiscover_NoMarkerNoEnv_ErrorMentionsBothStrategies(t *testing.T) {
-	parent := t.TempDir() // no sensors/ anywhere up to filesystem root from here
+	parent := t.TempDir() // no .harness/ anywhere up to filesystem root from here
 	t.Setenv("HARNESS_REGISTRY_ROOT", "")
 	_, _, err := registry.Discover(parent)
 	if err == nil {
@@ -157,8 +157,8 @@ func TestDiscover_NoMarkerNoEnv_ErrorMentionsBothStrategies(t *testing.T) {
 	if !strings.Contains(msg, "HARNESS_REGISTRY_ROOT") {
 		t.Errorf("err should mention HARNESS_REGISTRY_ROOT, got: %v", err)
 	}
-	if !strings.Contains(msg, "sensors") {
-		t.Errorf("err should mention 'sensors', got: %v", err)
+	if !strings.Contains(msg, ".harness") {
+		t.Errorf("err should mention '.harness', got: %v", err)
 	}
 }
 
@@ -229,7 +229,7 @@ func TestLookup_FilePresentWithEntries(t *testing.T) {
 }
 
 func TestLookup_DiscoveryFailurePropagates(t *testing.T) {
-	parent := t.TempDir() // no sensors/ marker anywhere
+	parent := t.TempDir() // no .harness/ marker anywhere
 	t.Setenv("HARNESS_REGISTRY_ROOT", "")
 	_, err := registry.Lookup(parent)
 	if err == nil {
@@ -412,7 +412,7 @@ func TestLookupSanitized_NoRegistryNoReports(t *testing.T) {
 
 func TestLookupSanitized_DiscoveryFailurePropagates(t *testing.T) {
 	parent := t.TempDir()
-	// No sensors/ marker, no env var.
+	// No .harness/ marker, no env var.
 	t.Setenv("HARNESS_REGISTRY_ROOT", "")
 	_, _, err := registry.LookupSanitized(parent)
 	if err == nil {
