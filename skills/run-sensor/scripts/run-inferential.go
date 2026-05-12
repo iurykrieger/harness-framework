@@ -28,6 +28,7 @@ import (
 
 	"github.com/iurykrieger/harness-framework/lib/cli"
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
+	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
@@ -58,7 +59,16 @@ const harnessConfidencePrefix = "HARNESS_AGGREGATE_CONFIDENCE="
 
 func main() {
 	cwd, _ := os.Getwd()
-	os.Exit(run(os.Args[1:], cwd, os.Stdout, os.Stderr))
+	// registry.Discover prefers HARNESS_REGISTRY_ROOT over walk-up, so an
+	// operator can redirect the runner's runtime persistence by setting
+	// that env var. When discovery fails (no marker, no env var), fall
+	// back to cwd — preserves the pre-existing behavior for callers that
+	// run inside a project.
+	projectRoot, _, err := registry.Discover(cwd)
+	if err != nil {
+		projectRoot = cwd
+	}
+	os.Exit(run(os.Args[1:], projectRoot, os.Stdout, os.Stderr))
 }
 
 // run is the testable entry point. projectRoot is the directory from which

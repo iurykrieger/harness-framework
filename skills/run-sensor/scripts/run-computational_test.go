@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
@@ -234,5 +235,53 @@ func TestRun_BlockingSensorRejected(t *testing.T) {
 	}
 	if !strings.Contains(errBuf.String(), "blocking") {
 		t.Fatalf("stderr should mention 'blocking': %s", errBuf.String())
+	}
+}
+
+func TestRunComputational_HarnessRegistryRootRedirectsPersistence(t *testing.T) {
+	// Set the env var to an isolated tempdir. The runner should use this
+	// as its project root, NOT the cwd that invoked it.
+	tempRoot := t.TempDir()
+	t.Setenv("HARNESS_REGISTRY_ROOT", tempRoot)
+
+	// Materialize a minimal sensor at the canonical location inside tempRoot.
+	if err := os.MkdirAll(filepath.Join(tempRoot, ".harness", "sensors"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	s := testfixtures.ValidSensorComputational()
+	s["id"] = "redirect-test"
+	body, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tempRoot, ".harness", "sensors", "redirect-test.json"), body, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Discover should resolve to tempRoot (env var wins).
+	cwd := t.TempDir()
+	projectRoot, _, err := registry.Discover(cwd)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	want, _ := filepath.EvalSymlinks(tempRoot)
+	got, _ := filepath.EvalSymlinks(projectRoot)
+	if got != want {
+		t.Fatalf("Discover returned %q, want %q (HARNESS_REGISTRY_ROOT must win over cwd)", projectRoot, tempRoot)
+	}
+
+	// Invoke the run() entry directly.
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"redirect-test"}, projectRoot, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run exit=%d, stderr=%s", code, stderr.String())
+	}
+
+	// Runtime artifacts must be under tempRoot, NOT under cwd.
+	if _, err := os.Stat(filepath.Join(cwd, ".harness", "runtime")); !os.IsNotExist(err) {
+		t.Errorf("runtime polluted cwd: %s/.harness/runtime exists", cwd)
+	}
+	if _, err := os.Stat(filepath.Join(tempRoot, ".harness", "runtime", "redirect-test")); err != nil {
+		t.Errorf("runtime missing in tempRoot: %v", err)
 	}
 }
