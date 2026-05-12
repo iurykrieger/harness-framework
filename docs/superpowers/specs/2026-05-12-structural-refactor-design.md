@@ -313,7 +313,7 @@ Note the path depth changes from `..` `..` (2 levels) to `..` `..` `..` (3 level
 | `testfixtures.ValidSensorInferential()` → `map` | `sensortest.LoadInferential(t).AsMap()` |
 | `testfixtures.ValidSensorSetup()` → `map` | `sensortest.LoadSetup(t).AsMap()` |
 
-All ~85 call sites are updated. After this section: `lib/testfixtures/` is deleted.
+All ~120 call sites (across `lib/cli`, `lib/schema`, `lib/sensor`, `lib/subprocess`, `lib/orchestrator`, `lib/registry`, and the heal-sensor e2e moved in section 1) are updated. After this section: `lib/testfixtures/` is deleted.
 
 #### 4.5 Delete `lib/testfixtures/`
 
@@ -390,7 +390,7 @@ Each item is a binary check.
 4. `go vet -tags=run_computational ./...` and `go vet -tags=run_inferential ./...` are clean.
 5. `find . -type d -name scripts -maxdepth 2 -not -path "./.git/*"` returns exactly `./skills/*/scripts` (one path per skill, none at the repo root).
 6. `find . -type d -name test -maxdepth 2 -not -path "./.git/*"` returns nothing (the root `test/` directory does not exist).
-7. `lib/sensor/shape.go` and `lib/signal/shape.go` exist and the three canonical sensor fixtures round-trip through `json.Unmarshal` → `Sensor` → `AsMap()` and back, producing structurally equal `map[string]interface{}` values (asserted by `shape_test.go`).
+7. `lib/sensor/shape.go` and `lib/signal/shape.go` exist. The three canonical sensor fixtures round-trip through `json.Unmarshal` → `Sensor` → `AsMap()` and back, producing structurally equal `map[string]interface{}` values (asserted by `lib/sensor/shape_test.go`). A canonical Signal map round-trips through `json.Unmarshal` → `Signal` → `AsMap()` to a structurally equal map, and `Builder.Build()` is deep-equal to `Builder.BuildTyped().AsMap()` for the same input (asserted by `lib/signal/shape_test.go`).
 8. `lib/testfixtures/` directory does not exist; `grep -rn 'testfixtures' --include='*.go' .` returns nothing.
 9. `lib/schema/schematest/repodir.go` and `lib/sensor/sensortest/canonical.go` exist and are the only two `<pkg>test` packages under `lib/`.
 10. `lib/sensor/testdata/canonical-{computational,inferential,setup}.json` exist and each passes `schema.NewValidator(...).Validate(TargetSensor, ...)` (asserted by `lib/sensor/sensortest/canonical_test.go`).
