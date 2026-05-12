@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/iurykrieger/harness-framework/lib/cli"
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
 func resultFor(t *testing.T, projectRoot string, exists bool) registry.Result {
@@ -26,6 +28,19 @@ func resultFor(t *testing.T, projectRoot string, exists bool) registry.Result {
 		Source:      registry.SourceWalkUp,
 		Exists:      exists,
 		State:       state,
+	}
+}
+
+// bootstrapFor wraps a registry.Result in a cli.BootstrapResult suitable for
+// passing to runTail in tests. The schema validator is loaded so that signal
+// validation runs; errors are written to errBuf.
+func bootstrapFor(t *testing.T, res registry.Result, errBuf *bytes.Buffer) cli.BootstrapResult {
+	t.Helper()
+	v, _ := schema.LoadValidator("", errBuf)
+	return cli.BootstrapResult{
+		Res:       res,
+		Validator: v,
+		Diagnose:  registry.DiagnoseMetadata(res),
 	}
 }
 
@@ -52,8 +67,9 @@ func setupRunning(t *testing.T, root, id string, signalsLines []string) {
 func TestTail_RegistryFileAbsent_Error(t *testing.T) {
 	root := t.TempDir()
 	res := resultFor(t, root, false)
-	var buf bytes.Buffer
-	exit := runTail(res, []string{"missing", "0"}, &buf, os.Stderr)
+	var buf, errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	exit := runTail(b, []string{"missing", "0"}, &buf, &errBuf)
 	if exit != 1 {
 		t.Fatalf("exit: got %d, want 1", exit)
 	}
@@ -80,8 +96,9 @@ func TestTail_Cursor0_ReturnsAll(t *testing.T) {
 		`{"sensor_id":"loop","verdict":"warn","metadata":{"kind":"individual"}}`,
 	})
 	res := resultFor(t, root, true)
-	var buf bytes.Buffer
-	exit := runTail(res, []string{"loop", "0"}, &buf, os.Stderr)
+	var buf, errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	exit := runTail(b, []string{"loop", "0"}, &buf, &errBuf)
 	if exit != 0 {
 		t.Fatalf("exit: got %d", exit)
 	}
@@ -113,8 +130,9 @@ func TestTail_CursorMid_ReturnsSuffix(t *testing.T) {
 		`{"sensor_id":"loop","verdict":"fail","metadata":{"kind":"individual"}}`,
 	})
 	res := resultFor(t, root, true)
-	var buf bytes.Buffer
-	exit := runTail(res, []string{"loop", "2"}, &buf, os.Stderr)
+	var buf, errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	exit := runTail(b, []string{"loop", "2"}, &buf, &errBuf)
 	if exit != 0 {
 		t.Fatalf("exit: got %d", exit)
 	}
@@ -131,8 +149,9 @@ func TestTail_NotRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := resultFor(t, root, true)
-	var buf bytes.Buffer
-	exit := runTail(res, []string{"missing", "0"}, &buf, os.Stderr)
+	var buf, errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	exit := runTail(b, []string{"missing", "0"}, &buf, &errBuf)
 	if exit != 1 {
 		t.Fatalf("exit: got %d", exit)
 	}
