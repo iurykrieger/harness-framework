@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
 )
@@ -61,8 +60,7 @@ func RunDeps(
 		Signals: map[string]map[string]interface{}{},
 	}
 
-	sensorsDir := filepath.Join(projectRoot, "sensors")
-	order, err := Resolve(targetID, sensorsDir)
+	order, err := Resolve(targetID, projectRoot)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		res.ExitCode = 1

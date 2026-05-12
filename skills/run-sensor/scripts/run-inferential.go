@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -67,7 +66,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 
 	id := rest[0]
 
-	sensorAbsPath, err := sensor.ResolveByID(id, projectRoot)
+	sensorAbsPath, err := sensor.Resolve(id, projectRoot)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: resolve:", err)
 		return 2
@@ -109,10 +108,9 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	// Resolve requires[kind=sensor] graph. Run every dep via orchestrator.RunOne;
 	// blocking deps are started/attached via AttachLiveDep and detached
 	// after the requested sensor completes.
-	sensorRoot := filepath.Dir(sensorAbsPath)
 	rootID := id
 
-	order, err := orchestrator.Resolve(rootID, sensorRoot)
+	order, err := orchestrator.Resolve(rootID, projectRoot)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 1

@@ -67,7 +67,7 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 	}
 	id := args[0]
 
-	path, err := libsensor.ResolveByID(id, projectRoot)
+	path, err := libsensor.Resolve(id, projectRoot)
 	if err != nil {
 		return 2, validateSignal(v, finalSignal(id, nil, "failed", "resolve_failed",
 			map[string]interface{}{"error_excerpt": err.Error()},

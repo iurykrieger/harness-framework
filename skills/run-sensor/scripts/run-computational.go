@@ -50,7 +50,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 
 	id := rest[0]
 
-	sensorPath, err := sensor.ResolveByID(id, projectRoot)
+	sensorPath, err := sensor.Resolve(id, projectRoot)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: resolve:", err)
 		return 2

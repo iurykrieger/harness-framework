@@ -209,7 +209,7 @@ func readGracefulMS(entry *registry.RunningSensorEntry, projectRoot string) int 
 }
 
 func loadSensorJSONForStop(projectRoot, id string) map[string]interface{} {
-	path, err := libsensor.ResolveByID(id, projectRoot)
+	path, err := libsensor.Resolve(id, projectRoot)
 	if err != nil {
 		return nil
 	}
