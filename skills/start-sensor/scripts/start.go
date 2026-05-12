@@ -278,7 +278,6 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 			Sys:   &watcherSysProcAttr,
 		})
 		if err != nil {
-			// Kill the just-spawned root subprocess so we don't orphan it.
 			if det.PGID > 0 {
 				_ = killGroup(det.PGID)
 			}
@@ -286,12 +285,7 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 			_ = os.RemoveAll(runDir)
 			return fmt.Errorf("start watcher: %w", err)
 		}
-		// Capture the watcher pid BEFORE Release() — on Unix, Release
-		// resets Process.Pid to -1, which would violate the registry
-		// PID non-negativity invariant when Save validates the entry.
 		watcherPID := watcherProc.Pid
-		_ = watcherProc.Release()
-		_ = watcherLogFile.Close() // parent's handle; child keeps its own fd open.
 
 		if stale := rs.FindBlockingEntry(id); stale != nil {
 			rs.RemoveEntryByRunID(stale.RunID)

@@ -17,6 +17,11 @@ func (stderrPatternRule) Name() string { return "stderr-pattern" }
 
 func (stderrPatternRule) Match(signal heal.Signal, _ heal.FailedSensor) (bool, heal.Shape, string) {
 	for _, ev := range signal.Evidence {
+		// Capturing patterns take priority: they return a meaningful detail
+		// string (e.g. the tool name) rather than the full rationale line.
+		if shape, detail, ok := heal.MatchStderrPatternCapturing(ev.Rationale); ok {
+			return true, shape, detail
+		}
 		if shape, ok := heal.MatchStderrPattern(ev.Rationale); ok {
 			return true, shape, ev.Rationale
 		}

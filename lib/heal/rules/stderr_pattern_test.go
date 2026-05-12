@@ -33,3 +33,23 @@ func TestRuleStderrPattern_NoMatch(t *testing.T) {
 		t.Fatal("benign rationale must not match")
 	}
 }
+
+func TestStderrPatternRule_MatchesRequiredToolNotOnPath(t *testing.T) {
+	rule := stderrPatternRule{}
+	sig := heal.Signal{
+		Verdict: "error",
+		Evidence: []heal.SignalEvidence{
+			{Rationale: `Required tool "docker" is not on PATH`},
+		},
+	}
+	ok, shape, detail := rule.Match(sig, heal.FailedSensor{})
+	if !ok {
+		t.Fatal("expected match")
+	}
+	if shape != heal.ShapeBinaryNotFound {
+		t.Errorf("shape = %v, want %v", shape, heal.ShapeBinaryNotFound)
+	}
+	if detail != "docker" {
+		t.Errorf("detail = %q, want %q", detail, "docker")
+	}
+}

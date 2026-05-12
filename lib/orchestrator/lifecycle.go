@@ -51,16 +51,15 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 	execMap, _ := s.JSON["execution"].(map[string]interface{})
 	output, _ := s.JSON["output"].(string)
 
-	// Phase 0: enforce requires[kind=env] BEFORE prepare runs.
-	// A missing non-optional env var means the sensor cannot run at all —
-	// skip prepare, command, and teardown entirely and emit a single
-	// verdict=error aggregate Signal whose per-var evidence rationale is
-	// shaped to match the heal classifier's missing-env rule. This is the
-	// canonical entry point for the heal loop's documented happy path:
-	// without it, the rule fires only for inferential sensors (which is
-	// the bug we are fixing here).
-	if missing := sensor.CheckRequiredEnv(s.JSON); len(missing) > 0 {
-		sig := sensor.BuildMissingEnvSignal(envelope, output, missing)
+	// Phase 0: requires[] gate. Fail-closed pre-flight check across
+	// tool / context / env preconditions. A non-empty gate emits a single
+	// verdict=error Signal carrying one evidence per failure and
+	// metadata.heal_hint shaped to drive /heal-sensor.
+	gate := sensor.CheckRequiresGate(s.JSON, sensor.GateOpts{
+		LookupEnv: sensor.LookupEnvFn,
+	})
+	if gate.Failed() {
+		sig := sensor.BuildRequiresGateSignal(envelope, output, gate)
 		if v != nil {
 			if err := v.Validate(schema.TargetSignal, sig); err != nil {
 				schema.PrintValidationOrPlain(err, stderr)
@@ -244,10 +243,11 @@ func runOneWithPersistence(
 	execMap, _ := s.JSON["execution"].(map[string]interface{})
 	output, _ := s.JSON["output"].(string)
 
-	// Phase 0: requires[kind=env] guard. Same fast-path as RunOne — no
-	// subprocess to manage, so no persistence required.
-	if missing := sensor.CheckRequiredEnv(s.JSON); len(missing) > 0 {
-		sig := sensor.BuildMissingEnvSignal(envelope, output, missing)
+	// Phase 0: requires[] gate (tool/context/env). Same fast-path as RunOne
+	// — no subprocess to manage, so no persistence required.
+	gate := sensor.CheckRequiresGate(s.JSON, sensor.GateOpts{LookupEnv: sensor.LookupEnvFn})
+	if gate.Failed() {
+		sig := sensor.BuildRequiresGateSignal(envelope, output, gate)
 		if v != nil {
 			if err := v.Validate(schema.TargetSignal, sig); err != nil {
 				schema.PrintValidationOrPlain(err, stderr)
