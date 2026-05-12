@@ -45,10 +45,9 @@ The fix in this spec is therefore not just "add a gate call in one more place." 
    - `/start-sensor` (`start.go:137-142`), removing the local `requiresGateAux` and `requiresGateRationale` helpers (~55 LoC). Crucially, `/start-sensor`'s envelope builder `startSignal` carries a `Diagnose` block (via `signal.NewBuilder().WithDiagnose(b.Diagnose).Build()`) that `PreflightGate`'s canonical signal does not. The refactor preserves `Diagnose` by passing it as an additional argument or by merging post-construction; spelled out in Architecture section below.
    - `RunDeps` blocking branch — **the fix for #36**. The gate is moved **inside** `AttachLiveDep` (under the file lock, in the spawn-fresh branch only, not the re-attach branch). On failure, the canonical signal is returned to `RunDeps` via an extended return signature; `RunDeps` emits it on stdout and records it in `res.Signals[s.ID]`, after which the existing cascade machinery (`FirstFailedDep` + `BuildCascadeSignal`) handles dependents and the root on the next iterations.
 
-5. **`AttachLiveDep` signature changes** to carry the gate-fail signal back to `RunDeps` without conflating it with a hard error. Either:
-   - Return type changes from `(LiveDep, error)` to `(LiveDep, map[string]interface{}, error)` where the new return is the gate signal (non-nil iff the spawn-fresh path detected gate failure), OR
-   - A new struct `AttachResult { Live LiveDep, GateSignal map[string]interface{} }` replaces the first return value.
-   The struct form is preferred for forward-compat. The lock-scoped flow is: under the lock, if an existing alive entry is found → re-attach (no gate); otherwise → call `PreflightGate`; on failure, set `gateSignal` and return without spawning; on success, proceed to `startBlockingDep`. The reason gate must be inside the lock for the spawn-fresh path: deciding "fresh vs re-attach" is itself lock-scoped (`registry.FindBlockingEntry` + `IsPIDAlive`), and re-attach must NOT gate (see Architecture → Re-attach semantics).
+5. **`AttachLiveDep` signature changes** to carry the gate-fail signal back to callers without conflating it with a hard error. New struct `AttachResult { Live LiveDep, GateSignal map[string]interface{} }` replaces the first return value: `AttachLiveDep(...) (AttachResult, error)`. The lock-scoped flow is: under the lock, if an existing alive entry is found → re-attach (no gate); otherwise → call `PreflightGate`; on failure, set `gateSignal` and return without spawning; on success, proceed to `startBlockingDep`. The reason gate must be inside the lock for the spawn-fresh path: deciding "fresh vs re-attach" is itself lock-scoped (`registry.FindBlockingEntry` + `IsPIDAlive`), and re-attach must NOT gate (see Architecture → Re-attach semantics).
+
+   Production callers of `AttachLiveDep` to update: `lib/orchestrator/preflight.go:90` (`RunDeps`) and `skills/run-sensor/scripts/run-inferential.go:181` (the inferential runner has its own deps loop). Both refactor identically: check `result.GateSignal != nil` and, if so, emit the signal and record in their per-call signal map without pushing to `LiveStack`. Test fixtures that call `AttachLiveDep` directly (`lib/orchestrator/live_deps_test.go`, `lib/orchestrator/preflight_test.go`) also adapt.
 
 6. **`hooks/setup-failure-detector.go` is updated** to recognise `metadata.kind="failed"` as a heal candidate (added to the switch on line 173). The existing `case "aggregate", "start_failed":` is broadened to `case "aggregate", "start_failed", "failed":` so that:
    - `/run-sensor` preflight failures (changing from `kind="aggregate"` to `kind="failed"`) continue to trigger heal classification.
@@ -230,7 +229,7 @@ Audit and update:
 - `lib/orchestrator/lifecycle_test.go` — any test asserting `metadata.kind == "aggregate"` on a Phase 0 fail (audit at implementation time).
 - `skills/run-sensor/scripts/*_test.go` — `run-inferential.go`'s tests will reflect the `kind` change.
 - `skills/start-sensor/scripts/*_test.go` — `metadata.kind == "failed"` and `cause == "preflight_failed"` are preserved; tests should remain green. `missing_envs/missing_tools/missing_contexts` payload shape may differ from the old `requiresGateAux` output (omitted-when-empty vs. always-present-as-empty-array); update tests where this matters. `evidence[]` is now per-failure rich rationale instead of the single coarse summary from `requiresGateRationale` — tests asserting evidence content must update.
-- `hooks/setup-failure-detector_test.go` (if exists) — verify that the broadened switch case (`"failed"` added) still routes `cascade` and `aggregate` correctly, and now also accepts `"failed"`.
+- `hooks/setup-failure-detector_test.go` — verify the broadened switch case (`"failed"` added) still routes `cascade` and `aggregate` correctly, and now also accepts `"failed"`. Add a new case for a `kind="failed", cause="preflight_failed"` signal coming from `/run-sensor` and confirm it produces the expected heal directive.
 - `test/heal-e2e/heal_e2e_test.go` — heal classifier routes on `heal_hint`, not on `kind`. Expected neutral, but verify.
 
 The audit happens before merging the spec implementation; this section lists the expected blast radius.
@@ -251,6 +250,8 @@ allowlist = {
 ```
 
 Coarse but cheap. Catches the "added a new spawn site without remembering the gate" regression. If false positives become noisy, replace with a `go/analysis`-based analyzer; for now, grep is enough.
+
+Note for implementation: `/heal-sensor`'s `retry-original.go` re-invokes `/run-sensor` via `exec.Command("go", "run", ...)` (`skills/heal-sensor/scripts/retry-original.go:64`), not via direct `subprocess.*` calls. That path is therefore not in scope for the invariant test — it goes through `/run-sensor` which already gates.
 
 ### F. Manual end-to-end against the issue's reproduction (no automated e2e in this PR)
 
