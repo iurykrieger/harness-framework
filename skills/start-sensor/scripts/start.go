@@ -197,12 +197,9 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 		if err != nil {
 			return fmt.Errorf("spawn: %w", err)
 		}
-		envelope := libsensor.Envelope{
-			SensorID:   id,
-			Version:    stringField(sensorJSON, "version"),
-			RunID:      uuid.NewString(),
-			StartedAt:  time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-			SensorType: stringField(sensorJSON, "type"),
+		envelope, eerr := libsensor.BuildEnvelope(sensorJSON)
+		if eerr != nil {
+			return fmt.Errorf("envelope: %w", eerr)
 		}
 		patterns := []interface{}{}
 		if op, ok := execMap["output_parsing"].(map[string]interface{}); ok {
