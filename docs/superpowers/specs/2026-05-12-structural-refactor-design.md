@@ -34,7 +34,7 @@ A pure structural refactor that:
 | Path | Package | Concern |
 |---|---|---|
 | `test/integration_runtime_logs_test.go` | `package integration` (build tag `integration`) | Tests two concurrent `/run-sensor` invocations — orchestrator territory. |
-| `test/heal-e2e/heal_e2e_test.go` | `package healE2E_test` | Black-box test of the `heal-sensor` skill binary. |
+| `test/heal-e2e/heal_e2e_test.go` | `package healE2E_test` | End-to-end test of the heal control loop: imports `lib/heal` + `lib/heal/rules` directly and `exec`s the `run-sensor` binary. |
 | `test/registry-discovery-e2e/registry_discovery_e2e_test.go` | `package registryDiscoveryE2E_test` | Tests `lib/registry.Lookup` invariant across the four registry-touching skills. |
 | `test/fixtures/stack-discovery/` (with `go.mod`, `go.sum`, `cmd/server/main.go`, `expected-stack.json`, `expected-stdout.log`) | sub-module (own `go.mod`) | Consumed by `lib/stack/e2e_fixture_test.go:162` via `filepath.Join(dir, "test", "fixtures", "stack-discovery")`. |
 
