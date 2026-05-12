@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -96,12 +97,16 @@ func TestSpawnCallSitesGated(t *testing.T) {
 	}
 }
 
-// findRepoRoot walks up from cwd until it finds a go.mod.
+// findRepoRoot returns the absolute path of the repo root by walking up
+// from this test file's own location until it finds a go.mod. Independent
+// of process cwd, so order-sensitive tests (e.g., cwd_test.go which
+// chdir's to a temp dir) cannot break this static-analysis check.
 func findRepoRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", os.ErrNotExist
 	}
+	dir := filepath.Dir(filename)
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir, nil
