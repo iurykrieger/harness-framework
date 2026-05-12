@@ -357,7 +357,7 @@ func TestAttachDetachLiveDep_CoexistsWithNonBlockingEntry(t *testing.T) {
 			WatcherPID: 0,
 			StartedAt:  "2026-05-10T00:00:00Z",
 			Command:    "echo non-blocking",
-			LogDir:     filepath.Join(".runtime", "sensors", "blocking-tick", nonBlockingRunID),
+			LogDir:     r.RelativeRunDir("blocking-tick", nonBlockingRunID),
 			HeldBy:     []registry.HeldByEntry{nonBlockingHolder},
 		})
 		return registry.Save(r, rs)

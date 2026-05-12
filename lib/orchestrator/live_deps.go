@@ -28,7 +28,7 @@ type LiveDep struct {
 }
 
 // RunWithDepsRoot is the id-resolving variant of RunWithDeps. The
-// requested sensor is identified by id (resolved to <root>/sensors/<id>.json),
+// requested sensor is identified by id (resolved to <root>/.harness/sensors/<id>.json),
 // schemasDir is resolved by the schema package's discovery if empty.
 // All blocking deps along the chain are started/attached before the
 // requested sensor runs and stopped/detached after.
@@ -219,7 +219,7 @@ func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, 
 		WatcherPID: 0,
 		StartedAt:  now,
 		Command:    command,
-		LogDir:     filepath.Join(".runtime", "sensors", dep.ID, runID),
+		LogDir:     r.RelativeRunDir(dep.ID, runID),
 		HeldBy:     []registry.HeldByEntry{holder},
 	})
 	if err := registry.Save(r, *rs); err != nil {

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 )
@@ -43,7 +44,7 @@ func BuildCascadeSignal(skipped Sensor, failedDepSignal map[string]interface{}) 
 		"evidence": []interface{}{
 			map[string]interface{}{
 				"rationale": rationale,
-				"file":      fmt.Sprintf("sensors/%s.json", failedID),
+				"file":      filepath.Join(".harness", "sensors", failedID+".json"),
 			},
 		},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},

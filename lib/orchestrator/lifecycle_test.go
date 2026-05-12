@@ -537,9 +537,9 @@ func TestRunOne_WithRoot_RegistryInsertFailureCleansUpDir(t *testing.T) {
 		t.Fatal("expected non-nil signal even on persistence failure")
 	}
 
-	// The <run-id>/ directory under .runtime/sensors/echo/ must NOT exist
+	// The <run-id>/ directory under .harness/runtime/echo/ must NOT exist
 	// after cleanup. Walk the sensor log dir and confirm no child dirs.
-	sensorLogDir := filepath.Join(proj, ".runtime", "sensors", "echo")
+	sensorLogDir := filepath.Join(proj, ".harness", "runtime", "echo")
 	entries, readErr := os.ReadDir(sensorLogDir)
 	if readErr != nil && !os.IsNotExist(readErr) {
 		t.Fatalf("unexpected error reading sensor log dir: %v", readErr)

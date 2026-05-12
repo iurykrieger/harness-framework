@@ -151,7 +151,7 @@ func TestRunWithDepsRoot_CascadeSkip_DoesNotTouchRegistryOrDir(t *testing.T) {
 		t.Fatalf("expected non-zero exit for cascade")
 	}
 
-	targetDir := filepath.Join(proj, ".runtime", "sensors", "target")
+	targetDir := filepath.Join(proj, ".harness", "runtime", "target")
 	if entries, _ := os.ReadDir(targetDir); len(entries) != 0 {
 		t.Errorf("target run dir was created during cascade: %+v", entries)
 	}
