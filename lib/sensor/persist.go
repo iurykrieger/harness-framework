@@ -30,7 +30,16 @@ func ValidateAndPersist(sensorJSON []byte, outDir string, schemasDir string) (st
 		return "", fmt.Errorf("parse sensor JSON: %w", err)
 	}
 
-	v, err := schema.NewValidator(resolveSchemasDir(schemasDir))
+	dir := schemasDir
+	if dir == "" {
+		cwd, _ := os.Getwd()
+		found, ferr := schema.FindSchemasDir(cwd)
+		if ferr != nil {
+			return "", fmt.Errorf("locate schemas: %w", ferr)
+		}
+		dir = found
+	}
+	v, err := schema.NewValidator(dir)
 	if err != nil {
 		return "", fmt.Errorf("load schemas: %w", err)
 	}
@@ -76,25 +85,3 @@ func writeCanonical(path string, sensor map[string]interface{}) error {
 	return os.Rename(tmpPath, path)
 }
 
-func resolveSchemasDir(in string) string {
-	if in != "" {
-		return in
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "schemas"
-	}
-	dir := cwd
-	for i := 0; i < 8; i++ {
-		candidate := filepath.Join(dir, "schemas")
-		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
-			return candidate
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return filepath.Join(cwd, "schemas")
-}

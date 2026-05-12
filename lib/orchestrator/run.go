@@ -98,7 +98,7 @@ func FirstFailedDep(s Sensor, signals map[string]map[string]interface{}) map[str
 }
 
 // StripJSONExt removes a trailing ".json" extension from a filename. It is
-// the inverse of FindSensorByID's "<id>.json" filename convention and is
+// the inverse of sensor.Resolve's "<id>.json" filename convention and is
 // exported so runner scripts can derive a sensor id from its on-disk path.
 func StripJSONExt(name string) string {
 	if len(name) > 5 && name[len(name)-5:] == ".json" {

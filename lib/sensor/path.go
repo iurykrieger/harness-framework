@@ -9,12 +9,51 @@ import (
 	"strings"
 )
 
-// ResolveSensorPath strips a leading @, makes the path absolute (relative to
-// baseDir), and verifies the file exists.
-func ResolveSensorPath(arg, baseDir string) (string, error) {
+// idRegex matches the sensor.id shape required by schemas/sensor.json.
+var idRegex = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+// Resolve returns the canonical absolute path for a sensor identified by
+// a bare id ("my-sensor"), a prefixed path ("@sensors/my.json"), or a
+// relative/absolute path. When idOrPath matches the id regex, it is resolved
+// as <baseDir>/sensors/<id>.json; otherwise it is treated as a path
+// (with @ removed, and relative paths resolved against baseDir).
+//
+// Returns descriptive errors for empty input, malformed id, path traversal,
+// and missing files.
+func Resolve(idOrPath, baseDir string) (string, error) {
+	if idOrPath == "" {
+		return "", errors.New("empty sensor reference")
+	}
+	if looksLikePath(idOrPath) {
+		return resolvePath(idOrPath, baseDir)
+	}
+	if !idRegex.MatchString(idOrPath) {
+		return "", fmt.Errorf("sensor id %q does not match ^[a-z][a-z0-9-]*$", idOrPath)
+	}
+	return resolveInDir(idOrPath, filepath.Join(baseDir, "sensors"))
+}
+
+// resolveInDir is the internal helper used by the orchestrator: assumes that
+// sensorRoot is already the directory containing <id>.json (does not append
+// "sensors/" automatically).
+func resolveInDir(id, sensorRoot string) (string, error) {
+	if strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") {
+		return "", fmt.Errorf("invalid sensor id %q (no path separators)", id)
+	}
+	path := filepath.Join(sensorRoot, id+".json")
+	if _, err := os.Stat(path); err != nil {
+		return "", fmt.Errorf("sensor %q not found at %s: %w", id, path, err)
+	}
+	return path, nil
+}
+
+func resolvePath(arg, baseDir string) (string, error) {
 	arg = strings.TrimPrefix(arg, "@")
 	if arg == "" {
-		return "", errors.New("empty path")
+		return "", errors.New("empty path after trimming @")
+	}
+	if strings.Contains(arg, "..") {
+		return "", fmt.Errorf("path traversal not allowed: %q", arg)
 	}
 	if !filepath.IsAbs(arg) {
 		arg = filepath.Join(baseDir, arg)
@@ -29,23 +68,8 @@ func ResolveSensorPath(arg, baseDir string) (string, error) {
 	return abs, nil
 }
 
-// idRegex matches the sensor.id shape required by schemas/sensor.json:
-// lowercase letters/digits/dashes, must start with a letter.
-var idRegex = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
-
-// ResolveByID resolves a bare sensor id to its on-disk path under
-// <baseDir>/sensors/<id>.json. The id MUST match the schema's id pattern
-// to prevent path traversal via "../foo" or absolute-path inputs.
-func ResolveByID(id, baseDir string) (string, error) {
-	if id == "" {
-		return "", errors.New("empty sensor id")
-	}
-	if !idRegex.MatchString(id) {
-		return "", fmt.Errorf("sensor id %q does not match ^[a-z][a-z0-9-]*$", id)
-	}
-	path := filepath.Join(baseDir, "sensors", id+".json")
-	if _, err := os.Stat(path); err != nil {
-		return "", fmt.Errorf("sensor %q: %w", id, err)
-	}
-	return path, nil
+func looksLikePath(s string) bool {
+	return strings.HasPrefix(s, "@") ||
+		strings.ContainsAny(s, "/\\") ||
+		strings.HasSuffix(s, ".json")
 }
