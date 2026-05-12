@@ -59,3 +59,40 @@ func holdersMatch(a, b HeldByEntry) bool {
 	}
 	return true
 }
+
+// SummarizeOpts controls SummarizeHolders output.
+type SummarizeOpts struct {
+	// DeadOnly restricts output to kind=sensor holders whose PID is no
+	// longer alive (manual holders are excluded). Useful for surfacing
+	// dead_holders evidence in /stop-sensor.
+	DeadOnly bool
+}
+
+// SummarizeHolders converts holders into a JSON-serializable representation
+// suitable for embedding in Signal metadata. For kind=sensor entries it
+// annotates the entry with pid_alive computed at call time. Returns a
+// non-nil slice even when empty (callers may type-assert without a nil
+// check).
+func SummarizeHolders(holders []HeldByEntry, opts SummarizeOpts) []interface{} {
+	out := make([]interface{}, 0, len(holders))
+	for _, h := range holders {
+		if opts.DeadOnly {
+			if h.Kind != "sensor" || IsPIDAlive(h.PID) {
+				continue
+			}
+		}
+		entry := map[string]interface{}{
+			"kind":        h.Kind,
+			"attached_at": h.AttachedAt,
+		}
+		if h.Kind == "sensor" {
+			entry["id"] = h.ID
+			entry["pid"] = h.PID
+			if !opts.DeadOnly {
+				entry["pid_alive"] = IsPIDAlive(h.PID)
+			}
+		}
+		out = append(out, entry)
+	}
+	return out
+}
