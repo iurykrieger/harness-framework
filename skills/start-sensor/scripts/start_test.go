@@ -15,6 +15,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	watcher "github.com/iurykrieger/harness-framework/lib/watcher"
 )
 
 func TestMain(m *testing.M) {
@@ -654,5 +655,54 @@ func TestStart_AllowsStartWhenOnlyNonBlockingEntryExists(t *testing.T) {
 		if e.Blocking {
 			_ = syscall.Kill(-e.PGID, syscall.SIGKILL)
 		}
+	}
+}
+
+func TestStart_DelegatesToWatcherSpawn(t *testing.T) {
+	root := t.TempDir()
+	body := blockingFixtureBody()
+	// Override execution to use a long-running command so we can intercept
+	// the watcher.SpawnFn before it actually exits.
+	body["execution"] = map[string]interface{}{
+		"command":             "sleep 5",
+		"blocking":            true,
+		"graceful_timeout_ms": 1000,
+		"output_parsing": map[string]interface{}{
+			"patterns": []interface{}{
+				map[string]interface{}{"regex": "^TICK$", "verdict": "pass", "severity": "info"},
+			},
+		},
+		"exit_code_map": []interface{}{
+			map[string]interface{}{"exit_code": "*", "verdict": "pass", "severity": "info"},
+		},
+	}
+	writeFixtureSensor(t, root, "blocking-sensor", body)
+
+	var spawnedOpts watcher.SpawnOpts
+	prevSpawnFn := watcher.SpawnFn
+	watcher.SpawnFn = func(opts watcher.SpawnOpts) (int, error) {
+		spawnedOpts = opts
+		return 12345, nil
+	}
+	t.Cleanup(func() {
+		watcher.SpawnFn = prevSpawnFn
+	})
+
+	exit, sig := runStart(testResult(root), []string{"blocking-sensor"})
+	defer cleanupStartedTarget(t, root, "blocking-sensor")
+	if exit != 0 {
+		t.Fatalf("runStart exit = %d, signal = %#v", exit, sig)
+	}
+	if sig["verdict"] != "pass" {
+		t.Fatalf("verdict = %v, want pass", sig["verdict"])
+	}
+	if spawnedOpts.SensorID != "blocking-sensor" {
+		t.Errorf("spawnedOpts.SensorID = %q, want blocking-sensor", spawnedOpts.SensorID)
+	}
+	if spawnedOpts.RunID == "" {
+		t.Error("spawnedOpts.RunID is empty")
+	}
+	if spawnedOpts.ProjectRoot != root {
+		t.Errorf("spawnedOpts.ProjectRoot = %q, want %q", spawnedOpts.ProjectRoot, root)
 	}
 }

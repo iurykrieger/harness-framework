@@ -23,6 +23,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	libsensor "github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/subprocess"
+	"github.com/iurykrieger/harness-framework/lib/watcher"
 )
 
 func main() {
@@ -150,21 +151,12 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 			fmt.Sprintf("mkdir log dir: %v", err), diagnose), id)
 	}
 
-	watcherPath, err := watcherBinaryPath()
-	if err != nil {
-		detachAll()
-		return 1, validateSignal(v, finalSignal(id, sensorJSON, "failed", "watcher_spawn_failed",
-			map[string]interface{}{"error_excerpt": err.Error()},
-			fmt.Sprintf("watcher binary: %v", err), diagnose), id)
-	}
-
 	type spawnResult struct {
-		det         subprocess.DetachResult
-		watcherProc *os.Process
-		watcherPID  int
-		envelope    libsensor.Envelope
-		runID       string
-		runDir      string
+		det        subprocess.DetachResult
+		watcherPID int
+		envelope   libsensor.Envelope
+		runID      string
+		runDir     string
 	}
 	var spawned spawnResult
 	var alreadyRunning bool
@@ -195,6 +187,7 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 		det, err := subprocess.SpawnDetached(subprocess.DetachConfig{
 			Command: command,
 			LogFile: stagingRaw,
+			Dir:     projectRoot,
 		})
 		if err != nil {
 			_ = os.Remove(stagingRaw)
@@ -254,38 +247,25 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 		patternsJSON, _ := json.Marshal(patterns)
 		envelopeJSON, _ := json.Marshal(envelope)
 
-		watcherLogPath := filepath.Join(runDir, "watcher.log")
-		watcherLogFile, err := os.OpenFile(watcherLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			if det.PGID > 0 {
-				_ = killGroup(det.PGID)
-			}
-			_ = os.RemoveAll(runDir)
-			return fmt.Errorf("open watcher.log: %w", err)
-		}
-		watcherProc, err := os.StartProcess(watcherPath, []string{watcherPath}, &os.ProcAttr{
-			Env: []string{
-				fmt.Sprintf("HARNESS_WATCHER_RAW=%s", rawPath),
-				fmt.Sprintf("HARNESS_WATCHER_SIGNALS=%s", sigsPath),
-				fmt.Sprintf("HARNESS_WATCHER_PATTERNS=%s", string(patternsJSON)),
-				fmt.Sprintf("HARNESS_WATCHER_ENVELOPE=%s", string(envelopeJSON)),
-				fmt.Sprintf("HARNESS_WATCHER_SUBPROCESS_PID=%d", det.PID),
-				fmt.Sprintf("HARNESS_WATCHER_REGISTRY_ROOT=%s", projectRoot),
-				fmt.Sprintf("HARNESS_WATCHER_SENSOR_ID=%s", id),
-				fmt.Sprintf("HARNESS_WATCHER_RUN_ID=%s", runID),
-			},
-			Files: []*os.File{nil, nil, watcherLogFile},
-			Sys:   &watcherSysProcAttr,
+		// Stage 5: spawn the watcher via lib/watcher.
+		watcherPID, err := watcher.Spawn(watcher.SpawnOpts{
+			ProjectRoot:    projectRoot,
+			SensorID:       id,
+			RunID:          runID,
+			RawLogPath:     rawPath,
+			SignalsLogPath: sigsPath,
+			EnvelopeJSON:   envelopeJSON,
+			PatternsJSON:   patternsJSON,
+			SubprocessPID:  det.PID,
+			WatcherLogPath: filepath.Join(runDir, "watcher.log"),
 		})
 		if err != nil {
 			if det.PGID > 0 {
 				_ = killGroup(det.PGID)
 			}
-			_ = watcherLogFile.Close()
 			_ = os.RemoveAll(runDir)
 			return fmt.Errorf("start watcher: %w", err)
 		}
-		watcherPID := watcherProc.Pid
 
 		if stale := rs.FindBlockingEntry(id); stale != nil {
 			rs.RemoveEntryByRunID(stale.RunID)
@@ -309,12 +289,11 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 		}
 
 		spawned = spawnResult{
-			det:         det,
-			watcherProc: watcherProc,
-			watcherPID:  watcherPID,
-			envelope:    envelope,
-			runID:       runID,
-			runDir:      runDir,
+			det:        det,
+			watcherPID: watcherPID,
+			envelope:   envelope,
+			runID:      runID,
+			runDir:     runDir,
 		}
 		return nil
 	})
