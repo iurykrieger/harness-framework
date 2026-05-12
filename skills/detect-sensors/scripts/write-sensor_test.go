@@ -1,3 +1,5 @@
+//go:build write_sensor
+
 package main
 
 import (

@@ -242,7 +242,7 @@ Conventions that work:
 Write the draft JSON to a temp file, then run the validator-and-writer:
 
 ```bash
-go run ./skills/detect-sensors/scripts \
+go run -tags=write_sensor ./skills/detect-sensors/scripts \
   --out=<project>/sensors \
   /tmp/<draft-name>.json
 ```
