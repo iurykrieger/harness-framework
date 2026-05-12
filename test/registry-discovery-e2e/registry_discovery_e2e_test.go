@@ -19,6 +19,26 @@ import (
 	"time"
 )
 
+// TestMain sets CLAUDE_PLUGIN_ROOT once for all tests in this package so
+// that child processes (start-sensor, etc.) pass the plugin_root_missing
+// guard added in Task 2.4. It walks up from the test binary's cwd until it
+// finds .claude-plugin/plugin.json, which lives at the repo root.
+func TestMain(m *testing.M) {
+	dir, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".claude-plugin", "plugin.json")); err == nil {
+			os.Setenv("CLAUDE_PLUGIN_ROOT", dir)
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	os.Exit(m.Run())
+}
+
 // repoRoot returns the harness-framework repo root by walking up from
 // the test's cwd until it sees go.mod.
 func repoRoot(t *testing.T) string {
@@ -450,5 +470,169 @@ func TestSanitize_LegacyMinusOneViaListSensors(t *testing.T) {
 	e0, _ := entries[0].(map[string]interface{})
 	if pid, _ := e0["watcher_pid"].(float64); pid != 0 {
 		t.Errorf("on-disk watcher_pid after migration: got %v, want 0", e0["watcher_pid"])
+	}
+}
+
+func TestPluginVsProjectGoMod(t *testing.T) {
+	pluginRoot := findPluginRoot(t)
+
+	// Build a user project with its own go.mod listing an unrelated module.
+	proj := t.TempDir()
+	if err := os.WriteFile(filepath.Join(proj, "go.mod"), []byte("module example.com/userapp\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("go", "run", "-C", pluginRoot, "-tags=list_sensors", "./skills/list-sensors/scripts")
+	cmd.Dir = proj
+	cmd.Env = append(os.Environ(),
+		"HARNESS_REGISTRY_ROOT="+proj,
+		"GOWORK=off",
+		"CLAUDE_PLUGIN_ROOT="+pluginRoot,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run failed: %v\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
+	}
+
+	// Expect a Signal with verdict=warn (no registry file) and metadata.registry_path under proj.
+	last := lastLine(stdout.String())
+	var sig map[string]interface{}
+	if err := json.Unmarshal([]byte(last), &sig); err != nil {
+		t.Fatalf("parse signal: %v\nlast line: %s", err, last)
+	}
+	if sig["verdict"] != "warn" {
+		t.Errorf("verdict = %v, want warn", sig["verdict"])
+	}
+	meta, _ := sig["metadata"].(map[string]interface{})
+	regPath, _ := meta["registry_path"].(string)
+	// EvalSymlinks only works on paths that exist; the registry file is absent by design.
+	// Resolve the project root (which does exist) and check that regPath starts with it.
+	wantPrefix, _ := filepath.EvalSymlinks(proj)
+	if !strings.HasPrefix(regPath, wantPrefix) {
+		t.Errorf("registry_path = %q, want prefix %q", regPath, wantPrefix)
+	}
+}
+
+// findPluginRoot walks up from CWD until .claude-plugin/plugin.json is found.
+func findPluginRoot(t *testing.T) string {
+	t.Helper()
+	dir, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".claude-plugin", "plugin.json")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("plugin root not found")
+		}
+		dir = parent
+	}
+}
+
+// lastLine returns the final newline-terminated line of s.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return lines[len(lines)-1]
+}
+
+func TestSensorCwd(t *testing.T) {
+	pluginRoot := findPluginRoot(t)
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Sentinel file in the project root only.
+	if err := os.WriteFile(filepath.Join(proj, "SENTINEL"), []byte("project-root-confirmed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sensor whose command echoes the sentinel content.
+	body := `{
+		"id": "cwd-probe", "version": "1.0.0", "name": "Probe",
+		"description": "probe cwd", "determinism": "high",
+		"kind": "observation", "type": "computational",
+		"regulation": "behaviour", "phase": "on-demand", "output": "single",
+		"cost": {
+			"class": "cheap",
+			"compute": {"cpu": "low", "memory_mb": 32},
+			"latency": {"p50_ms": 10, "p95_ms": 50, "timeout_ms": 5000}
+		},
+		"triggers": [{"on": "manual"}],
+		"execution": {
+			"command": "cat SENTINEL",
+			"exit_code_map": [{"exit_code": 0, "verdict": "pass", "severity": "info"}]
+		},
+		"verification": {
+			"golden_cases": [{"fixture": "sensors/fixtures/cwd-probe/pass.txt", "expected_verdict": "pass", "expected_severity": "info"}]
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(proj, ".harness", "sensors", "cwd-probe.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("go", "run", "-C", pluginRoot, "-tags=run_computational", "./skills/run-sensor/scripts", "cwd-probe")
+	cmd.Dir = proj
+	cmd.Env = append(os.Environ(),
+		"HARNESS_REGISTRY_ROOT="+proj,
+		"GOWORK=off",
+		"CLAUDE_PLUGIN_ROOT="+pluginRoot,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run failed: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+
+	last := lastLine(stdout.String())
+	var sig map[string]interface{}
+	if err := json.Unmarshal([]byte(last), &sig); err != nil {
+		t.Fatalf("parse signal: %v\nlast: %s", err, last)
+	}
+	if sig["verdict"] != "pass" {
+		t.Errorf("verdict = %v, want pass\nfull signal: %s", sig["verdict"], last)
+	}
+}
+
+func TestGoWorkPollution(t *testing.T) {
+	pluginRoot := findPluginRoot(t)
+	proj := t.TempDir()
+	if err := os.WriteFile(filepath.Join(proj, "go.mod"), []byte("module example.com/userapp\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "go.work"), []byte("go 1.25\n\nuse .\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("go", "run", "-C", pluginRoot, "-tags=list_sensors", "./skills/list-sensors/scripts")
+	cmd.Dir = proj
+	cmd.Env = append(os.Environ(),
+		"HARNESS_REGISTRY_ROOT="+proj,
+		"GOWORK=off",
+		"CLAUDE_PLUGIN_ROOT="+pluginRoot,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run failed: %v\nstderr: %s", err, stderr.String())
+	}
+
+	// As long as we got a parseable signal with verdict=warn, the contract held.
+	last := lastLine(stdout.String())
+	var sig map[string]interface{}
+	if err := json.Unmarshal([]byte(last), &sig); err != nil {
+		t.Fatalf("parse signal: %v\nlast: %s", err, last)
+	}
+	if sig["verdict"] != "warn" {
+		t.Errorf("verdict = %v, want warn", sig["verdict"])
 	}
 }

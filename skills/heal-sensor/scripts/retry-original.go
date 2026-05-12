@@ -21,7 +21,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -55,10 +54,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if v.Type == "inferential" {
 		tag = "run_inferential"
 	}
-	cmd := exec.Command("go", "run", "-tags="+tag, "./skills/run-sensor/scripts", sensorPath)
-	if root := repoRoot(); root != "" {
-		cmd.Dir = root
+
+	pluginRoot := os.Getenv("CLAUDE_PLUGIN_ROOT")
+	if pluginRoot == "" {
+		fmt.Fprintln(stderr, "error: CLAUDE_PLUGIN_ROOT not set")
+		return 2
 	}
+
+	cmd := exec.Command("go", "-C", pluginRoot, "run", "-tags="+tag, "./skills/run-sensor/scripts", sensorPath)
+	cmd.Env = append(os.Environ(), "GOWORK=off")
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
@@ -69,31 +73,4 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return 0
-}
-
-// repoRoot walks up from cwd looking for a directory that contains
-// both go.mod and skills/run-sensor/scripts (the runner package). When
-// found, returns its absolute path; otherwise returns "" so the caller
-// can fall back to cwd. Keeps the script invocable from anywhere
-// inside the harness checkout (including its own scripts/ dir, where
-// `go test` runs).
-func repoRoot() string {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	dir := cwd
-	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			if _, err := os.Stat(filepath.Join(dir, "skills", "run-sensor", "scripts")); err == nil {
-				return dir
-			}
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return ""
 }

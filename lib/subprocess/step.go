@@ -13,6 +13,7 @@ type StepConfig struct {
 	Command   string
 	Env       map[string]string
 	TimeoutMS int
+	Dir       string // working directory for the subprocess (empty = inherit)
 }
 
 // StepResult captures everything a lifecycle phase needs to fold into the
@@ -42,6 +43,9 @@ func RunStep(ctx context.Context, cfg StepConfig) (StepResult, error) {
 	}
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", cfg.Command)
+	if cfg.Dir != "" {
+		cmd.Dir = cfg.Dir
+	}
 	if len(cfg.Env) > 0 {
 		envList := append([]string{}, cmd.Environ()...)
 		for k, v := range cfg.Env {

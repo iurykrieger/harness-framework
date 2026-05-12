@@ -22,12 +22,14 @@ import (
 	"io"
 	"os"
 	ossignal "os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/iurykrieger/harness-framework/lib/cli"
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
+	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
@@ -58,7 +60,16 @@ const harnessConfidencePrefix = "HARNESS_AGGREGATE_CONFIDENCE="
 
 func main() {
 	cwd, _ := os.Getwd()
-	os.Exit(run(os.Args[1:], cwd, os.Stdout, os.Stderr))
+	// registry.Lookup honors HARNESS_REGISTRY_ROOT first, then walks up
+	// from cwd looking for the .harness/ marker. Fall back to cwd so a
+	// direct invocation from inside a project (without the env var) keeps
+	// working; sensor.Resolve will surface a clearer error if the path is
+	// genuinely unfindable.
+	projectRoot := cwd
+	if res, err := registry.Lookup(cwd); err == nil {
+		projectRoot = res.ProjectRoot
+	}
+	os.Exit(run(os.Args[1:], projectRoot, os.Stdout, os.Stderr))
 }
 
 // run is the testable entry point. projectRoot is the directory from which
@@ -75,7 +86,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(stderr, "usage: run-inferential [--schemas-dir=DIR] [--slot k=v]... <sensor-id>")
+		fmt.Fprintln(stderr, "usage: run-inferential [--schemas-dir=DIR] [--slot k=v]... <sensor-id|path>")
 		return 2
 	}
 
@@ -85,13 +96,19 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	id := rest[0]
-
-	sensorAbsPath, err := sensor.Resolve(id, projectRoot)
+	// sensor.Resolve accepts both bare ids and path-shaped inputs. After
+	// resolution we re-derive id and projectRoot from the canonical sensor
+	// location (<projectRoot>/.harness/sensors/<id>.json) so the rest of the
+	// runner — which threads (id, projectRoot) into orchestrator.Resolve,
+	// AttachLiveDep, etc. — works uniformly for both input shapes.
+	arg := rest[0]
+	sensorAbsPath, err := sensor.Resolve(arg, projectRoot)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: resolve:", err)
 		return 2
 	}
+	id := orchestrator.StripJSONExt(filepath.Base(sensorAbsPath))
+	projectRoot = filepath.Dir(filepath.Dir(filepath.Dir(sensorAbsPath)))
 
 	v, code := schema.LoadValidator(schemasDir, stderr)
 	if code != 0 {
@@ -180,7 +197,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 			depSignals[dep.ID] = cascade
 			continue
 		}
-		sig, depCode := orchestrator.RunOne(ctx, dep, schemasDir, v, stdout, stderr)
+		sig, depCode := orchestrator.RunOne(ctx, dep, projectRoot, schemasDir, v, stdout, stderr)
 		if depCode != 0 {
 			return depCode
 		}
@@ -233,6 +250,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 
 	res, _ := subprocess.StreamSubprocess(ctx, subprocess.StreamConfig{
 		Command:   command,
+		Dir:       projectRoot,
 		Env:       map[string]string{"HARNESS_PROMPT": rendered},
 		TimeoutMS: timeoutMS,
 		Patterns:  patterns,

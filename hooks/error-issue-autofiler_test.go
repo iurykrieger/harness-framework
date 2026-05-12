@@ -968,6 +968,53 @@ func (r *raceGhClient) Create(repo, title, body string, labels []string) (issueR
 	return issueRef{}, r.createErr
 }
 
+func TestCommandTouchesFramework_GoRunWithC(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+		want bool
+	}{
+		{
+			name: "go -C run -tags scripts",
+			cmd:  `go -C /Users/x/.claude/plugins/harness-framework run -tags=start_sensor ./skills/start-sensor/scripts foo`,
+			want: true,
+		},
+		{
+			name: "go -C run hooks",
+			cmd:  `go -C ${CLAUDE_PLUGIN_ROOT} run -tags=error_autofiler ./hooks`,
+			want: true,
+		},
+		{
+			name: "go -C test",
+			cmd:  `go -C /plugin/root test -tags=start_sensor ./skills/start-sensor/...`,
+			want: true,
+		},
+		{
+			name: "legacy go run still matches",
+			cmd:  `go run -tags=run_computational ./skills/run-sensor/scripts foo`,
+			want: true,
+		},
+		{
+			name: "legacy harness-watcher still matches",
+			cmd:  `harness-watcher`,
+			want: true,
+		},
+		{
+			name: "unrelated go command",
+			cmd:  `go build ./...`,
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := commandTouchesFramework(tc.cmd)
+			if got != tc.want {
+				t.Errorf("commandTouchesFramework(%q) = %v, want %v", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
 func buildHookInput(cmd, stdout, stderr string, exit int) hookInput {
 	return hookInput{
 		HookEventName: "PostToolUse",

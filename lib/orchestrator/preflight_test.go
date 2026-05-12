@@ -25,7 +25,7 @@ func TestRunPreparePhase_NoSteps(t *testing.T) {
 			},
 		},
 	}
-	results, failed := orchestrator.RunPreparePhase(context.Background(), target, 1000)
+	results, failed := orchestrator.RunPreparePhase(context.Background(), target, "", 1000)
 	if failed {
 		t.Errorf("failed: got true, want false (no prepare steps)")
 	}
@@ -47,7 +47,7 @@ func TestRunPreparePhase_AllPass(t *testing.T) {
 			},
 		},
 	}
-	results, failed := orchestrator.RunPreparePhase(context.Background(), target, 1000)
+	results, failed := orchestrator.RunPreparePhase(context.Background(), target, "", 1000)
 	if failed {
 		t.Errorf("failed: got true, want false (all steps pass)")
 	}
@@ -72,7 +72,7 @@ func TestRunPreparePhase_NoExecution(t *testing.T) {
 			"id": "no-execution",
 		},
 	}
-	results, failed := orchestrator.RunPreparePhase(context.Background(), target, 1000)
+	results, failed := orchestrator.RunPreparePhase(context.Background(), target, "", 1000)
 	if failed {
 		t.Errorf("failed: got true, want false (no execution map)")
 	}
@@ -94,7 +94,7 @@ func TestRunPreparePhase_FirstFails_FailFast(t *testing.T) {
 			},
 		},
 	}
-	results, failed := orchestrator.RunPreparePhase(context.Background(), target, 1000)
+	results, failed := orchestrator.RunPreparePhase(context.Background(), target, "", 1000)
 	if !failed {
 		t.Errorf("failed: got false, want true (first step is `false`)")
 	}

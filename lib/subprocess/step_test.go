@@ -2,6 +2,8 @@ package subprocess
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -55,5 +57,32 @@ func TestRunStep_Timeout(t *testing.T) {
 func TestRunStep_EmptyCommandError(t *testing.T) {
 	if _, err := RunStep(context.Background(), StepConfig{Command: "", TimeoutMS: 1000}); err == nil {
 		t.Fatal("expected empty-command error")
+	}
+}
+
+func TestRunStep_RespectsDir(t *testing.T) {
+	tmp := t.TempDir()
+	outFile := filepath.Join(tmp, "pwd.out")
+
+	res, err := RunStep(context.Background(), StepConfig{
+		Command:   "pwd > " + outFile,
+		TimeoutMS: 5000,
+		Dir:       tmp,
+	})
+	if err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit=%d want 0", res.ExitCode)
+	}
+
+	got, readErr := os.ReadFile(outFile)
+	if readErr != nil {
+		t.Fatalf("read pwd.out: %v", readErr)
+	}
+	want, _ := filepath.EvalSymlinks(tmp)
+	gotResolved, _ := filepath.EvalSymlinks(strings.TrimSpace(string(got)))
+	if gotResolved != want {
+		t.Errorf("subprocess cwd = %q, want %q", gotResolved, want)
 	}
 }

@@ -19,7 +19,9 @@ Read new Signals from a running blocking sensor without disturbing it.
 ## Procedure
 
 ```bash
-go run -tags=tail_sensor ./skills/tail-sensor/scripts <sensor.id> <cursor>
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=tail_sensor \
+  ./skills/tail-sensor/scripts <sensor.id> <cursor>
 ```
 
 ## Output contract
