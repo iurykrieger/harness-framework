@@ -539,3 +539,41 @@ func lastLine(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	return lines[len(lines)-1]
 }
+
+func TestGoWorkPollution(t *testing.T) {
+	pluginRoot := findPluginRoot(t)
+	proj := t.TempDir()
+	if err := os.WriteFile(filepath.Join(proj, "go.mod"), []byte("module example.com/userapp\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "go.work"), []byte("go 1.25\n\nuse .\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("go", "run", "-C", pluginRoot, "-tags=list_sensors", "./skills/list-sensors/scripts")
+	cmd.Dir = proj
+	cmd.Env = append(os.Environ(),
+		"HARNESS_REGISTRY_ROOT="+proj,
+		"GOWORK=off",
+		"CLAUDE_PLUGIN_ROOT="+pluginRoot,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run failed: %v\nstderr: %s", err, stderr.String())
+	}
+
+	// As long as we got a parseable signal with verdict=warn, the contract held.
+	last := lastLine(stdout.String())
+	var sig map[string]interface{}
+	if err := json.Unmarshal([]byte(last), &sig); err != nil {
+		t.Fatalf("parse signal: %v\nlast: %s", err, last)
+	}
+	if sig["verdict"] != "warn" {
+		t.Errorf("verdict = %v, want warn", sig["verdict"])
+	}
+}
