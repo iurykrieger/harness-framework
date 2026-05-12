@@ -14,6 +14,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 func TestRunOneWithLiveDeps_AttachesAndDetachesBlockingDep(t *testing.T) {
@@ -431,7 +432,7 @@ func TestRunWithDepsRoot_AcceptsAbsolutePath(t *testing.T) {
 	proj := t.TempDir()
 	// Materialize a minimal valid computational sensor at an absolute path
 	// OUTSIDE the project's .harness/sensors/ tree.
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["id"] = "abs-path-target"
 	body, err := json.Marshal(s)
 	if err != nil {
@@ -447,7 +448,7 @@ func TestRunWithDepsRoot_AcceptsAbsolutePath(t *testing.T) {
 	t.Setenv("HARNESS_REGISTRY_ROOT", proj)
 
 	var stdout, stderr bytes.Buffer
-	code := orchestrator.RunWithDepsRoot(context.Background(), absSensorPath, proj, testfixtures.RepoSchemasDir(t), &stdout, &stderr)
+	code := orchestrator.RunWithDepsRoot(context.Background(), absSensorPath, proj, schematest.RepoSchemasDir(t), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d, stderr=%s", code, stderr.String())
 	}
@@ -469,7 +470,7 @@ func TestRunWithDepsRoot_AcceptsAbsolutePath(t *testing.T) {
 func TestRunWithDepsRoot_AbsolutePathCascadeSensorID(t *testing.T) {
 	proj := t.TempDir()
 	// Target sensor declares a requires[kind=sensor] dep that DOES NOT exist.
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["id"] = "abs-cascade-target"
 	s["requires"] = []interface{}{
 		map[string]interface{}{"kind": "sensor", "id": "nonexistent-dep"},
@@ -486,7 +487,7 @@ func TestRunWithDepsRoot_AbsolutePathCascadeSensorID(t *testing.T) {
 	t.Setenv("HARNESS_REGISTRY_ROOT", proj)
 
 	var stdout, stderr bytes.Buffer
-	_ = orchestrator.RunWithDepsRoot(context.Background(), absSensorPath, proj, testfixtures.RepoSchemasDir(t), &stdout, &stderr)
+	_ = orchestrator.RunWithDepsRoot(context.Background(), absSensorPath, proj, schematest.RepoSchemasDir(t), &stdout, &stderr)
 	// We do not assert exit code (it will be non-zero on dep failure).
 	// We DO assert that any sensor_id emitted on stdout matches the
 	// logical id pattern, NOT the abs path.

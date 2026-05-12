@@ -10,16 +10,17 @@ import (
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 func TestRunWithDepsRoot_SubprocessCwdIsProjectRoot(t *testing.T) {
 	proj := t.TempDir()
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	_ = os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755)
 
 	// Build a valid sensor that writes its cwd to a file under projectRoot.
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["id"] = "cwd-probe"
 	exec := s["execution"].(map[string]interface{})
 	exec["command"] = "pwd > $HARNESS_REGISTRY_ROOT/probe.out"
