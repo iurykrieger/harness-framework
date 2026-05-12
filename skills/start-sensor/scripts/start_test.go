@@ -748,3 +748,182 @@ func TestStart_DelegatesToWatcherSpawn(t *testing.T) {
 		t.Errorf("spawnedOpts.ProjectRoot = %q, want %q", spawnedOpts.ProjectRoot, root)
 	}
 }
+
+// writeBlockingTargetWithExtraRequires writes a blocking target sensor whose
+// requires[] is the concatenation of extra (caller-supplied entries) and any
+// existing requires from blockingFixtureBody. Used by the requires-gate tests
+// to inject env/tool/context preconditions without touching writeBlockingTarget.
+func writeBlockingTargetWithExtraRequires(t *testing.T, root, id string, extra []map[string]interface{}) {
+	t.Helper()
+	body := blockingFixtureBody()
+	var rs []interface{}
+	if existing, ok := body["requires"].([]interface{}); ok {
+		rs = existing
+	}
+	for _, e := range extra {
+		rs = append(rs, e)
+	}
+	if len(rs) > 0 {
+		body["requires"] = rs
+	}
+	writeFixtureSensor(t, root, id, body)
+}
+
+// TestStart_RequiresGateFailsOnMissingEnv asserts /start-sensor refuses to
+// spawn when a non-optional requires[kind=env] entry is unset, and emits
+// the structured failure payload (cause=preflight_failed + missing_envs +
+// heal_hint) that /heal-sensor needs to act.
+func TestStart_RequiresGateFailsOnMissingEnv(t *testing.T) {
+	root := t.TempDir()
+	const envName = "TEST_HARNESS_REQUIRED_ENV_ABC123"
+	os.Unsetenv(envName)
+	writeBlockingTargetWithExtraRequires(t, root, "target", []map[string]interface{}{
+		{"kind": "env", "name": envName, "description": "test fixture env"},
+	})
+
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"target"})
+
+	if exit != 1 {
+		t.Fatalf("exit: got %d, want 1; sig=%+v", exit, sig)
+	}
+	if sig["verdict"] != "error" {
+		t.Errorf("verdict: got %v, want error", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if md["kind"] != "failed" {
+		t.Errorf("metadata.kind: got %v, want failed", md["kind"])
+	}
+	if md["cause"] != "preflight_failed" {
+		t.Errorf("metadata.cause: got %v, want preflight_failed", md["cause"])
+	}
+	missingEnvs, _ := md["missing_envs"].([]interface{})
+	if len(missingEnvs) != 1 || missingEnvs[0] != envName {
+		t.Errorf("metadata.missing_envs: got %v, want [%s]", missingEnvs, envName)
+	}
+	if md["heal_hint"] != "missing-env:"+envName {
+		t.Errorf("metadata.heal_hint: got %v, want missing-env:%s", md["heal_hint"], envName)
+	}
+
+	// No spawn → no registry entry.
+	r := registry.NewRoot(root)
+	rs, _ := registry.Load(r)
+	if rs.FindEntry("target") != nil {
+		t.Error("target should NOT be in registry when requires gate fails")
+	}
+}
+
+// TestStart_RequiresGateFailsOnMissingTool asserts a missing required tool
+// blocks the spawn and surfaces the binary name + heal_hint=binary-not-found.
+func TestStart_RequiresGateFailsOnMissingTool(t *testing.T) {
+	root := t.TempDir()
+	const toolName = "harness-fake-tool-does-not-exist-zyx987"
+	writeBlockingTargetWithExtraRequires(t, root, "target", []map[string]interface{}{
+		{"kind": "tool", "name": toolName},
+	})
+
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"target"})
+
+	if exit != 1 {
+		t.Fatalf("exit: got %d, want 1; sig=%+v", exit, sig)
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if md["cause"] != "preflight_failed" {
+		t.Errorf("metadata.cause: got %v, want preflight_failed", md["cause"])
+	}
+	missingTools, _ := md["missing_tools"].([]interface{})
+	if len(missingTools) != 1 || missingTools[0] != toolName {
+		t.Errorf("metadata.missing_tools: got %v, want [%s]", missingTools, toolName)
+	}
+	if md["heal_hint"] != "binary-not-found:"+toolName {
+		t.Errorf("metadata.heal_hint: got %v, want binary-not-found:%s", md["heal_hint"], toolName)
+	}
+	r := registry.NewRoot(root)
+	rs, _ := registry.Load(r)
+	if rs.FindEntry("target") != nil {
+		t.Error("target should NOT be in registry when requires gate fails")
+	}
+}
+
+// TestStart_RequiresGateFailsOnMissingContext asserts a non-existent context
+// path blocks the spawn and surfaces the path + heal_hint=missing-context.
+func TestStart_RequiresGateFailsOnMissingContext(t *testing.T) {
+	root := t.TempDir()
+	missingPath := filepath.Join(root, "does-not-exist-abc.json")
+	writeBlockingTargetWithExtraRequires(t, root, "target", []map[string]interface{}{
+		{"kind": "context", "path": missingPath},
+	})
+
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"target"})
+
+	if exit != 1 {
+		t.Fatalf("exit: got %d, want 1; sig=%+v", exit, sig)
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if md["cause"] != "preflight_failed" {
+		t.Errorf("metadata.cause: got %v, want preflight_failed", md["cause"])
+	}
+	missingContexts, _ := md["missing_contexts"].([]interface{})
+	if len(missingContexts) != 1 || missingContexts[0] != missingPath {
+		t.Errorf("metadata.missing_contexts: got %v, want [%s]", missingContexts, missingPath)
+	}
+	if md["heal_hint"] != "missing-context:"+missingPath {
+		t.Errorf("metadata.heal_hint: got %v, want missing-context:%s", md["heal_hint"], missingPath)
+	}
+	r := registry.NewRoot(root)
+	rs, _ := registry.Load(r)
+	if rs.FindEntry("target") != nil {
+		t.Error("target should NOT be in registry when requires gate fails")
+	}
+}
+
+// TestStart_RequiresGatePassesWhenEnvIsSet asserts the gate is permissive
+// when the env is satisfied — spawning proceeds normally (matching the
+// existing TestStart_DelegatesToWatcherSpawn happy path).
+func TestStart_RequiresGatePassesWhenEnvIsSet(t *testing.T) {
+	root := t.TempDir()
+	const envName = "TEST_HARNESS_REQUIRED_ENV_DEF456"
+	t.Setenv(envName, "1")
+	writeBlockingTargetWithExtraRequires(t, root, "target", []map[string]interface{}{
+		{"kind": "env", "name": envName, "description": "test fixture env"},
+	})
+
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"target"})
+	defer cleanupStartedTarget(t, root, "target")
+
+	if exit != 0 {
+		t.Fatalf("exit: got %d, want 0; sig=%+v", exit, sig)
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if md["kind"] != "started" {
+		t.Errorf("metadata.kind: got %v, want started", md["kind"])
+	}
+}
+
+// TestStart_RequiresGateFailsBeforePrepare asserts the gate runs BEFORE
+// the prepare phase: a sensor declaring both a missing env AND a prepare
+// step that would fail must surface the env failure (Phase 0 fail-closed),
+// not the prepare failure. Mirrors RunOne's ordering in lib/orchestrator/lifecycle.go.
+func TestStart_RequiresGateFailsBeforePrepare(t *testing.T) {
+	root := t.TempDir()
+	const envName = "TEST_HARNESS_REQUIRED_ENV_GHI789"
+	os.Unsetenv(envName)
+	body := blockingFixtureBody()
+	body["requires"] = []interface{}{
+		map[string]interface{}{"kind": "env", "name": envName, "description": "must fail first"},
+		map[string]interface{}{"kind": "step", "command": "false"},
+	}
+	writeFixtureSensor(t, root, "target", body)
+
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"target"})
+
+	if exit != 1 {
+		t.Fatalf("exit: got %d, want 1; sig=%+v", exit, sig)
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if md["cause"] != "preflight_failed" {
+		t.Errorf("metadata.cause: got %v, want preflight_failed (Phase 0 must precede prepare)", md["cause"])
+	}
+	if _, hasPrep := md["lifecycle"]; hasPrep {
+		t.Error("metadata.lifecycle should be absent — prepare must not have run")
+	}
+}

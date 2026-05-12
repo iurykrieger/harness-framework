@@ -59,19 +59,8 @@ func RunOne(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *sc
 	// tool / context / env preconditions. A non-empty gate emits a single
 	// verdict=error Signal carrying one evidence per failure and
 	// metadata.heal_hint shaped to drive /heal-sensor.
-	gate := sensor.CheckRequiresGate(s.JSON, sensor.GateOpts{
-		LookupEnv: sensor.LookupEnvFn,
-	})
-	if gate.Failed() {
-		sig := sensor.BuildRequiresGateSignal(envelope, output, gate)
-		if v != nil {
-			if err := v.Validate(schema.TargetSignal, sig); err != nil {
-				schema.PrintValidationOrPlain(err, stderr)
-				return nil, 1
-			}
-		}
-		_ = json.NewEncoder(stdout).Encode(sig)
-		return sig, 0
+	if gate := RunRequiresGate(s); gate.Failed() {
+		return emitRequiresGateAggregate(envelope, output, gate, v, stdout, stderr)
 	}
 
 	timeoutMS := readTimeoutMS(s.JSON)
@@ -254,17 +243,8 @@ func runOneWithPersistence(
 
 	// Phase 0: requires[] gate (tool/context/env). Same fast-path as RunOne
 	// — no subprocess to manage, so no persistence required.
-	gate := sensor.CheckRequiresGate(s.JSON, sensor.GateOpts{LookupEnv: sensor.LookupEnvFn})
-	if gate.Failed() {
-		sig := sensor.BuildRequiresGateSignal(envelope, output, gate)
-		if v != nil {
-			if err := v.Validate(schema.TargetSignal, sig); err != nil {
-				schema.PrintValidationOrPlain(err, stderr)
-				return nil, 1
-			}
-		}
-		_ = json.NewEncoder(stdout).Encode(sig)
-		return sig, 0
+	if gate := RunRequiresGate(s); gate.Failed() {
+		return emitRequiresGateAggregate(envelope, output, gate, v, stdout, stderr)
 	}
 
 	timeoutMS := readTimeoutMS(s.JSON)
@@ -703,4 +683,20 @@ func asNumber(v interface{}) float64 {
 		return float64(x)
 	}
 	return 0
+}
+
+// emitRequiresGateAggregate writes the verdict=error aggregate Signal that
+// /run-sensor (RunOne and runOneWithPersistence) emits when the gate fails.
+// Returns (signal, 0) on success or (nil, 1) when schema validation rejects
+// the signal — both paths leave stderr informative.
+func emitRequiresGateAggregate(envelope sensor.Envelope, output string, gate sensor.Gate, v *schema.Validator, stdout, stderr io.Writer) (map[string]interface{}, int) {
+	sig := sensor.BuildRequiresGateSignal(envelope, output, gate)
+	if v != nil {
+		if err := v.Validate(schema.TargetSignal, sig); err != nil {
+			schema.PrintValidationOrPlain(err, stderr)
+			return nil, 1
+		}
+	}
+	_ = json.NewEncoder(stdout).Encode(sig)
+	return sig, 0
 }
