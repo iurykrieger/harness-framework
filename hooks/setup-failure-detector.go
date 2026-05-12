@@ -170,11 +170,14 @@ func scanTranscript(path, cwd string) (scanResult, bool) {
 
 		var sensorPath, originalRequestedID string
 		switch kind {
-		case "aggregate", "start_failed":
-			// /run-sensor and /stop-sensor produce metadata.kind=aggregate;
-			// /start-sensor produces metadata.kind=start_failed when prepare,
-			// schema validation, or fork+exec fails before the sensor is
-			// registered. Both are candidates for setup-shape healing.
+		case "aggregate", "start_failed", "failed":
+			// /run-sensor produces metadata.kind=aggregate for runtime
+			// aggregates and metadata.kind=failed for preflight failures.
+			// /start-sensor uses metadata.kind=failed for every terminal
+			// envelope except "started" (and "rejected" for the singleton
+			// case). "start_failed" is preserved for backward compatibility
+			// with any pre-existing recorded transcripts. All are candidates
+			// for setup-shape healing.
 			sensorPath = originalSensorPath
 		case "cascade":
 			// Walk backward through earlier JSONL lines in the same

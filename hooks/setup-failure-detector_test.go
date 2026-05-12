@@ -438,6 +438,45 @@ func TestHook_StopSensor_FlagBeforeID_ResolvesCorrectly(t *testing.T) {
 	}
 }
 
+func TestScanTranscript_RoutesKindFailedPreflight(t *testing.T) {
+	// /run-sensor preflight failures emit metadata.kind="failed",
+	// cause="preflight_failed". The hook should route these to heal
+	// classification just like kind="aggregate" runtime failures.
+	preflightSig := map[string]interface{}{
+		"sensor_id":   "demo",
+		"version":     "1.0.0",
+		"run_id":      "r-1",
+		"started_at":  "2026-05-12T00:00:00Z",
+		"finished_at": "2026-05-12T00:00:00Z",
+		"verdict":     "error",
+		"severity":    "high",
+		"confidence":  1.0,
+		"evidence":    []interface{}{map[string]interface{}{"rationale": "Required environment variable FOO is not set"}},
+		"cost_actual": map[string]interface{}{"latency_ms": 0},
+		"metadata": map[string]interface{}{
+			"kind":         "failed",
+			"cause":        "preflight_failed",
+			"output_mode":  "single",
+			"missing_envs": []interface{}{"FOO"},
+			"heal_hint":    "missing-env:FOO",
+		},
+	}
+	sensor := map[string]interface{}{
+		"id": "demo",
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env", "name": "FOO"},
+		},
+	}
+	transcript := writeTranscript(t, preflightSig, sensor)
+	result, ok := scanTranscript(transcript, filepath.Dir(transcript))
+	if !ok {
+		t.Fatal("scanTranscript: returned ok=false, want true (preflight failure should route)")
+	}
+	if result.Signal.Verdict != "error" {
+		t.Errorf("signal verdict: got %v, want error", result.Signal.Verdict)
+	}
+}
+
 func TestHook_StartSensor_AlreadyRejected_NotSetupShape(t *testing.T) {
 	// /start-sensor's start_rejected (already running) is not
 	// setup-shaped — no rule should match, no injection.
