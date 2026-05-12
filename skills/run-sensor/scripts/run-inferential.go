@@ -29,6 +29,7 @@ import (
 
 	"github.com/iurykrieger/harness-framework/lib/cli"
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
+	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
@@ -59,7 +60,15 @@ const harnessConfidencePrefix = "HARNESS_AGGREGATE_CONFIDENCE="
 
 func main() {
 	cwd, _ := os.Getwd()
-	projectRoot := resolveProjectRoot(cwd)
+	// registry.Lookup honors HARNESS_REGISTRY_ROOT first, then walks up
+	// from cwd looking for the .harness/ marker. Fall back to cwd so a
+	// direct invocation from inside a project (without the env var) keeps
+	// working; sensor.Resolve will surface a clearer error if the path is
+	// genuinely unfindable.
+	projectRoot := cwd
+	if res, err := registry.Lookup(cwd); err == nil {
+		projectRoot = res.ProjectRoot
+	}
 	os.Exit(run(os.Args[1:], projectRoot, os.Stdout, os.Stderr))
 }
 

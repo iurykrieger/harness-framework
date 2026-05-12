@@ -8,54 +8,6 @@ import (
 	"testing"
 )
 
-func TestResolveProjectRoot(t *testing.T) {
-	t.Run("honors HARNESS_REGISTRY_ROOT", func(t *testing.T) {
-		proj := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(proj, ".harness"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("HARNESS_REGISTRY_ROOT", proj)
-
-		got := resolveProjectRoot(t.TempDir()) // unrelated cwd
-		want, _ := filepath.EvalSymlinks(proj)
-		gotResolved, _ := filepath.EvalSymlinks(got)
-		if gotResolved != want {
-			t.Errorf("got %q, want %q", gotResolved, want)
-		}
-	})
-
-	t.Run("walks up from cwd when env unset", func(t *testing.T) {
-		proj := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(proj, ".harness"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		subdir := filepath.Join(proj, "sub", "deep")
-		if err := os.MkdirAll(subdir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("HARNESS_REGISTRY_ROOT", "")
-
-		got := resolveProjectRoot(subdir)
-		want, _ := filepath.EvalSymlinks(proj)
-		gotResolved, _ := filepath.EvalSymlinks(got)
-		if gotResolved != want {
-			t.Errorf("got %q, want %q", gotResolved, want)
-		}
-	})
-
-	t.Run("falls back to cwd when discovery fails", func(t *testing.T) {
-		// A temp dir with no .harness/ ancestor — walk-up will fail and
-		// the function should return the cwd unchanged.
-		unrelated := t.TempDir()
-		t.Setenv("HARNESS_REGISTRY_ROOT", "")
-
-		got := resolveProjectRoot(unrelated)
-		if got != unrelated {
-			t.Errorf("got %q, want cwd fallback %q", got, unrelated)
-		}
-	})
-}
-
 // repoRootForTest returns the absolute path of the repository root by
 // walking up from the current working directory until a go.mod file is
 // found. Tests that spawn `go run` need an absolute Dir so the module
