@@ -26,10 +26,17 @@ type SpawnOpts struct {
 	WatcherLogPath string
 }
 
-// Spawn launches the watcher binary detached. Returns the watcher's PID
-// (captured before Release, so the registry's non-negativity invariant
-// is preserved on Unix). On error the returned PID is 0.
+// SpawnFn is the spawner used by Spawn. Tests override this to avoid
+// invoking the real watcher binary. Default: realSpawn (sibling-binary lookup).
+var SpawnFn = realSpawn
+
+// Spawn launches the watcher subprocess via SpawnFn. Returns the PID of
+// the spawned process (or 0 on error).
 func Spawn(opts SpawnOpts) (int, error) {
+	return SpawnFn(opts)
+}
+
+func realSpawn(opts SpawnOpts) (int, error) {
 	bin, err := BinaryPath()
 	if err != nil {
 		return 0, fmt.Errorf("watcher binary path: %w", err)

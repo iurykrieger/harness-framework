@@ -46,6 +46,30 @@ func TestSpawn_ErrorWhenBinaryAbsent(t *testing.T) {
 	}
 }
 
+func TestSpawn_DelegatesToSpawnFn(t *testing.T) {
+	called := false
+	prev := SpawnFn
+	SpawnFn = func(opts SpawnOpts) (int, error) {
+		called = true
+		if opts.SensorID != "marker" {
+			t.Errorf("opts.SensorID = %q, want marker", opts.SensorID)
+		}
+		return 99999, nil
+	}
+	t.Cleanup(func() { SpawnFn = prev })
+
+	pid, err := Spawn(SpawnOpts{SensorID: "marker", ProjectRoot: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if !called {
+		t.Error("SpawnFn was not invoked")
+	}
+	if pid != 99999 {
+		t.Errorf("pid = %d, want 99999", pid)
+	}
+}
+
 func TestSpawn_PropagatesRunID(t *testing.T) {
 	// We can't run real Spawn here because there's no watcher binary.
 	// Validate via a code-shape check: SpawnOpts has RunID, and the env
