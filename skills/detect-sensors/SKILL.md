@@ -354,13 +354,12 @@ go run -tags=run_computational ./skills/run-sensor/scripts @.harness/sensors/<id
   | jq -c '{verdict, severity, counts: .metadata.counts, individuals: (.evidence|length)}'
 
 # 2) Replay each fail/warn fixture to prove the unhappy paths.
-TMP=$(mktemp /tmp/replay-XXXX.json)
-jq --arg cmd "cat .harness/sensors/fixtures/<group>/<case>.txt" \
-   '.execution.command = $cmd | .id = "replay-" + .id' \
-   .harness/sensors/<id>.json > "$TMP"
-go run -tags=run_computational ./skills/run-sensor/scripts "$TMP" | tail -n 1 \
-  | jq -c '{verdict, severity, individuals: (.evidence|length)}'
-rm "$TMP"
+#    The Go script preserves sensor.id and isolates the runner's
+#    runtime persistence via an ephemeral HARNESS_REGISTRY_ROOT,
+#    so this never writes to the project's .harness/runtime/ tree.
+go run -tags=replay_fixture ./skills/detect-sensors/scripts \
+  --sensor=.harness/sensors/<id>.json --fixture=.harness/sensors/fixtures/<group>/<case>.txt \
+  | tail -n 1 | jq -c '{verdict, severity, individuals: (.evidence|length)}'
 ```
 
 For each sensor, both must hold:
@@ -369,6 +368,8 @@ For each sensor, both must hold:
 - Each `golden_cases[]` entry: replay must produce the declared `expected_verdict` and `expected_severity`. If a replay disagrees, EITHER the patterns are wrong (most common) OR `expected_verdict` is wrong — fix one and re-replay until both agree.
 
 If iteration changes `output`, `execution`, or `verification`, bump the sensor `version` (e.g. `0.1.0` → `0.2.0`) and re-persist via the validator. The version stamp is the audit trail of which shape was actually verified.
+
+**Migration note for projects upgraded from a pre-#28 plugin version:** if your project has `.runtime/sensors/replay-*` directories from a pre-PR-#30 plugin or `.harness/runtime/replay-*` directories from a pre-PR-#28 plugin, remove them once with `rm -rf .runtime/sensors/replay-* .harness/runtime/replay-*`. The new `replay-fixture` script does not regenerate them.
 
 If a `kind=observation` + `output=stream` sensor's patterns match nothing during its first run, suspect Phase A first — not the regex. Inspect the persisted stack with `bat <project>/.harness/stack.json` (or `cat`). If the `log_shapes[].sample` no longer resembles the real stdout, rerun `/detect-sensors --refresh-stack` to regenerate. Only after the stack matches reality should you tweak the patterns themselves.
 
