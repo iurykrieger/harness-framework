@@ -59,6 +59,39 @@ func TestBootstrap_DiscoveryFailureEmitsSignalAndExits(t *testing.T) {
 	}
 }
 
+func TestBootstrap_SchemaInitFailureEmitsSignal(t *testing.T) {
+	// Set up: valid project root (sensors/ dir exists), but make schemas
+	// undiscoverable so LoadValidator fails. We do this by changing into
+	// a temp dir whose ancestors do NOT contain a schemas/ directory.
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HARNESS_REGISTRY_ROOT", tmp)
+	chdir(t, tmp)
+
+	var out, errBuf bytes.Buffer
+	res := cli.Bootstrap("my-skill", &out, &errBuf)
+	if res.ExitCode == 0 {
+		t.Fatal("expected non-zero exit when schemas missing")
+	}
+	// Ensure a JSON signal was emitted to stdout.
+	if out.Len() == 0 {
+		t.Fatal("expected stdout signal, got nothing")
+	}
+	var sig map[string]interface{}
+	if err := json.Unmarshal(out.Bytes(), &sig); err != nil {
+		t.Fatalf("decode emitted signal: %v (bytes=%q)", err, out.String())
+	}
+	if sig["verdict"] != "error" {
+		t.Fatalf("verdict: %v", sig["verdict"])
+	}
+	md := sig["metadata"].(map[string]interface{})
+	if md["kind"] != "bootstrap_failed" {
+		t.Fatalf("kind: %v", md["kind"])
+	}
+}
+
 func chdir(t *testing.T, dir string) {
 	t.Helper()
 	prev, _ := os.Getwd()

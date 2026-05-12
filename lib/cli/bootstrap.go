@@ -8,6 +8,7 @@ import (
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/signal"
 )
 
 // BootstrapResult is the standardized return from Bootstrap. When ExitCode
@@ -45,7 +46,16 @@ func Bootstrap(skillName string, stdout, stderr io.Writer) BootstrapResult {
 	}
 	v, code := schema.LoadValidator("", stderr)
 	if code != 0 {
-		return BootstrapResult{Res: res, ExitCode: code, Diagnose: registry.DiagnoseMetadata(res)}
+		diagnose := registry.DiagnoseMetadata(res)
+		_ = json.NewEncoder(stdout).Encode(
+			signal.NewBuilder(skillName, "0.0.0").
+				WithVerdict("error", "high").
+				WithKind("bootstrap_failed").
+				WithRationale("schema validator init failed").
+				WithDiagnose(diagnose).
+				Build(),
+		)
+		return BootstrapResult{Res: res, ExitCode: code, Diagnose: diagnose}
 	}
 	return BootstrapResult{
 		Res:       res,
