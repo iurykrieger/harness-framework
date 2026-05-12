@@ -62,15 +62,17 @@ var frameworkCommandPatterns = buildFrameworkCommandPatterns()
 
 func buildFrameworkCommandPatterns() []*regexp.Regexp {
 	skills := strings.Join(sensorSkills, "|")
+	// optional `-C <path>` between `go` and the verb
+	chDir := `(?:-C\s+\S+\s+)?`
 	return []*regexp.Regexp{
-		// go run direct from the scripts directory
-		regexp.MustCompile(`go\s+run\s+(?:-tags=\S+\s+)?\./skills/(?:` + skills + `)-sensors?/scripts\b`),
-		// go run from hooks
-		regexp.MustCompile(`go\s+run\s+(?:-tags=\S+\s+)?\./hooks\b`),
+		// go [-C <path>] run direct from the scripts directory
+		regexp.MustCompile(`go\s+` + chDir + `run\s+(?:-tags=\S+\s+)?\./skills/(?:` + skills + `)-sensors?/scripts\b`),
+		// go [-C <path>] run from hooks
+		regexp.MustCompile(`go\s+` + chDir + `run\s+(?:-tags=\S+\s+)?\./hooks\b`),
 		// installed binaries on PATH
 		regexp.MustCompile(`\bharness-(?:(?:` + skills + `)-sensors?|watcher)\b`),
-		// go test/vet/build of the framework's own packages
-		regexp.MustCompile(`go\s+(?:test|vet|build)\s+(?:-tags=\S+\s+)?\./(?:skills|lib|hooks)\b`),
+		// go [-C <path>] test/vet/build of the framework's own packages
+		regexp.MustCompile(`go\s+` + chDir + `(?:test|vet|build)\s+(?:-tags=\S+\s+)?\./(?:skills|lib|hooks)\b`),
 	}
 }
 
@@ -102,11 +104,11 @@ func extractSkill(cmd string) string {
 		return "watcher"
 	}
 	// Fallback: hooks
-	if regexp.MustCompile(`go\s+run\s+(?:-tags=\S+\s+)?\./hooks\b`).MatchString(cmd) {
+	if regexp.MustCompile(`go\s+(?:-C\s+\S+\s+)?run\s+(?:-tags=\S+\s+)?\./hooks\b`).MatchString(cmd) {
 		return "hook"
 	}
 	// Fallback: go test/vet/build
-	if regexp.MustCompile(`go\s+(?:test|vet|build)\b`).MatchString(cmd) {
+	if regexp.MustCompile(`go\s+(?:-C\s+\S+\s+)?(?:test|vet|build)\b`).MatchString(cmd) {
 		return "test"
 	}
 	return "unknown"
