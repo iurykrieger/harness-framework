@@ -51,6 +51,7 @@ func Spawn(opts SpawnOpts) (int, error) {
 			fmt.Sprintf("HARNESS_WATCHER_SUBPROCESS_PID=%d", opts.SubprocessPID),
 			fmt.Sprintf("HARNESS_WATCHER_REGISTRY_ROOT=%s", opts.ProjectRoot),
 			fmt.Sprintf("HARNESS_WATCHER_SENSOR_ID=%s", opts.SensorID),
+			fmt.Sprintf("HARNESS_WATCHER_RUN_ID=%s", opts.RunID),
 		},
 		Files: []*os.File{nil, nil, logFile},
 		Sys:   &sysProcAttr,
