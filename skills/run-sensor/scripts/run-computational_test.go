@@ -236,3 +236,37 @@ func TestRun_BlockingSensorRejected(t *testing.T) {
 		t.Fatalf("stderr should mention 'blocking': %s", errBuf.String())
 	}
 }
+
+// TestRunComputational_AcceptsAbsolutePath verifies that run-computational
+// accepts an absolute file path in addition to a bare sensor id (commit
+// 7ebf962). This test is the companion to TestRunInferential_AcceptsAbsolutePath
+// which covers the equivalent fix applied to run-inferential.
+//
+// /heal-sensor's retry-original.go passes absolute paths to the runner; without
+// the filepath.IsAbs branch, sensor.ResolveByID rejects them via the
+// ^[a-z][a-z0-9-]*$ regex.
+func TestRunComputational_AcceptsAbsolutePath(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	root := t.TempDir()
+	id := writeSensor(t, root, "abs-path-sensor", func(s map[string]interface{}) {
+		s["execution"].(map[string]interface{})["command"] = "true"
+	})
+	absPath := filepath.Join(root, "sensors", id+".json")
+
+	if !filepath.IsAbs(absPath) {
+		t.Fatalf("expected absolute path, got %q", absPath)
+	}
+
+	var out, errBuf bytes.Buffer
+	// Pass the absolute path. projectRoot is irrelevant for the abs-path branch:
+	// the runner derives the project root from the path itself.
+	code := run([]string{"--schemas-dir", schemasDir, absPath}, "" /* projectRoot unused */, &out, &errBuf)
+
+	// Sentinel for pre-fix ResolveByID rejection: exit 2 + "does not match".
+	if code == 2 && strings.Contains(errBuf.String(), "does not match") {
+		t.Fatalf("runner rejected absolute path via ResolveByID regex: stderr=%s", errBuf.String())
+	}
+	if code != 0 {
+		t.Fatalf("expected exit 0 for absolute path, got %d stderr=%s", code, errBuf.String())
+	}
+}

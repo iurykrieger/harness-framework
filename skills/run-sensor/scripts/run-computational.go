@@ -5,7 +5,7 @@
 //
 // Usage:
 //
-//	go run -tags=run_computational ./skills/run-sensor/scripts <sensor-id>
+//	go run -tags=run_computational ./skills/run-sensor/scripts <sensor-id|path>
 //
 // Stdout is JSONL: every dep's aggregate Signal first, then the requested
 // sensor's individual Signals (one per matched output line), terminated by
@@ -69,7 +69,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(stderr, "usage: run-computational [--schemas-dir=DIR] <sensor-id>")
+		fmt.Fprintln(stderr, "usage: run-computational [--schemas-dir=DIR] <sensor-id|path>")
 		return 2
 	}
 

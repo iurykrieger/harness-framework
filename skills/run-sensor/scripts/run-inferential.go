@@ -77,7 +77,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(stderr, "usage: run-inferential [--schemas-dir=DIR] [--slot k=v]... <sensor-id>")
+		fmt.Fprintln(stderr, "usage: run-inferential [--schemas-dir=DIR] [--slot k=v]... <sensor-id|path>")
 		return 2
 	}
 
@@ -87,12 +87,28 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	id := rest[0]
+	arg := rest[0]
 
-	sensorAbsPath, err := sensor.ResolveByID(id, projectRoot)
-	if err != nil {
-		fmt.Fprintln(stderr, "error: resolve:", err)
-		return 2
+	// Accept either a bare sensor id (^[a-z][a-z0-9-]*$) or an absolute
+	// file path. Absolute paths are resolved directly; ids are looked up
+	// under <projectRoot>/sensors/<id>.json.
+	var sensorAbsPath string
+	var id string
+	if filepath.IsAbs(arg) {
+		sensorAbsPath = arg
+		id = orchestrator.StripJSONExt(filepath.Base(arg))
+		// Derive the project root from the sensor's location: the sensor
+		// must live at <projectRoot>/sensors/<id>.json, so the project root
+		// is two levels up from the file.
+		projectRoot = filepath.Dir(filepath.Dir(arg))
+	} else {
+		id = arg
+		var resolveErr error
+		sensorAbsPath, resolveErr = sensor.ResolveByID(id, projectRoot)
+		if resolveErr != nil {
+			fmt.Fprintln(stderr, "error: resolve:", resolveErr)
+			return 2
+		}
 	}
 
 	v, code := schema.LoadValidator(schemasDir, stderr)
