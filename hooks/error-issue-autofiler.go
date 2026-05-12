@@ -189,7 +189,7 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "cannot resolve project root:", err)
 		return 0
 	}
-	cachePath := filepath.Join(res.ProjectRoot, ".runtime", "auto-issues.json")
+	cachePath := filepath.Join(res.ProjectRoot, ".harness", "runtime", "auto-issues.json")
 	repo, repoErr := resolveRepo(res.ProjectRoot)
 	return runWith(in, stderr, runOpts{
 		gh:        ghCLI{},

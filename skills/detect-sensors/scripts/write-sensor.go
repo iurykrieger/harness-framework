@@ -1,10 +1,12 @@
+//go:build write_sensor
+
 // Command write-sensor reads a draft sensor JSON file and persists it
 // via lib/sensor.ValidateAndPersist (validate against schemas + atomic
 // write). Thin CLI wrapper around the shared primitive.
 //
 // Usage:
 //
-//	go run ./skills/detect-sensors/scripts \
+//	go run -tags=write_sensor ./skills/detect-sensors/scripts \
 //	  --out=<dir> [--schemas-dir=<dir>] <draft-sensor.json>
 //
 // Exit codes: 0 sensor written, 1 schema validation failed,

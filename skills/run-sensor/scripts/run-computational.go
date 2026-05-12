@@ -58,7 +58,7 @@ func main() {
 }
 
 // run is the testable entry point. projectRoot is the directory from which
-// sensor ids are resolved (sensors/<id>.json); pass os.Getwd() for production.
+// sensor ids are resolved (.harness/sensors/<id>.json); pass os.Getwd() for production.
 func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run-computational", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -73,25 +73,19 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	// sensor.Resolve accepts both bare ids and path-shaped inputs (@-prefixed,
+	// containing "/", or .json-suffixed). For path inputs we then re-derive id
+	// and projectRoot from the canonical location so the orchestrator's
+	// registry-persistence path (RunWithDepsRoot) works in both cases.
 	arg := rest[0]
-
-	// Accept either a bare sensor id (^[a-z][a-z0-9-]*$) or an absolute
-	// file path. Absolute paths are resolved directly; ids are looked up
-	// under <projectRoot>/sensors/<id>.json.
-	var resolvedPath string
-	if filepath.IsAbs(arg) {
-		resolvedPath = arg
-	} else {
-		p, err := sensor.ResolveByID(arg, projectRoot)
-		if err != nil {
-			fmt.Fprintln(stderr, "error: resolve:", err)
-			return 2
-		}
-		resolvedPath = p
+	sensorPath, err := sensor.Resolve(arg, projectRoot)
+	if err != nil {
+		fmt.Fprintln(stderr, "error: resolve:", err)
+		return 2
 	}
 
 	var sensorJSON map[string]interface{}
-	if b, rerr := os.ReadFile(resolvedPath); rerr != nil {
+	if b, rerr := os.ReadFile(sensorPath); rerr != nil {
 		fmt.Fprintln(stderr, "error: read:", rerr)
 		return 2
 	} else if jerr := json.Unmarshal(b, &sensorJSON); jerr != nil {
@@ -106,13 +100,11 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// Canonical location: <projectRoot>/.harness/sensors/<id>.json
+	id := orchestrator.StripJSONExt(filepath.Base(sensorPath))
+	projectRoot = filepath.Dir(filepath.Dir(filepath.Dir(sensorPath)))
+
 	ctx, cancel := signalCancellableContext()
 	defer cancel()
-	// When an absolute path was given, use the path-based variant so that
-	// projectRoot is derived from the sensor's location on disk (not from the
-	// runner's own cwd, which is the plugin root when invoked via go -C).
-	if filepath.IsAbs(arg) {
-		return orchestrator.RunWithDeps(ctx, resolvedPath, schemasDir, stdout, stderr)
-	}
-	return orchestrator.RunWithDepsRoot(ctx, arg, projectRoot, schemasDir, stdout, stderr)
+	return orchestrator.RunWithDepsRoot(ctx, id, projectRoot, schemasDir, stdout, stderr)
 }

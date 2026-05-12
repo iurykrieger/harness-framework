@@ -11,7 +11,7 @@ import (
 func TestResolveProjectRoot(t *testing.T) {
 	t.Run("honors HARNESS_REGISTRY_ROOT", func(t *testing.T) {
 		proj := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(proj, ".harness"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		t.Setenv("HARNESS_REGISTRY_ROOT", proj)
@@ -26,7 +26,7 @@ func TestResolveProjectRoot(t *testing.T) {
 
 	t.Run("walks up from cwd when env unset", func(t *testing.T) {
 		proj := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(proj, ".harness"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		subdir := filepath.Join(proj, "sub", "deep")
@@ -44,7 +44,7 @@ func TestResolveProjectRoot(t *testing.T) {
 	})
 
 	t.Run("falls back to cwd when discovery fails", func(t *testing.T) {
-		// A temp dir with no sensors/ ancestor — walk-up will fail and
+		// A temp dir with no .harness/ ancestor — walk-up will fail and
 		// the function should return the cwd unchanged.
 		unrelated := t.TempDir()
 		t.Setenv("HARNESS_REGISTRY_ROOT", "")

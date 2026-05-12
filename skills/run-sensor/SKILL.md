@@ -16,7 +16,7 @@ There are exactly two scripts, one per sensor `type`. Both follow the same pipel
 
 ## Dependency resolution
 
-When a sensor declares `requires[kind=sensor]` entries (e.g. `[{"kind":"sensor","id":"setup-x"},{"kind":"sensor","id":"setup-y"}]`), the runner resolves the transitive closure, sorts topologically (deps first), and runs each sensor's full lifecycle (requires[kind=step] → command → teardown) before the requested sensor starts. Cycles (including self-loops `A → A`) are detected and abort with exit 1. Missing deps (referenced id has no file under `sensors/`) also abort with exit 1.
+When a sensor declares `requires[kind=sensor]` entries (e.g. `[{"kind":"sensor","id":"setup-x"},{"kind":"sensor","id":"setup-y"}]`), the runner resolves the transitive closure, sorts topologically (deps first), and runs each sensor's full lifecycle (requires[kind=step] → command → teardown) before the requested sensor starts. Cycles (including self-loops `A → A`) are detected and abort with exit 1. Missing deps (referenced id has no file under `.harness/sensors/`) also abort with exit 1.
 
 The JSONL stream on stdout for `/run-sensor X` (where X has deps D1, D2) looks like:
 
@@ -47,7 +47,7 @@ The skipped sensor never runs its `command` or its prepare/teardown — only the
 /run-sensor <sensor.id>
 ```
 
-The argument is a bare sensor id (e.g. `my-sensor`). The runner resolves it to `sensors/<id>.json` relative to the project root. If absent, ask the user. Do not invent a sensor.
+The argument is a bare sensor id (e.g. `my-sensor`). The runner resolves it to `.harness/sensors/<id>.json` relative to the project root. If absent, ask the user. Do not invent a sensor.
 
 ### Refusing blocking sensors
 

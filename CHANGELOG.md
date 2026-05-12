@@ -2,16 +2,38 @@
 
 ## 1.1.0 — 2026-05-12
 
-### Changed (breaking-ish)
+### Breaking: `.harness/` layout
 
-- **Invocation contract overhaul.** All skills and internal `exec.Command` chains now use:
-  ```
-  HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
-    go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=<tag> \
-    ./skills/<name>/scripts <args>
-  ```
-  The change is invisible to slash-command users. Anyone who copy-pasted `SKILL.md` commands into scripts or CI must update them. Closes #15.
-- **Watcher is no longer a pre-built sibling binary.** `/start-sensor` spawns the watcher via `go run`, compiling on demand. Adds ~150ms–1s latency to the first `/start-sensor` after a fresh checkout; subsequent calls hit Go's build cache.
+All framework artifacts now live under `<project>/.harness/`:
+
+- Sensor definitions: `<project>/.harness/sensors/<id>.json` (was `<project>/sensors/<id>.json`).
+- Runtime state: `<project>/.harness/runtime/` (was `<project>/.runtime/sensors/`).
+- Detected stack (new): `<project>/.harness/stack.json`.
+
+To migrate an existing project:
+
+```bash
+mkdir -p .harness
+git mv sensors .harness/sensors
+[ -d .runtime ] && git mv .runtime .harness/runtime
+# Update .gitignore: replace `/.runtime` with `/.harness/runtime`.
+```
+
+No fallback to the previous layout. `lib/registry.Discover` searches for `.harness/` only — projects with the old layout will see `registry root discovery failed: .harness/ marker not found walking up from ...`.
+
+### Breaking-ish: invocation contract
+
+All skills and internal `exec.Command` chains now use:
+
+```
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=<tag> \
+  ./skills/<name>/scripts <args>
+```
+
+The change is invisible to slash-command users. Anyone who copy-pasted `SKILL.md` commands into scripts or CI must update them. Closes #15.
+
+**Watcher is no longer a pre-built sibling binary.** `/start-sensor` spawns the watcher via `go run`, compiling on demand. Adds ~150ms–1s latency to the first `/start-sensor` after a fresh checkout; subsequent calls hit Go's build cache.
 
 ### Removed
 
@@ -23,7 +45,6 @@
 - `lib/subprocess.{Detach,Step,Stream}Config.Dir` field so the runner can keep sensor commands at the project root after `-C` moves the runner itself to the plugin root.
 - `metadata.cause=plugin_root_missing` for `failed` Signals emitted by `/start-sensor` when `CLAUDE_PLUGIN_ROOT` is empty.
 - Autofiler regex now matches `go -C <path> run …` invocations.
-- `run-computational.go` and `run-inferential.go` accept absolute file paths (in addition to sensor IDs), fixing a pre-existing bug in `/heal-sensor`'s retry path.
 
 ## 1.0.0 — 2026-05-11
 

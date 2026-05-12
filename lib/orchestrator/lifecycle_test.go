@@ -37,7 +37,7 @@ func roundTripJSON(t *testing.T, in map[string]interface{}) map[string]interface
 func makeSensorPath(t *testing.T, id string) string {
 	t.Helper()
 	tmp := t.TempDir()
-	sensorsDir := filepath.Join(tmp, "sensors")
+	sensorsDir := filepath.Join(tmp, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestRunOne_GateFailure_Tool(t *testing.T) {
 	t.Cleanup(func() { sensor.LookupEnvFn = prevLookup })
 
 	tmp := t.TempDir()
-	sensorsDir := filepath.Join(tmp, "sensors")
+	sensorsDir := filepath.Join(tmp, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestRunOne_GateFailure_Tool(t *testing.T) {
 
 func TestRunOne_GateFailure_Context(t *testing.T) {
 	tmp := t.TempDir()
-	sensorsDir := filepath.Join(tmp, "sensors")
+	sensorsDir := filepath.Join(tmp, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +402,7 @@ func TestRunOne_GateFailure_Env(t *testing.T) {
 	t.Cleanup(func() { sensor.LookupEnvFn = prev })
 
 	tmp := t.TempDir()
-	sensorsDir := filepath.Join(tmp, "sensors")
+	sensorsDir := filepath.Join(tmp, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -446,10 +446,10 @@ func TestRunOne_GateFailure_Env(t *testing.T) {
 // stdout and <run-id>/signals.log.
 func TestRunOne_WithRoot_CreatesAndRemovesEntry(t *testing.T) {
 	proj := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	sensorPath := filepath.Join(proj, "sensors", "echo.json")
+	sensorPath := filepath.Join(proj, ".harness", "sensors", "echo.json")
 	if err := os.WriteFile(sensorPath, []byte(`{
       "id": "echo", "version": "0.0.0", "kind": "observation",
       "type": "computational", "output": "single",
@@ -500,10 +500,10 @@ func TestRunOne_WithRoot_CreatesAndRemovesEntry(t *testing.T) {
 //     the pre-spawn plain UUID from sensor.BuildEnvelope
 func TestRunOne_WithRoot_RegistryInsertFailureCleansUpDir(t *testing.T) {
 	proj := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	sensorPath := filepath.Join(proj, "sensors", "echo.json")
+	sensorPath := filepath.Join(proj, ".harness", "sensors", "echo.json")
 	if err := os.WriteFile(sensorPath, []byte(`{
       "id": "echo", "version": "0.0.0", "kind": "observation",
       "type": "computational", "output": "single",
@@ -537,9 +537,9 @@ func TestRunOne_WithRoot_RegistryInsertFailureCleansUpDir(t *testing.T) {
 		t.Fatal("expected non-nil signal even on persistence failure")
 	}
 
-	// The <run-id>/ directory under .runtime/sensors/echo/ must NOT exist
+	// The <run-id>/ directory under .harness/runtime/echo/ must NOT exist
 	// after cleanup. Walk the sensor log dir and confirm no child dirs.
-	sensorLogDir := filepath.Join(proj, ".runtime", "sensors", "echo")
+	sensorLogDir := filepath.Join(proj, ".harness", "runtime", "echo")
 	entries, readErr := os.ReadDir(sensorLogDir)
 	if readErr != nil && !os.IsNotExist(readErr) {
 		t.Fatalf("unexpected error reading sensor log dir: %v", readErr)

@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 )
 
-// FindSchemasDir walks up from start looking for schemas/sensor.json + schemas/signal.json.
+// FindSchemasDir walks up from start looking for a schemas/ directory that
+// contains sensor.json, signal.json, and stack.json.
 func FindSchemasDir(start string) (string, error) {
 	abs, err := filepath.Abs(start)
 	if err != nil {
@@ -15,7 +16,9 @@ func FindSchemasDir(start string) (string, error) {
 	}
 	for {
 		candidate := filepath.Join(abs, "schemas")
-		if hasFile(filepath.Join(candidate, "sensor.json")) && hasFile(filepath.Join(candidate, "signal.json")) {
+		if hasFile(filepath.Join(candidate, "sensor.json")) &&
+			hasFile(filepath.Join(candidate, "signal.json")) &&
+			hasFile(filepath.Join(candidate, "stack.json")) {
 			return candidate, nil
 		}
 		parent := filepath.Dir(abs)

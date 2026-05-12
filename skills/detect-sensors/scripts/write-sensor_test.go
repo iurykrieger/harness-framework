@@ -1,3 +1,5 @@
+//go:build write_sensor
+
 package main
 
 import (
@@ -144,7 +146,7 @@ func TestRun_DraftFileMissing(t *testing.T) {
 func TestRun_OutDirCreatedIfMissing(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
 	parent := t.TempDir()
-	out := filepath.Join(parent, "nested", "sensors")
+	out := filepath.Join(parent, "nested", ".harness", "sensors")
 	draft := writeDraft(t, testfixtures.ValidSensorComputational())
 
 	var stdout, stderr bytes.Buffer

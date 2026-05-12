@@ -1,6 +1,6 @@
 ---
 name: detect-sensors
-description: Use when the user invokes /detect-sensors or asks to scaffold a harness for the project they are working in. Inspects the project to infer its archetype(s) (frontend, backend API, event-consumer, event-producer, IaC, CLI, library, data-pipeline, ...), reasons about which capabilities each archetype typically exposes (lint, build, unit-test, e2e-test, integration-test, run-project, fetch-logs, fetch-metrics, trace-request, ...), drafts one sensor JSON per capability conforming to schemas/sensor.json, and persists each through the validator script at `<project>/sensors/<sensor-id>.json` so the user can immediately invoke `/run-sensor @sensors/<sensor-id>.json`.
+description: Use when the user invokes /detect-sensors or asks to scaffold a harness for the project they are working in. Inspects the project to infer its archetype(s) (frontend, backend API, event-consumer, event-producer, IaC, CLI, library, data-pipeline, ...), reasons about which capabilities each archetype typically exposes (lint, build, unit-test, e2e-test, integration-test, run-project, fetch-logs, fetch-metrics, trace-request, ...), drafts one sensor JSON per capability conforming to schemas/sensor.json, and persists each through the validator script at `<project>/.harness/sensors/<sensor-id>.json` so the user can immediately invoke `/run-sensor <sensor-id>`.
 ---
 
 # detect-sensors
@@ -15,13 +15,71 @@ There is no fixed taxonomy of project types or capabilities baked into the scrip
 /detect-sensors [project-path]
 ```
 
-If the user supplies no argument, scan the cwd. The output directory is always `<project>/sensors/`. Do not ask the user to choose; create it if it does not exist.
+If the user supplies no argument, scan the cwd. The output directory is always `<project>/.harness/sensors/`. Do not ask the user to choose; create it if it does not exist.
 
 ## Procedure
 
+### 0. Stack discovery (Phase A)
+
+Before drafting any observation sensor, synthesize a structured description of the project's stack and persist it to `<project>/.harness/stack.json` via `schemas/stack.json`. This artifact is reused across `/detect-sensors` invocations and consumed in §4 below when drafting `kind=observation` + `output=stream` sensors.
+
+**When to run Phase A:**
+- Default: only if `<project>/.harness/stack.json` does NOT already exist. Reuse on every subsequent invocation.
+- Always when the user passes `--refresh-stack`.
+
+**What to discover:**
+
+1. **Languages** — read `go.mod`, `package.json` engines, `pyproject.toml` requires-python, `Cargo.toml`, `pom.xml`, `build.gradle`, `Gemfile`. Capture name + version per language present.
+2. **Components** — for each runtime-observable role (`logger`, `log-encoder`, `http-server`, `http-router`, `http-middleware`, `tracer`, `metrics`, `queue-consumer`, `queue-producer`, `db-client`, `rpc`, `test-runner`):
+   - Identify the library actually used (Zap, Logrus, Pino, Winston, Logback, structlog, …).
+   - **Open the initialization site** (`cmd/server/main.go`, `src/main.ts`, `app/__init__.py`, etc.) and read enough code to determine the CONCRETE config — not just "Zap is used" but "`zap.NewProductionConfig()` is called and `EncoderConfig.LevelKey` is overridden to `severity`".
+   - Record an `evidence[]` entry pointing at the file (with line numbers when feasible) and a one-sentence `rationale`.
+3. **Log shapes** — for each distinct stdout shape the components produce:
+   - Pick a kebab-case `id` (e.g. `zap-prod-json`, `chi-access-log`, `panic-stack-trace`).
+   - List the `produced_by[]` component names (verbatim from `components[].name`).
+   - Pick the `format` enum: `json` for structured JSON loggers, `logfmt` for key=value, `combined-log-format` for Apache/Nginx-style access logs, `stack-trace` for panic dumps, `plain` for human-text fallbacks.
+   - When `format` is `json` or `logfmt`, populate `fields[]` mapping literal keys to semantic `meaning` (severity, message, timestamp, trace_id, span_id, status_code, latency_ms, method, path, user_id, request_id, service, version, other). Use `meaning: "other"` as escape hatch for project-specific keys.
+   - When the shape has a `severity` field, populate `severity_values[]` with the values the project actually emits — for Zap: `["DEBUG","INFO","WARN","ERROR","DPANIC","PANIC","FATAL"]`; for Pino numeric: `["10","20","30","40","50","60"]`.
+   - Provide a `sample` string: one real line in this shape (capture from a CI log, test fixture, or synthesize one from the library docs + the config you observed).
+
+**Concrete examples for the four most common stacks:**
+
+- **Go + Zap (production config)** → one `LogShape` with `format: "json"`; `fields[]` includes `severity` (key=`level` by default, `severity` if overridden), `ts` (timestamp), `msg` (message), `caller` (other). `severity_values: ["DEBUG","INFO","WARN","ERROR","DPANIC","PANIC","FATAL"]`.
+- **Node + Pino (default config)** → `format: "json"`; `fields[]` includes `level` (severity, NUMERIC), `time` (timestamp), `msg` (message), `req` and `res` (other) when `pino-http` is wired. `severity_values: ["10","20","30","40","50","60"]` (trace/debug/info/warn/error/fatal).
+- **Python + structlog (JSONRenderer)** → `format: "json"`; `fields[]` keys depend on the processor chain — common defaults are `level` (severity), `timestamp`, `event` (message). `severity_values: ["debug","info","warning","error","critical"]` (Python logging level names lowercased).
+- **Java + Logback (default pattern)** → `format: "plain"`; no structured fields. If the project uses `logstash-logback-encoder` for JSON output, it becomes `format: "json"` with `fields[]` for `@timestamp`, `level`, `message`, `logger_name`.
+
+**Then call `write-stack.go`:**
+
+```bash
+go run -tags=write_stack ./skills/detect-sensors/scripts \
+  --out=<project-root> \
+  --schemas-dir=<plugin-root>/schemas \
+  <draft-stack.json>
+```
+
+It validates against `schemas/stack.json`, cross-checks that every `log_shapes[].produced_by[]` references a known `components[].name`, and writes `<project-root>/.harness/stack.json` atomically.
+
+### 0.5 Stack discovery — degraded path
+
+If after a thorough search you cannot identify any logger or HTTP middleware (project is exotic, no readable manifests, no clear initialization site), persist a **minimal stack** anyway:
+
+```json
+{
+  "version": "0.1.0",
+  "detected_at": "<now>",
+  "detected_by": "<your-model-id-or-manual>",
+  "languages": [ { "name": "<best-guess>" } ],
+  "components": [],
+  "log_shapes": []
+}
+```
+
+This is intentionally degenerate. Phase B (§4 below) will see an empty `log_shapes[]` and fall back to generic patterns (panic/error keyword matchers) annotated in the sensor's `blind_spots[]` as "stack discovery returned empty; refine patterns manually after observing real stdout".
+
 ### 1. Read the schema first
 
-Always start by reading `schemas/sensor.json` and `schemas/signal.json` from this plugin so your drafts match the current shape (required fields, discriminators, enum values). The schema is the contract — never guess it from memory.
+Always start by reading `schemas/sensor.json`, `schemas/signal.json`, and `schemas/stack.json` from this plugin so your drafts match the current shape (required fields, discriminators, enum values). The schema is the contract — never guess it from memory.
 
 Pay attention to the `allOf` discriminators:
 
@@ -36,6 +94,8 @@ Pick `output` deliberately:
 - **`single`** only when the tool's output is binary or unstructured and the exit code is the entire story — schema parsers, dry-run deploys, smoke pings. If you would have to write a regex to fake a "success line" just to get a non-zero count, you picked the wrong mode — switch to `stream` and let the empty-stream + exit-0 case represent success honestly.
 
 `inferential` is reserved for verdicts that genuinely require LLM judgment (AI code review, semantic-duplicate detection). Most CI-mirroring sensors are computational.
+
+The `stack.json` schema is the contract for Phase A (§0). When drafting observation sensors (§4), you'll consult the persisted `<project>/.harness/stack.json` — not the schema directly.
 
 ### 1.5 Classify each sensor: kind = observation | assertion | setup
 
@@ -114,6 +174,17 @@ Use these defaults unless the project tells you otherwise:
 - `cost.latency` tuned to the capability's actual runtime (use the CI logs as a sanity check when available).
 - `triggers[].on` from `{pull-request, file-change, cron, metric-anomaly, manual, agent-request}` only — do NOT confuse this with `phase`.
 - `execution.exit_code_map` defaults to `[{exit_code: 0, verdict: pass, severity: info}, {exit_code: "*", verdict: fail, severity: <medium|high>}]`. Override per capability.
+- **For `kind=observation` + `output=stream` sensors (Phase B):** do NOT hand-craft regexes. Instead:
+  1. Load `<project>/.harness/stack.json` (produced by §0; if missing or empty, fall through to the degraded path below).
+  2. Filter `log_shapes[]` to the shapes relevant to the sensor's command. For `run-*` / `watch-*` sensors observing a running service, that typically means shapes produced by components with role `logger`, `log-encoder`, or `http-middleware`. For `tail-*` / `fetch-*` sensors against external log stores, pick the shape whose encoder matches what the store emits.
+  3. For each selected shape, write 2–6 regex patterns into `execution.output_parsing.patterns[]` that map the shape's `severity_values` onto Signal verdicts:
+     - `severity ∈ {ERROR, FATAL, DPANIC, PANIC}` → `verdict: fail, severity: high`.
+     - `severity == WARN` AND a `status_code` field with value in `4xx/5xx` → `verdict: fail, severity: medium`.
+     - `severity == WARN` (other) → `verdict: warn, severity: low`.
+     - `severity == INFO` AND `message` matches a boot/ready marker → `verdict: pass, severity: info`.
+  4. Anchor every drafted regex on the shape's `sample`: the regex MUST match the sample. If it doesn't, the regex is wrong.
+  5. In the sensor's `description`, cite the source: e.g. *"output_parsing derived from log_shape 'zap-prod-json' in .harness/stack.json"*. This is the audit trail when patterns later fail to match real stdout.
+- **Degraded path:** if `.harness/stack.json` is missing OR `log_shapes[]` is empty (Phase A failed to identify a logger), emit generic patterns matching `panic\s*:`, `^\s*(ERROR|FATAL)`, and similar keyword markers, AND add a `blind_spots[]` entry: *"Patterns are generic keyword markers because stack discovery did not identify a structured logger; refine after observing real stdout."*
 - `execution.output_parsing.patterns` (only when `output: "stream"`) — at least one regex per actionable verdict. For Go test, three patterns suffice: `^\s*--- PASS: (\S+)`, `^\s*--- FAIL: (\S+)`, `^\s*--- SKIP: (\S+)` with `captures.excerpt = 1`. For compilers/linters, one pattern: `^\s*(\S+\.go):(\d+):(\d+):\s+(.+)$` with `captures.{file:1,line_start:2,excerpt:4}`. RE2 syntax — escape backslashes once for JSON, once for regex (`\\\\s` → `\s` in the compiled regex).
 - `verification.golden_cases` MUST have at least one entry, and **every entry MUST point at a real fixture file** that exists at the path you write down. No `"TODO"` strings, no placeholder verdicts. See step 5 for how to author fixtures and step 6 for how to verify them.
 - `description` should be one sentence: trigger condition + what is observed + regulation dimension. Mention how you detected the capability (`Auto-detected via /detect-sensors from <evidence>`) and why you chose `output: <single|stream>`. When the command came from project docs, name the file *and* the heading — e.g. *"Auto-detected from CLAUDE.md '## Build, validate, test'"* or *"Auto-detected from README.md '## Run locally'"* — so the source is one click away.
@@ -164,8 +235,8 @@ When the literal command is uncertain (common for `fetch-logs`, `fetch-metrics`,
   },
   "verification": {
     "golden_cases": [
-      { "fixture": "sensors/fixtures/run-project-nest/clean-boot.txt",  "expected_verdict": "pass", "expected_severity": "info", "notes": "Captured stdout from a real local boot — Nest start banner + Listening line within ~3s." },
-      { "fixture": "sensors/fixtures/run-project-nest/port-collision.txt", "expected_verdict": "fail", "expected_severity": "high", "notes": "EADDRINUSE on port 3000 when another instance is running." }
+      { "fixture": ".harness/sensors/fixtures/run-project-nest/clean-boot.txt",  "expected_verdict": "pass", "expected_severity": "info", "notes": "Captured stdout from a real local boot — Nest start banner + Listening line within ~3s." },
+      { "fixture": ".harness/sensors/fixtures/run-project-nest/port-collision.txt", "expected_verdict": "fail", "expected_severity": "high", "notes": "EADDRINUSE on port 3000 when another instance is running." }
     ]
   },
   "blind_spots": [
@@ -226,11 +297,11 @@ Example (E2E sensor with full lifecycle):
 
 ### 5. Author fixtures BEFORE you persist
 
-A sensor without real fixtures is half-built. For every `golden_cases[]` entry you wrote in step 4, create the file at `<project>/sensors/fixtures/<group>/<case>.txt` (or `.json` for parser-style sensors). The fixture must contain content shaped exactly like the production tool's stdout for that case.
+A sensor without real fixtures is half-built. For every `golden_cases[]` entry you wrote in step 4, create the file at `<project>/.harness/sensors/fixtures/<group>/<case>.txt` (or `.json` for parser-style sensors). The fixture must contain content shaped exactly like the production tool's stdout for that case.
 
 Conventions that work:
 
-- Group fixtures by tool family, not by sensor id, so `lint-go-vet-computational` and `lint-go-vet-inferential` share `sensors/fixtures/lint-go-vet/{clean,has-warning}.txt`. Same for `unit-test/{all-pass,has-failure,has-skip}.txt`, `build-runner/{clean,has-error}.txt`.
+- Group fixtures by tool family, not by sensor id, so `lint-go-vet-computational` and `lint-go-vet-inferential` share `.harness/sensors/fixtures/lint-go-vet/{clean,has-warning}.txt`. Same for `unit-test/{all-pass,has-failure,has-skip}.txt`, `build-runner/{clean,has-error}.txt`.
 - Always include at least: one **happy path** fixture (clean stdout → expected `pass`) and one **fail path** fixture (representative finding → expected `fail` or `warn`). Add a third for `skip`/`warn` semantics when the tool produces them.
 - Fixture content should be a faithful capture, not a hand-crafted approximation. For Go tests: `=== RUN ...\n--- PASS: ... (0.00s)\nPASS\nok ... 0.012s`. For Go vet/build: `# package\n./file.go:LINE:COL: message`. For schema parsers: a real malformed JSON.
 - Keep them small (a handful of lines) — they exist for verification, not for stress.
@@ -243,9 +314,9 @@ Write the draft JSON to a temp file, then run the validator-and-writer:
 
 ```bash
 HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
-  go run -C "${CLAUDE_PLUGIN_ROOT}" \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=write_sensor \
   ./skills/detect-sensors/scripts \
-  --out=<project>/sensors \
+  --out=<project>/.harness/sensors \
   /tmp/<draft-name>.json
 ```
 
@@ -283,14 +354,14 @@ Run order:
 # 1) Production happy-path: run the sensor against the real codebase.
 HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_computational \
-  ./skills/run-sensor/scripts @sensors/<id>.json | tail -n 1 \
+  ./skills/run-sensor/scripts @.harness/sensors/<id>.json | tail -n 1 \
   | jq -c '{verdict, severity, counts: .metadata.counts, individuals: (.evidence|length)}'
 
 # 2) Replay each fail/warn fixture to prove the unhappy paths.
 TMP=$(mktemp /tmp/replay-XXXX.json)
-jq --arg cmd "cat sensors/fixtures/<group>/<case>.txt" \
+jq --arg cmd "cat .harness/sensors/fixtures/<group>/<case>.txt" \
    '.execution.command = $cmd | .id = "replay-" + .id' \
-   sensors/<id>.json > "$TMP"
+   .harness/sensors/<id>.json > "$TMP"
 HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_computational \
   ./skills/run-sensor/scripts "$TMP" | tail -n 1 \
@@ -305,12 +376,14 @@ For each sensor, both must hold:
 
 If iteration changes `output`, `execution`, or `verification`, bump the sensor `version` (e.g. `0.1.0` → `0.2.0`) and re-persist via the validator. The version stamp is the audit trail of which shape was actually verified.
 
+If a `kind=observation` + `output=stream` sensor's patterns match nothing during its first run, suspect Phase A first — not the regex. Inspect the persisted stack with `bat <project>/.harness/stack.json` (or `cat`). If the `log_shapes[].sample` no longer resembles the real stdout, rerun `/detect-sensors --refresh-stack` to regenerate. Only after the stack matches reality should you tweak the patterns themselves.
+
 ### 7.5. If smoke run fails with a setup-shape symptom, invoke /heal-sensor
 
 When step 7's smoke run produces an aggregate Signal that is setup-shape (missing env, missing binary, absent `.env`, unavailable service), do NOT iterate inside this skill. Invoke `/heal-sensor` instead:
 
 ```
-/heal-sensor --signal=<path-to-saved-aggregate-signal-json> --sensor=@sensors/<id>.json
+/heal-sensor --signal=<path-to-saved-aggregate-signal-json> --sensor=@.harness/sensors/<id>.json
 ```
 
 `/heal-sensor` will read the project state, build a Setup Plan, apply allowlisted idempotent fixes (cp .env.example .env, mkdir, touch, set-env-in-file), persist any patched/new sensors via the same `lib/sensor.ValidateAndPersist` primitive this skill uses, and retry the original sensor. After it returns:
@@ -325,17 +398,17 @@ Setup-shape recovery used to be the responsibility of this skill's prose ("if cr
 When every draft is persisted **and verified** (step 7 passed for happy and unhappy paths), surface the result as a bulleted list of paths plus the verdict observed for each, so the user can immediately fan out into `/run-sensor`:
 
 ```
-Generated 7 sensors at /repo/sensors/ (all verified happy + replay paths):
-- /repo/sensors/lint-eslint.json           — happy: pass · replay(has-finding): fail/medium ·  4 fixtures
-- /repo/sensors/build-vite.json            — happy: pass · replay(compile-error): fail/high   · 2 fixtures
-- /repo/sensors/unit-test-vitest.json      — happy: pass(83) · replay(has-failure): fail/high · 3 fixtures
-- /repo/sensors/e2e-playwright.json        — happy: pass(12) · replay(timeout): fail/high     · 3 fixtures
-- /repo/sensors/run-project-vite-dev.json  — single-mode  · replay(crash): fail/high          · 2 fixtures
-- /repo/sensors/fetch-logs-cloudrun.json   — happy: pass · NEEDS-AUTH (gcloud login)          · 1 fixture
-- /repo/sensors/fetch-metrics-cloud-monitoring.json — happy: pass · NEEDS-AUTH                · 1 fixture
+Generated 7 sensors at /repo/.harness/sensors/ (all verified happy + replay paths):
+- /repo/.harness/sensors/lint-eslint.json           — happy: pass · replay(has-finding): fail/medium ·  4 fixtures
+- /repo/.harness/sensors/build-vite.json            — happy: pass · replay(compile-error): fail/high   · 2 fixtures
+- /repo/.harness/sensors/unit-test-vitest.json      — happy: pass(83) · replay(has-failure): fail/high · 3 fixtures
+- /repo/.harness/sensors/e2e-playwright.json        — happy: pass(12) · replay(timeout): fail/high     · 3 fixtures
+- /repo/.harness/sensors/run-project-vite-dev.json  — single-mode  · replay(crash): fail/high          · 2 fixtures
+- /repo/.harness/sensors/fetch-logs-cloudrun.json   — happy: pass · NEEDS-AUTH (gcloud login)          · 1 fixture
+- /repo/.harness/sensors/fetch-metrics-cloud-monitoring.json — happy: pass · NEEDS-AUTH                · 1 fixture
 
-Run any of them with `/run-sensor @sensors/<id>.json`.
-Fixtures live under /repo/sensors/fixtures/<group>/<case>.{txt,json}.
+Run any of them with `/run-sensor <id>`.
+Fixtures live under /repo/.harness/sensors/fixtures/<group>/<case>.{txt,json}.
 ```
 
 Be honest about anything still soft: sensors whose live command needs credentials you do not have (`NEEDS-AUTH`), `cost.latency` numbers that are estimates rather than measured, observability sensors whose query strings are best-guess. Call those out explicitly so the user knows where to focus the review.
@@ -343,6 +416,6 @@ Be honest about anything still soft: sensors whose live command needs credential
 ## Safety notes
 
 - The script never executes the detected commands. It only validates JSON and writes files.
-- Existing files at `<out>/<sensor-id>.json` are overwritten atomically by `os.Create`. Commit `sensors/` before re-running so diffs are reviewable.
+- Existing files at `<out>/<sensor-id>.json` are overwritten atomically by `os.Create`. Commit `.harness/sensors/` before re-running so diffs are reviewable.
 - Drafts you stage in `/tmp/` are yours to clean up; the script does not touch them.
 - Schemas are resolved by walking up from cwd; invoke from inside the harness-framework checkout (or pass `--schemas-dir=<plugin>/schemas`) so the validator sees the right contract.

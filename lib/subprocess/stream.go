@@ -44,7 +44,7 @@ type StreamConfig struct {
 	Stderr    io.Writer         // diagnostic messages (validation warnings, etc.)
 	Dir       string            // working directory for the subprocess (empty = inherit)
 
-	// RunDir, when non-empty, points at .runtime/sensors/<id>/<run-id>/.
+	// RunDir, when non-empty, points at .harness/runtime/<id>/<run-id>/.
 	// The streamer tees subprocess stdout+stderr verbatim into <RunDir>/raw.log
 	// and appends individual + aggregate Signals to <RunDir>/signals.log.
 	// Empty preserves the legacy stdout-only behavior.

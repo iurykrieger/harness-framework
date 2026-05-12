@@ -42,10 +42,11 @@ func TestRetryOriginal_PicksTypeAndShellsOut(t *testing.T) {
 	t.Setenv("CLAUDE_PLUGIN_ROOT", root)
 
 	// The runner accepts absolute paths as well as sensor IDs. Write the
-	// sensor fixture into a temp project tree that mirrors the layout
-	// (<projectDir>/sensors/<id>.json) so dependency resolution works.
+	// sensor fixture into a temp project tree that mirrors the canonical
+	// layout (<projectDir>/.harness/sensors/<id>.json) so dependency
+	// resolution works.
 	projectDir := t.TempDir()
-	sensorsDir := filepath.Join(projectDir, "sensors")
+	sensorsDir := filepath.Join(projectDir, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +59,7 @@ func TestRetryOriginal_PicksTypeAndShellsOut(t *testing.T) {
 		},
 	}
 	body, _ := json.Marshal(s)
-	// id = "smoke-comp" (from fixture); file must be sensors/smoke-comp.json
+	// id = "smoke-comp" (from fixture); file must be .harness/sensors/smoke-comp.json
 	sensorFile := filepath.Join(sensorsDir, "smoke-comp.json")
 	if err := os.WriteFile(sensorFile, body, 0o644); err != nil {
 		t.Fatal(err)

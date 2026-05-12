@@ -21,7 +21,7 @@ A Claude Code plugin that implements a **sensor harness** for AI coding agents. 
 Durable conventions. Apply them to every change.
 
 1. **Language: en-US.** All source files, comments, identifiers, docs, and commit messages.
-2. **Schemas are versioned with the plugin.** They live in `schemas/` and are the source of truth for entities. Skills and scripts MUST resolve schema paths relative to the plugin root (`schemas/<name>.json`); never copy a schema elsewhere. Bumping a schema is a plugin-version event.
+2. **Schemas are versioned with the plugin.** They live in `schemas/` and are the source of truth for entities (`sensor.json`, `signal.json`, `stack.json`). Skills and scripts MUST resolve schema paths relative to the plugin root (`schemas/<name>.json`); never copy a schema elsewhere. Bumping a schema is a plugin-version event.
 3. **Scripts are written in Go.** No Python, Bash, or Node for non-trivial logic. One-line shell glue is fine; anything with branches, parsing, or I/O orchestration goes in Go.
 4. **Scripts are skill-local; libraries can be shared.** Each script lives under `skills/<skill-name>/scripts/` and stays self-contained — never share *scripts* across skills via a top-level `scripts/`. Duplicate scripts before coupling. A top-level `lib/` package is permitted for stable, schema-tied primitives that several skills genuinely need (schema validation, envelope construction, subprocess streaming, exit-code mapping, template rendering); skill-specific logic does not belong there.
 5. **Prefer explicit files over folders for scripts.** A script is `scripts/<name>.go` plus `scripts/<name>_test.go`, not `scripts/<name>/main.go`. The file path is the script's identity. Subdirectories under `scripts/` are reserved for shared helpers within the skill, not for individual commands.
@@ -32,14 +32,15 @@ Durable conventions. Apply them to every change.
 
 ## Architecture
 
-### The two schemas
+### The three schemas
 
-Both are JSON Schema **Draft 2020-12**. Validators must support that draft and resolve `$ref` across files.
+Both `signal.json` and `sensor.json` are JSON Schema **Draft 2020-12**. Validators must support that draft and resolve `$ref` across files.
 
 - `schemas/signal.json` — the output contract. Defines the canonical `Verdict` and `Severity` enums under `$defs/`. **Edit enum values here only.**
 - `schemas/sensor.json` — the definition contract. References `signal.json` two ways:
   - `#/$defs/Signal` is `{ "$ref": "signal.json" }`, so tooling can dereference a sensor's runtime output contract by chained `$ref`.
   - Enum sites inside `sensor.json` (`execution.exit_code_map[].{verdict,severity}`, `verification.golden_cases[].{expected_verdict,expected_severity}`) use `{ "$ref": "signal.json#/$defs/Verdict" }` and `…/Severity`. Adding a new verdict or severity value means editing `signal.json` only — `sensor.json` picks it up automatically.
+- `schemas/stack.json` — the project-stack contract. Produced by `/detect-sensors` Phase A; consumed by Phase B when authoring `kind=observation` + `output=stream` sensors. Independent of `signal.json` and `sensor.json` (no cross-`$ref`).
 
 ### Discriminators
 
@@ -81,10 +82,10 @@ The orchestrator lives in `lib/orchestrator/` (DAG resolution + lifecycle execut
 
 ### Registry root discovery
 
-The blocking-sensor registry (`<projectRoot>/.runtime/sensors/running_sensors.json`) lives in the user's project tree, NOT in the plugin tree. To make this resolution deterministic and cwd-independent, the four registry-touching skills (`/start-sensor`, `/list-sensors`, `/stop-sensor`, `/tail-sensor`) call `lib/registry/Lookup(cwd)` which resolves the project root in this order:
+The blocking-sensor registry (`<projectRoot>/.harness/runtime/running_sensors.json`) lives in the user's project tree, NOT in the plugin tree. To make this resolution deterministic and cwd-independent, the four registry-touching skills (`/start-sensor`, `/list-sensors`, `/stop-sensor`, `/tail-sensor`) call `lib/registry/Lookup(cwd)` which resolves the project root in this order:
 
-1. **`HARNESS_REGISTRY_ROOT` env var.** Must be an absolute path to an existing directory. The env var names the **project root** — i.e., the directory that contains `sensors/`, not `sensors/` itself. Symlinks are resolved via `EvalSymlinks`.
-2. **Walk-up from `cwd` looking for `sensors/`.** The first ancestor whose `sensors/` child is itself a directory is the project root. Empty `sensors/` is acceptable.
+1. **`HARNESS_REGISTRY_ROOT` env var.** Must be an absolute path to an existing directory. The env var names the **project root** — i.e., the directory that contains `.harness/`, not `.harness/` itself. Symlinks are resolved via `EvalSymlinks`.
+2. **Walk-up from `cwd` looking for `.harness/`.** The first ancestor whose `.harness/` child is itself a directory is the project root. Empty `.harness/` is acceptable.
 3. **Failure.** No fallback to `cwd`. The skill emits an error Signal `metadata.kind=registry_discovery_failed` whose evidence names both strategies tried.
 
 Every signal emitted by the four skills carries `metadata.{registry_path, registry_source, registry_exists}` for diagnose. `registry_source` is `"env"` or `"walk_up"`; `registry_exists` is `true` only when `running_sensors.json` is on disk.
@@ -102,7 +103,7 @@ The watcher subprocess inherits the resolved root via `HARNESS_WATCHER_REGISTRY_
 
 ### Auto issue opening
 
-A `PostToolUse(Bash)` hook (`hooks/error-issue-autofiler.go`, build tag `error_autofiler`) observes every Bash invocation and opens a GitHub issue when a framework Go script panics, fails to compile, or emits a Signal with `verdict=error` plus an internal `metadata.kind`. Per-fingerprint dedup uses a 3-layer cascade: local `<projectRoot>/.runtime/auto-issues.json` cache, then `gh issue list --search "harness-fp:<fingerprint>"`, then `gh issue create`. The hook always exits 0 — internal failures (no `gh` auth, no GitHub remote, unparseable cache, …) degrade silently to stderr.
+A `PostToolUse(Bash)` hook (`hooks/error-issue-autofiler.go`, build tag `error_autofiler`) observes every Bash invocation and opens a GitHub issue when a framework Go script panics, fails to compile, or emits a Signal with `verdict=error` plus an internal `metadata.kind`. Per-fingerprint dedup uses a 3-layer cascade: local `<projectRoot>/.harness/runtime/auto-issues.json` cache, then `gh issue list --search "harness-fp:<fingerprint>"`, then `gh issue create`. The hook always exits 0 — internal failures (no `gh` auth, no GitHub remote, unparseable cache, …) degrade silently to stderr.
 
 Disable per-shell with `HARNESS_AUTOFILE_ISSUES=0`. The repo it files against is derived from `git remote get-url origin` of the project root resolved by `lib/registry.Lookup(cwd)`; the framework expects a label `auto-filed` to exist on that repo (create once).
 

@@ -17,7 +17,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
-// writeSensor writes a sensor fixture to <root>/sensors/<id>.json and returns
+// writeSensor writes a sensor fixture to <root>/.harness/sensors/<id>.json and returns
 // the sensor id. Tests pass root as projectRoot so ResolveByID can find it.
 func writeSensor(t *testing.T, root, id string, mut func(map[string]interface{})) string {
 	t.Helper()
@@ -26,7 +26,7 @@ func writeSensor(t *testing.T, root, id string, mut func(map[string]interface{})
 	if mut != nil {
 		mut(s)
 	}
-	sensorsDir := filepath.Join(root, "sensors")
+	sensorsDir := filepath.Join(root, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestRun_UsageError(t *testing.T) {
 
 func TestRun_SensorNotFound(t *testing.T) {
 	root := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(root, "sensors"), 0o755)
+	_ = os.MkdirAll(filepath.Join(root, ".harness", "sensors"), 0o755)
 	var out, errBuf bytes.Buffer
 	code := run([]string{"--schemas-dir", testfixtures.RepoSchemasDir(t), "nonexistent"}, root, &out, &errBuf)
 	if code != 2 {
@@ -117,7 +117,7 @@ func TestRun_SensorNotFound(t *testing.T) {
 // 200ms sleep before SIGTERM is a known flake risk on slow CI.
 func TestRunComputational_SIGTERMSetsTerminatedExternally(t *testing.T) {
 	proj := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// Hand-rolled fixture: minimal valid computational sensor with a
@@ -151,7 +151,7 @@ func TestRunComputational_SIGTERMSetsTerminatedExternally(t *testing.T) {
 		},
 	}
 	b, _ := json.Marshal(sensorJSON)
-	if err := os.WriteFile(filepath.Join(proj, "sensors", "sleeper.json"), b, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(proj, ".harness", "sensors", "sleeper.json"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -238,33 +238,33 @@ func TestRun_BlockingSensorRejected(t *testing.T) {
 }
 
 // TestRunComputational_AcceptsAbsolutePath verifies that run-computational
-// accepts an absolute file path in addition to a bare sensor id (commit
-// 7ebf962). This test is the companion to TestRunInferential_AcceptsAbsolutePath
-// which covers the equivalent fix applied to run-inferential.
+// accepts an absolute file path in addition to a bare sensor id.
 //
-// /heal-sensor's retry-original.go passes absolute paths to the runner; without
-// the filepath.IsAbs branch, sensor.ResolveByID rejects them via the
-// ^[a-z][a-z0-9-]*$ regex.
+// /heal-sensor's retry-original.go passes absolute paths to the runner.
+// sensor.Resolve detects path-shaped inputs via looksLikePath and routes
+// through resolvePath instead of the bare-id regex, so this test guards
+// against regressions to id-only resolution.
 func TestRunComputational_AcceptsAbsolutePath(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
 	root := t.TempDir()
 	id := writeSensor(t, root, "abs-path-sensor", func(s map[string]interface{}) {
 		s["execution"].(map[string]interface{})["command"] = "true"
 	})
-	absPath := filepath.Join(root, "sensors", id+".json")
+	absPath := filepath.Join(root, ".harness", "sensors", id+".json")
 
 	if !filepath.IsAbs(absPath) {
 		t.Fatalf("expected absolute path, got %q", absPath)
 	}
 
 	var out, errBuf bytes.Buffer
-	// Pass the absolute path. projectRoot is irrelevant for the abs-path branch:
-	// the runner derives the project root from the path itself.
-	code := run([]string{"--schemas-dir", schemasDir, absPath}, "" /* projectRoot unused */, &out, &errBuf)
+	// Pass the absolute path. The runner re-derives projectRoot from the
+	// sensor's canonical location (.../<projectRoot>/.harness/sensors/<id>.json),
+	// so projectRoot passed in here is overridden inside run().
+	code := run([]string{"--schemas-dir", schemasDir, absPath}, "" /* projectRoot overridden */, &out, &errBuf)
 
-	// Sentinel for pre-fix ResolveByID rejection: exit 2 + "does not match".
+	// Sentinel for a regression to id-only resolution: exit 2 + "does not match".
 	if code == 2 && strings.Contains(errBuf.String(), "does not match") {
-		t.Fatalf("runner rejected absolute path via ResolveByID regex: stderr=%s", errBuf.String())
+		t.Fatalf("runner rejected absolute path via id regex: stderr=%s", errBuf.String())
 	}
 	if code != 0 {
 		t.Fatalf("expected exit 0 for absolute path, got %d stderr=%s", code, errBuf.String())

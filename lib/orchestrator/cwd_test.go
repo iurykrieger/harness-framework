@@ -16,7 +16,7 @@ import (
 func TestRunWithDepsRoot_SubprocessCwdIsProjectRoot(t *testing.T) {
 	proj := t.TempDir()
 	schemasDir := testfixtures.RepoSchemasDir(t)
-	_ = os.MkdirAll(filepath.Join(proj, "sensors"), 0o755)
+	_ = os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755)
 
 	// Build a valid sensor that writes its cwd to a file under projectRoot.
 	s := testfixtures.ValidSensorComputational()
@@ -24,7 +24,7 @@ func TestRunWithDepsRoot_SubprocessCwdIsProjectRoot(t *testing.T) {
 	exec := s["execution"].(map[string]interface{})
 	exec["command"] = "pwd > $HARNESS_REGISTRY_ROOT/probe.out"
 	b, _ := json.MarshalIndent(s, "", "  ")
-	_ = os.WriteFile(filepath.Join(proj, "sensors", "cwd-probe.json"), b, 0o644)
+	_ = os.WriteFile(filepath.Join(proj, ".harness", "sensors", "cwd-probe.json"), b, 0o644)
 
 	t.Setenv("HARNESS_REGISTRY_ROOT", proj)
 

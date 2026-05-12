@@ -65,7 +65,7 @@ func writeInferentialSensor(t *testing.T, root, id, command string) string {
 			"calibration_date":     "2026-04-15",
 		},
 	}
-	sensorsDir := filepath.Join(root, "sensors")
+	sensorsDir := filepath.Join(root, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestRunInferential_CalibrationDowngrade(t *testing.T) {
 func TestRunInferential_RejectsComputational(t *testing.T) {
 	schemasDir := repoSchemasDir(t)
 	root := t.TempDir()
-	sensorsDir := filepath.Join(root, "sensors")
+	sensorsDir := filepath.Join(root, ".harness", "sensors")
 	_ = os.MkdirAll(sensorsDir, 0o755)
 	s := map[string]interface{}{
 		"id": "wrong", "version": "0.1.0",
@@ -197,7 +197,7 @@ func TestRunInferential_HonoursExitCodeMap(t *testing.T) {
 	root := t.TempDir()
 	id := writeInferentialSensor(t, root, "infr-ecmap", `printf 'PASS judgment\n'; exit 7`)
 	// Patch the sensor on disk to add an exit_code_map that maps 7 -> warn/medium.
-	sensorPath := filepath.Join(root, "sensors", id+".json")
+	sensorPath := filepath.Join(root, ".harness", "sensors", id+".json")
 	b, _ := os.ReadFile(sensorPath)
 	var s map[string]interface{}
 	_ = json.Unmarshal(b, &s)
@@ -231,7 +231,7 @@ func TestRunInferential_MissingRequiredEnvAborts(t *testing.T) {
 	schemasDir := repoSchemasDir(t)
 	root := t.TempDir()
 	id := writeInferentialSensor(t, root, "infr-env", `printf "should not run\n"; exit 0`)
-	sensorPath := filepath.Join(root, "sensors", id+".json")
+	sensorPath := filepath.Join(root, ".harness", "sensors", id+".json")
 	b, _ := os.ReadFile(sensorPath)
 	var s map[string]interface{}
 	_ = json.Unmarshal(b, &s)
@@ -293,7 +293,7 @@ func TestRunInferential_UnboundSlot(t *testing.T) {
 func TestRun_InferentialWithComputationalDep(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
 	root := t.TempDir()
-	sensorsDir := filepath.Join(root, "sensors")
+	sensorsDir := filepath.Join(root, ".harness", "sensors")
 	_ = os.MkdirAll(sensorsDir, 0o755)
 
 	// Setup dep: a kind=setup computational sensor.
@@ -399,7 +399,7 @@ func TestRunInferential_SIGTERMSetsTerminatedExternally(t *testing.T) {
 func TestRunInferential_BlockingSensorRejected(t *testing.T) {
 	schemasDir := repoSchemasDir(t)
 	root := t.TempDir()
-	sensorsDir := filepath.Join(root, "sensors")
+	sensorsDir := filepath.Join(root, ".harness", "sensors")
 	_ = os.MkdirAll(sensorsDir, 0o755)
 
 	// Blocking sensors: execution.blocking=true, no timeout_ms (schema forbids it), output=stream.
@@ -500,7 +500,7 @@ func TestRunInferential_AcceptsAbsolutePath(t *testing.T) {
 	schemasDir := repoSchemasDir(t)
 	root := t.TempDir()
 	id := writeInferentialSensor(t, root, "infr-abspath", `printf 'PASS judgment\n'`)
-	absPath := filepath.Join(root, "sensors", id+".json")
+	absPath := filepath.Join(root, ".harness", "sensors", id+".json")
 
 	// Sanity-check that the path is absolute (test would be meaningless otherwise).
 	if !filepath.IsAbs(absPath) {

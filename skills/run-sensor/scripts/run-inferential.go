@@ -87,29 +87,19 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	// sensor.Resolve accepts both bare ids and path-shaped inputs. After
+	// resolution we re-derive id and projectRoot from the canonical sensor
+	// location (<projectRoot>/.harness/sensors/<id>.json) so the rest of the
+	// runner — which threads (id, projectRoot) into orchestrator.Resolve,
+	// AttachLiveDep, etc. — works uniformly for both input shapes.
 	arg := rest[0]
-
-	// Accept either a bare sensor id (^[a-z][a-z0-9-]*$) or an absolute
-	// file path. Absolute paths are resolved directly; ids are looked up
-	// under <projectRoot>/sensors/<id>.json.
-	var sensorAbsPath string
-	var id string
-	if filepath.IsAbs(arg) {
-		sensorAbsPath = arg
-		id = orchestrator.StripJSONExt(filepath.Base(arg))
-		// Derive the project root from the sensor's location: the sensor
-		// must live at <projectRoot>/sensors/<id>.json, so the project root
-		// is two levels up from the file.
-		projectRoot = filepath.Dir(filepath.Dir(arg))
-	} else {
-		id = arg
-		var resolveErr error
-		sensorAbsPath, resolveErr = sensor.ResolveByID(id, projectRoot)
-		if resolveErr != nil {
-			fmt.Fprintln(stderr, "error: resolve:", resolveErr)
-			return 2
-		}
+	sensorAbsPath, err := sensor.Resolve(arg, projectRoot)
+	if err != nil {
+		fmt.Fprintln(stderr, "error: resolve:", err)
+		return 2
 	}
+	id := orchestrator.StripJSONExt(filepath.Base(sensorAbsPath))
+	projectRoot = filepath.Dir(filepath.Dir(filepath.Dir(sensorAbsPath)))
 
 	v, code := schema.LoadValidator(schemasDir, stderr)
 	if code != 0 {
@@ -147,10 +137,9 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	// Resolve requires[kind=sensor] graph. Run every dep via orchestrator.RunOne;
 	// blocking deps are started/attached via AttachLiveDep and detached
 	// after the requested sensor completes.
-	sensorRoot := filepath.Dir(sensorAbsPath)
 	rootID := id
 
-	order, err := orchestrator.Resolve(rootID, sensorRoot)
+	order, err := orchestrator.Resolve(rootID, projectRoot)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 1
