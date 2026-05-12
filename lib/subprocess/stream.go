@@ -42,6 +42,7 @@ type StreamConfig struct {
 	Validator *schema.Validator // for per-individual signal validation; may be nil to skip
 	Stdout    io.Writer         // JSONL goes here
 	Stderr    io.Writer         // diagnostic messages (validation warnings, etc.)
+	Dir       string            // working directory for the subprocess (empty = inherit)
 
 	// RunDir, when non-empty, points at .runtime/sensors/<id>/<run-id>/.
 	// The streamer tees subprocess stdout+stderr verbatim into <RunDir>/raw.log
@@ -126,6 +127,9 @@ func Start(ctx context.Context, cfg StreamConfig) (*StreamHandle, error) {
 	}
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", cfg.Command)
+	if cfg.Dir != "" {
+		cmd.Dir = cfg.Dir
+	}
 	if len(cfg.Env) > 0 {
 		envList := append([]string{}, cmd.Environ()...)
 		for k, v := range cfg.Env {
