@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/subprocess"
 )
 
@@ -33,9 +33,13 @@ type LiveDep struct {
 // All blocking deps along the chain are started/attached before the
 // requested sensor runs and stopped/detached after.
 func RunWithDepsRoot(ctx context.Context, id, projectRoot, schemasDir string, stdout, stderr io.Writer) int {
-	path := filepath.Join(projectRoot, ".harness", "sensors", id+".json")
+	path, err := sensor.Resolve(id, projectRoot)
+	if err != nil {
+		fmt.Fprintln(stderr, "error: resolve:", err)
+		return 2
+	}
 	root := registry.NewRoot(projectRoot)
-	return runWithDepsImpl(ctx, path, schemasDir, &root, stdout, stderr)
+	return runWithDepsImpl(ctx, path, schemasDir, &root, projectRoot, stdout, stderr)
 }
 
 // AttachLiveDep starts (or attaches to) a blocking dep. Emits a

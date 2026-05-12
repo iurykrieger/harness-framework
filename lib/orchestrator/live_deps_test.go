@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
@@ -423,5 +424,89 @@ func TestAttachDetachLiveDep_CoexistsWithNonBlockingEntry(t *testing.T) {
 	}
 	if entries[0].RunID != nonBlockingRunID {
 		t.Errorf("post-detach survivor RunID: got %q, want %q", entries[0].RunID, nonBlockingRunID)
+	}
+}
+
+func TestRunWithDepsRoot_AcceptsAbsolutePath(t *testing.T) {
+	proj := t.TempDir()
+	// Materialize a minimal valid computational sensor at an absolute path
+	// OUTSIDE the project's .harness/sensors/ tree.
+	s := testfixtures.ValidSensorComputational()
+	s["id"] = "abs-path-target"
+	body, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	absSensorPath := filepath.Join(t.TempDir(), "sensor.json")
+	if err := os.WriteFile(absSensorPath, body, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// projectRoot does NOT contain .harness/sensors/. The caller passes an
+	// absolute path, which sensor.Resolve must accept verbatim.
+	t.Setenv("HARNESS_REGISTRY_ROOT", proj)
+
+	var stdout, stderr bytes.Buffer
+	code := orchestrator.RunWithDepsRoot(context.Background(), absSensorPath, proj, testfixtures.RepoSchemasDir(t), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d, stderr=%s", code, stderr.String())
+	}
+	// Aggregate is the last JSONL line on stdout.
+	out := strings.TrimSpace(stdout.String())
+	if out == "" {
+		t.Fatalf("no stdout; stderr=%s", stderr.String())
+	}
+	lines := strings.Split(out, "\n")
+	var agg map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &agg); err != nil {
+		t.Fatalf("decode aggregate: %v; raw=%q", err, lines[len(lines)-1])
+	}
+	if got, _ := agg["sensor_id"].(string); got != "abs-path-target" {
+		t.Errorf("aggregate.sensor_id = %q, want %q", got, "abs-path-target")
+	}
+}
+
+func TestRunWithDepsRoot_AbsolutePathCascadeSensorID(t *testing.T) {
+	proj := t.TempDir()
+	// Target sensor declares a requires[kind=sensor] dep that DOES NOT exist.
+	s := testfixtures.ValidSensorComputational()
+	s["id"] = "abs-cascade-target"
+	s["requires"] = []interface{}{
+		map[string]interface{}{"kind": "sensor", "id": "nonexistent-dep"},
+	}
+	body, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	absSensorPath := filepath.Join(t.TempDir(), "sensor.json")
+	if err := os.WriteFile(absSensorPath, body, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	t.Setenv("HARNESS_REGISTRY_ROOT", proj)
+
+	var stdout, stderr bytes.Buffer
+	_ = orchestrator.RunWithDepsRoot(context.Background(), absSensorPath, proj, testfixtures.RepoSchemasDir(t), &stdout, &stderr)
+	// We do not assert exit code (it will be non-zero on dep failure).
+	// We DO assert that any sensor_id emitted on stdout matches the
+	// logical id pattern, NOT the abs path.
+	out := strings.TrimSpace(stdout.String())
+	if out == "" {
+		// Possibly the dep-resolution error went to stderr; that's OK
+		// for this test — there's nothing on stdout to verify against.
+		return
+	}
+	for _, line := range strings.Split(out, "\n") {
+		var sig map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &sig); err != nil {
+			continue
+		}
+		if id, _ := sig["sensor_id"].(string); id != "" {
+			// The id must match the schema regex; specifically it must
+			// not contain any path separators or absolute-path shape.
+			if strings.ContainsAny(id, "/\\") {
+				t.Errorf("sensor_id %q contains path separators (should be logical id only); raw=%s", id, line)
+			}
+		}
 	}
 }
