@@ -346,8 +346,8 @@ func TestValidator_DependsOnRejectedAsV1Field(t *testing.T) {
 	if !strings.Contains(err.Error(), "depends_on") {
 		t.Fatalf("expected error to mention depends_on, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "migrate-requires.go") {
-		t.Fatalf("expected error to reference migration script, got: %v", err)
+	if !strings.Contains(err.Error(), "Upgrade to v2") {
+		t.Fatalf("expected error to reference v2 upgrade, got: %v", err)
 	}
 }
 
