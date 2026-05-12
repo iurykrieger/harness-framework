@@ -1,51 +1,16 @@
 package watcher
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
 
-func TestBinaryPath_NeighbourOfExecutable(t *testing.T) {
-	got, err := BinaryPath()
-	if err != nil {
-		t.Fatalf("BinaryPath: %v", err)
-	}
-	exe, _ := os.Executable()
-	want := filepath.Join(filepath.Dir(exe), "watcher")
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestSpawn_ErrorWhenBinaryAbsent(t *testing.T) {
-	tmp := t.TempDir()
-	rawLog := filepath.Join(tmp, "raw.log")
-	sigLog := filepath.Join(tmp, "signals.log")
-	if err := os.WriteFile(rawLog, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	pid, err := Spawn(SpawnOpts{
-		PluginRoot:     t.TempDir(),
-		ProjectRoot:    tmp,
-		SensorID:       "x",
-		RunID:          "r1",
-		RawLogPath:     rawLog,
-		SignalsLogPath: sigLog,
-		EnvelopeJSON:   []byte(`{}`),
-		PatternsJSON:   []byte(`[]`),
-		SubprocessPID:  os.Getpid(),
-	})
-	if err == nil {
-		t.Fatalf("expected error when watcher binary missing, got pid=%d", pid)
-	}
-	if pid != 0 {
-		t.Errorf("pid = %d, want 0", pid)
-	}
-}
 
 func TestSpawn_DelegatesToSpawnFn(t *testing.T) {
 	called := false
@@ -71,59 +36,6 @@ func TestSpawn_DelegatesToSpawnFn(t *testing.T) {
 	}
 }
 
-func TestSpawn_PropagatesRunID(t *testing.T) {
-	// We can't run real Spawn here because there's no watcher binary.
-	// Validate via a code-shape check: SpawnOpts has RunID, and the env
-	// block in realSpawn includes HARNESS_WATCHER_RUN_ID. Done by reading
-	// the source — but a better integration check is to install a fake
-	// `watcher` next to the test binary that echoes its env to a file,
-	// then assert the file contains HARNESS_WATCHER_RUN_ID=opts.RunID.
-
-	tmp := t.TempDir()
-	exe, _ := os.Executable()
-	watcher := filepath.Join(filepath.Dir(exe), "watcher")
-	// Bash script that writes env to $HARNESS_WATCHER_RUN_ID-out
-	stub := []byte("#!/bin/sh\nenv | grep HARNESS_WATCHER_RUN_ID > " + tmp + "/env.out\n")
-	if err := os.WriteFile(watcher, stub, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(watcher) })
-
-	rawLog := filepath.Join(tmp, "raw.log")
-	sigLog := filepath.Join(tmp, "signals.log")
-	if err := os.WriteFile(rawLog, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := Spawn(SpawnOpts{
-		PluginRoot:     tmp,
-		ProjectRoot:    tmp,
-		SensorID:       "x",
-		RunID:          "run-abc-123",
-		RawLogPath:     rawLog,
-		SignalsLogPath: sigLog,
-		EnvelopeJSON:   []byte(`{}`),
-		PatternsJSON:   []byte(`[]`),
-		SubprocessPID:  os.Getpid(),
-	})
-	if err != nil {
-		t.Fatalf("Spawn: %v", err)
-	}
-
-	// Give the stub a moment to flush
-	deadline := time.Now().Add(2 * time.Second)
-	var got []byte
-	for time.Now().Before(deadline) {
-		got, _ = os.ReadFile(filepath.Join(tmp, "env.out"))
-		if len(got) > 0 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if !strings.Contains(string(got), "HARNESS_WATCHER_RUN_ID=run-abc-123") {
-		t.Errorf("env.out = %q, want it to contain HARNESS_WATCHER_RUN_ID=run-abc-123", got)
-	}
-}
 
 func TestSpawn_RejectsEmptyPluginRoot(t *testing.T) {
 	// Force production code path (no SpawnFn override).
@@ -147,4 +59,188 @@ func TestSpawn_RejectsEmptyPluginRoot(t *testing.T) {
 	if pid != 0 {
 		t.Errorf("pid = %d, want 0", pid)
 	}
+}
+
+func TestRealSpawn_ArgShape(t *testing.T) {
+	_, argsFile, _ := withFakeGo(t, 500, 0, "") // must survive the 100ms early-death probe
+
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "raw.log"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(tmp, "watcher.log")
+
+	pid, err := Spawn(SpawnOpts{
+		PluginRoot:     "/fake/plugin/root",
+		ProjectRoot:    tmp,
+		SensorID:       "s",
+		RunID:          "r",
+		RawLogPath:     filepath.Join(tmp, "raw.log"),
+		SignalsLogPath: filepath.Join(tmp, "sigs.log"),
+		EnvelopeJSON:   []byte(`{}`),
+		PatternsJSON:   []byte(`[]`),
+		SubprocessPID:  os.Getpid(),
+		WatcherLogPath: logPath,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if pid <= 0 {
+		t.Errorf("pid = %d, want > 0", pid)
+	}
+
+	// Wait for the fake go to finish writing args.
+	deadline := time.Now().Add(2 * time.Second)
+	var args []byte
+	for time.Now().Before(deadline) {
+		args, _ = os.ReadFile(argsFile)
+		if len(args) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	got := strings.Split(strings.TrimRight(string(args), "\x1f"), "\x1f")
+	want := []string{"-C", "/fake/plugin/root", "run", "-tags=start_watcher", "./skills/start-sensor/scripts"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("args = %#v, want %#v", got, want)
+	}
+}
+
+func TestRealSpawn_EnvPropagation(t *testing.T) {
+	_, _, envFile := withFakeGo(t, 500, 0, "") // must survive the 100ms early-death probe
+
+	tmp := t.TempDir()
+	_ = os.WriteFile(filepath.Join(tmp, "raw.log"), nil, 0o644)
+
+	_, err := Spawn(SpawnOpts{
+		PluginRoot:     "/fake/plugin/root",
+		ProjectRoot:    tmp,
+		SensorID:       "sensor-x",
+		RunID:          "run-abc",
+		RawLogPath:     filepath.Join(tmp, "raw.log"),
+		SignalsLogPath: filepath.Join(tmp, "sigs.log"),
+		EnvelopeJSON:   []byte(`{"k":"v"}`),
+		PatternsJSON:   []byte(`[{"p":1}]`),
+		SubprocessPID:  os.Getpid(),
+		WatcherLogPath: filepath.Join(tmp, "watcher.log"),
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var env []byte
+	for time.Now().Before(deadline) {
+		env, _ = os.ReadFile(envFile)
+		if len(env) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	required := []string{
+		"HARNESS_WATCHER_RAW=" + filepath.Join(tmp, "raw.log"),
+		"HARNESS_WATCHER_SIGNALS=" + filepath.Join(tmp, "sigs.log"),
+		`HARNESS_WATCHER_PATTERNS=[{"p":1}]`,
+		`HARNESS_WATCHER_ENVELOPE={"k":"v"}`,
+		"HARNESS_WATCHER_SUBPROCESS_PID=" + fmt.Sprintf("%d", os.Getpid()),
+		"HARNESS_WATCHER_REGISTRY_ROOT=" + tmp,
+		"HARNESS_WATCHER_SENSOR_ID=sensor-x",
+		"HARNESS_WATCHER_RUN_ID=run-abc",
+		"GOWORK=off",
+	}
+	for _, want := range required {
+		if !strings.Contains(string(env), want) {
+			t.Errorf("env missing %q", want)
+		}
+	}
+}
+
+func TestRealSpawn_EarlyDeath(t *testing.T) {
+	_, _, _ = withFakeGo(t, 10, 1, "mock compile error: bad syntax")
+
+	// Extend probe window so the shell script (startup ~150ms + 10ms sleep)
+	// is reliably caught on macOS even under load. Restore on cleanup.
+	prev := earlyDeathTimeout
+	earlyDeathTimeout = 3 * time.Second
+	t.Cleanup(func() { earlyDeathTimeout = prev })
+
+	tmp := t.TempDir()
+	_ = os.WriteFile(filepath.Join(tmp, "raw.log"), nil, 0o644)
+
+	pid, err := Spawn(SpawnOpts{
+		PluginRoot:     "/fake",
+		ProjectRoot:    tmp,
+		SensorID:       "s",
+		RunID:          "r",
+		RawLogPath:     filepath.Join(tmp, "raw.log"),
+		SignalsLogPath: filepath.Join(tmp, "sigs.log"),
+		EnvelopeJSON:   []byte(`{}`),
+		PatternsJSON:   []byte(`[]`),
+		SubprocessPID:  os.Getpid(),
+		WatcherLogPath: filepath.Join(tmp, "watcher.log"),
+	})
+	if err == nil {
+		t.Fatalf("expected error for early-death, got pid=%d", pid)
+	}
+	if !strings.Contains(err.Error(), "mock compile error") && !strings.Contains(err.Error(), "exited early") {
+		t.Errorf("err = %v, want one mentioning 'exited early' or 'mock compile error'", err)
+	}
+}
+
+func TestRealSpawn_GoMissing(t *testing.T) {
+	// Empty PATH — exec.LookPath("go") will fail.
+	t.Setenv("PATH", "")
+
+	tmp := t.TempDir()
+	_ = os.WriteFile(filepath.Join(tmp, "raw.log"), nil, 0o644)
+
+	pid, err := Spawn(SpawnOpts{
+		PluginRoot:     "/fake",
+		ProjectRoot:    tmp,
+		SensorID:       "s",
+		RunID:          "r",
+		RawLogPath:     filepath.Join(tmp, "raw.log"),
+		SignalsLogPath: filepath.Join(tmp, "sigs.log"),
+		EnvelopeJSON:   []byte(`{}`),
+		PatternsJSON:   []byte(`[]`),
+		SubprocessPID:  os.Getpid(),
+		WatcherLogPath: filepath.Join(tmp, "watcher.log"),
+	})
+	if err == nil {
+		t.Fatalf("expected error when `go` is missing, got pid=%d", pid)
+	}
+	if pid != 0 {
+		t.Errorf("pid = %d, want 0", pid)
+	}
+}
+
+func TestRealSpawn_SuccessPath(t *testing.T) {
+	_, _, _ = withFakeGo(t, 500, 0, "") // sleep 500ms — survives 100ms early-death probe
+
+	tmp := t.TempDir()
+	_ = os.WriteFile(filepath.Join(tmp, "raw.log"), nil, 0o644)
+
+	pid, err := Spawn(SpawnOpts{
+		PluginRoot:     "/fake",
+		ProjectRoot:    tmp,
+		SensorID:       "s",
+		RunID:          "r",
+		RawLogPath:     filepath.Join(tmp, "raw.log"),
+		SignalsLogPath: filepath.Join(tmp, "sigs.log"),
+		EnvelopeJSON:   []byte(`{}`),
+		PatternsJSON:   []byte(`[]`),
+		SubprocessPID:  os.Getpid(),
+		WatcherLogPath: filepath.Join(tmp, "watcher.log"),
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if pid <= 0 {
+		t.Errorf("pid = %d, want > 0", pid)
+	}
+
+	// Kill the fake-go-as-watcher to avoid orphans.
+	_ = syscall.Kill(pid, syscall.SIGTERM)
 }
