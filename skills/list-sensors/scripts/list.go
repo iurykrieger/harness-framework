@@ -92,7 +92,7 @@ func runList(res registry.Result, reports []registry.SanitizeReport, stdout, std
 			"watcher_alive":    watcherAlive,
 			"started_at":       e.StartedAt,
 			"command":          e.Command,
-			"held_by":          heldBySummaries(e.HeldBy),
+			"held_by":          registry.SummarizeHolders(e.HeldBy, registry.SummarizeOpts{}),
 			"signals_log_path": r.SignalsLog(e.SensorID),
 			"state":            state,
 		})
@@ -122,20 +122,6 @@ func listMetadata(res registry.Result, entries []interface{}) map[string]interfa
 	md["kind"] = "list"
 	md["entries"] = entries
 	return md
-}
-
-func heldBySummaries(hs []registry.HeldByEntry) []interface{} {
-	out := make([]interface{}, 0, len(hs))
-	for _, h := range hs {
-		entry := map[string]interface{}{"kind": h.Kind, "attached_at": h.AttachedAt}
-		if h.Kind == "sensor" {
-			entry["id"] = h.ID
-			entry["pid"] = h.PID
-			entry["pid_alive"] = registry.IsPIDAlive(h.PID)
-		}
-		out = append(out, entry)
-	}
-	return out
 }
 
 func validateSignal(v *schema.Validator, sig map[string]interface{}, stderr io.Writer) map[string]interface{} {

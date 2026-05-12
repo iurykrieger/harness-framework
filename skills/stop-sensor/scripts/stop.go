@@ -100,10 +100,10 @@ func runStop(res registry.Result, args []string, reap bool) (int, map[string]int
 	if registry.IsHeld(entry) {
 		sig := simpleSignal(res, id, "warn", "low", "held", fmt.Sprintf("sensor %q still held by %d holders", id, len(entry.HeldBy)))
 		md := sig["metadata"].(map[string]interface{})
-		md["holders"] = holderSummaries(entry.HeldBy)
-		md["dead_holders"] = deadHolderSummaries(entry.HeldBy)
+		md["holders"] = registry.SummarizeHolders(entry.HeldBy, registry.SummarizeOpts{})
+		md["dead_holders"] = registry.SummarizeHolders(entry.HeldBy, registry.SummarizeOpts{DeadOnly: true})
 		if len(reaped) > 0 {
-			md["reaped_holders"] = holderSummaries(reaped)
+			md["reaped_holders"] = registry.SummarizeHolders(reaped, registry.SummarizeOpts{})
 		}
 		return 0, validateSignal(v, sig, id)
 	}
@@ -289,7 +289,7 @@ func buildAggregate(res registry.Result, id string, sensorJSON map[string]interf
 		md["killed_forcefully"] = true
 	}
 	if len(reaped) > 0 {
-		md["reaped_holders"] = holderSummaries(reaped)
+		md["reaped_holders"] = registry.SummarizeHolders(reaped, registry.SummarizeOpts{})
 	}
 	if len(teardown) > 0 {
 		md["lifecycle"] = map[string]interface{}{"teardown": teardown}
@@ -307,45 +307,6 @@ func buildAggregate(res registry.Result, id string, sensorJSON map[string]interf
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
 		"metadata":    md,
 	}
-}
-
-// deadHolderSummaries returns the subset of holders with kind=sensor and
-// pid no longer alive. Empty slice (not nil) when none. Allows callers
-// to distinguish "no dead holders" from "no holders at all".
-//
-// Return type matches holderSummaries so consumers can type-assert
-// metadata.dead_holders and metadata.holders the same way.
-func deadHolderSummaries(holders []registry.HeldByEntry) []interface{} {
-	out := []interface{}{}
-	for _, h := range holders {
-		if h.Kind != "sensor" {
-			continue
-		}
-		if registry.IsPIDAlive(h.PID) {
-			continue
-		}
-		out = append(out, map[string]interface{}{
-			"kind":        h.Kind,
-			"id":          h.ID,
-			"pid":         h.PID,
-			"attached_at": h.AttachedAt,
-		})
-	}
-	return out
-}
-
-func holderSummaries(hs []registry.HeldByEntry) []interface{} {
-	out := make([]interface{}, 0, len(hs))
-	for _, h := range hs {
-		entry := map[string]interface{}{"kind": h.Kind, "attached_at": h.AttachedAt}
-		if h.Kind == "sensor" {
-			entry["id"] = h.ID
-			entry["pid"] = h.PID
-			entry["pid_alive"] = registry.IsPIDAlive(h.PID)
-		}
-		out = append(out, entry)
-	}
-	return out
 }
 
 func stringField(m map[string]interface{}, k string) string {
