@@ -285,12 +285,12 @@ func TestHook_NoTranscriptPath_Exit2(t *testing.T) {
 
 // writeBareIDTranscript writes a transcript that invokes <command> with
 // a BARE sensor id (the new contract after the blocking-sensors PR).
-// The hook must resolve the id against cwd/sensors/<id>.json. Returns
+// The hook must resolve the id against cwd/.harness/sensors/<id>.json. Returns
 // (transcriptPath, projectRoot).
 func writeBareIDTranscript(t *testing.T, command, sensorID string, signal map[string]interface{}, sensorJSON map[string]interface{}) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
-	sensorsDir := filepath.Join(dir, "sensors")
+	sensorsDir := filepath.Join(dir, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestHook_StartSensor_BareID_EmitsInjection(t *testing.T) {
 	if !strings.Contains(out, "watch-logs") {
 		t.Fatalf("expected sensor id watch-logs in injection; got %q", out)
 	}
-	if !strings.Contains(out, filepath.Join(cwd, "sensors", "watch-logs.json")) {
+	if !strings.Contains(out, filepath.Join(cwd, ".harness", "sensors", "watch-logs.json")) {
 		t.Fatalf("expected resolved sensor path in injection; got %q", out)
 	}
 }
@@ -396,7 +396,7 @@ func TestHook_StopSensor_FlagBeforeID_ResolvesCorrectly(t *testing.T) {
 	// flag BEFORE the id; the hook must still find the id. This guards
 	// against the trivial regression of taking parts[j+1] verbatim.
 	dir := t.TempDir()
-	sensorsDir := filepath.Join(dir, "sensors")
+	sensorsDir := filepath.Join(dir, ".harness", "sensors")
 	os.MkdirAll(sensorsDir, 0o755)
 	sensor := map[string]interface{}{
 		"id":       "my-sensor",

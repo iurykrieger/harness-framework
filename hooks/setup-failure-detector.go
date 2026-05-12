@@ -293,7 +293,7 @@ func firstPositionalArg(parts []string) string {
 // resolveSensorTarget converts a slash-command argument into an on-disk
 // path. Path-shaped inputs (containing separators, ending in .json, or
 // "@"-prefixed) pass through; bare ids are resolved to
-// <cwd>/sensors/<id>.json.
+// <cwd>/.harness/sensors/<id>.json.
 func resolveSensorTarget(arg, cwd string) string {
 	arg = strings.TrimPrefix(arg, "@")
 	if strings.ContainsAny(arg, "/\\") || strings.HasSuffix(arg, ".json") {
@@ -302,7 +302,7 @@ func resolveSensorTarget(arg, cwd string) string {
 	if cwd == "" {
 		return arg // best-effort fallback; loadFailedSensorView will fail and the hook silently no-ops.
 	}
-	return filepath.Join(cwd, "sensors", arg+".json")
+	return filepath.Join(cwd, ".harness", "sensors", arg+".json")
 }
 
 func anyHealAfter(entries []transcriptEntry) bool {
