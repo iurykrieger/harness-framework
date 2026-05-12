@@ -2,6 +2,7 @@ package sensor_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
@@ -33,5 +34,21 @@ func TestBuildEnvelope_MissingFields(t *testing.T) {
 				t.Fatalf("expected error when %q missing", missing)
 			}
 		})
+	}
+}
+
+func TestBuildEnvelopeTyped(t *testing.T) {
+	prev := sensor.NowFn
+	defer func() { sensor.NowFn = prev }()
+	sensor.NowFn = func() time.Time {
+		return time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+	}
+	s := &sensor.Sensor{ID: "demo", Version: "0.1.0", Type: sensor.TypeComputational}
+	env := sensor.BuildEnvelopeTyped(s)
+	if env.SensorID != "demo" || env.Version != "0.1.0" || env.SensorType != "computational" {
+		t.Fatalf("envelope mismatch: %+v", env)
+	}
+	if env.RunID == "" {
+		t.Fatalf("run id was empty")
 	}
 }

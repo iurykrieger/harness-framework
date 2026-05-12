@@ -46,6 +46,19 @@ func BuildEnvelope(sensor map[string]interface{}) (Envelope, error) {
 	}, nil
 }
 
+// BuildEnvelopeTyped is the typed companion to BuildEnvelope. Produces
+// the same Envelope from a *Sensor instead of a map. Behaviour and
+// error semantics are identical except inputs cannot be nil.
+func BuildEnvelopeTyped(s *Sensor) Envelope {
+	return Envelope{
+		SensorID:   s.ID,
+		Version:    s.Version,
+		RunID:      NewRunIDFn(),
+		StartedAt:  NowFn().Format("2006-01-02T15:04:05Z"),
+		SensorType: string(s.Type),
+	}
+}
+
 // NewUUIDv4 generates a RFC 4122 v4 UUID without external dependencies.
 func NewUUIDv4() string {
 	b := make([]byte, 16)
