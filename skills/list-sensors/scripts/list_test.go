@@ -5,13 +5,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/iurykrieger/harness-framework/lib/cli"
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
 // resultFor builds a registry.Result for a tempdir-backed project.
@@ -32,11 +33,25 @@ func resultFor(t *testing.T, projectRoot string, exists bool) registry.Result {
 	}
 }
 
+// bootstrapFor wraps a registry.Result in a cli.BootstrapResult suitable for
+// passing to runList in tests. The schema validator is loaded so that signal
+// validation runs; errors are written to errBuf.
+func bootstrapFor(t *testing.T, res registry.Result, errBuf *bytes.Buffer) cli.BootstrapResult {
+	t.Helper()
+	v, _ := schema.LoadValidator("", errBuf)
+	return cli.BootstrapResult{
+		Res:       res,
+		Validator: v,
+		Diagnose:  registry.DiagnoseMetadata(res),
+	}
+}
+
 func TestList_FileAbsent_Warn(t *testing.T) {
 	root := t.TempDir()
 	res := resultFor(t, root, false)
-	var buf bytes.Buffer
-	exit := runList(res, nil, &buf, os.Stderr)
+	var buf, errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	exit := runList(b, &buf, &errBuf)
 	if exit != 0 {
 		t.Fatalf("exit: got %d, want 0", exit)
 	}
@@ -79,8 +94,9 @@ func TestList_FilePresentEmpty_Pass(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := resultFor(t, root, true)
-	var buf bytes.Buffer
-	exit := runList(res, nil, &buf, os.Stderr)
+	var buf, errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	exit := runList(b, &buf, &errBuf)
 	if exit != 0 {
 		t.Fatalf("exit: got %d", exit)
 	}
@@ -111,8 +127,9 @@ func TestList_AnnotatesOrphan(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := resultFor(t, root, true)
-	var buf bytes.Buffer
-	_ = runList(res, nil, &buf, os.Stderr)
+	var buf, errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	_ = runList(b, &buf, &errBuf)
 	var sig map[string]interface{}
 	_ = json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &sig)
 	entries := sig["metadata"].(map[string]interface{})["entries"].([]interface{})
@@ -137,7 +154,12 @@ func TestList_AnnotatesOrphan(t *testing.T) {
 	}
 }
 
-func TestRunList_EmitsRegistryMigratedSignalFirst(t *testing.T) {
+// TestList_RegistryMigratedSignal_ViaBootstrap verifies that when the registry
+// file contains legacy entries (e.g. missing watcher_pid), cli.Bootstrap emits
+// a registry_migrated warn Signal before runList emits the main list Signal.
+// The migration behavior is owned by cli.Bootstrap; this test exercises the
+// full path (Bootstrap + runList) to confirm both signals appear in order.
+func TestList_RegistryMigratedSignal_ViaBootstrap(t *testing.T) {
 	dir := t.TempDir()
 	r := registry.NewRoot(dir)
 	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
@@ -157,24 +179,23 @@ func TestRunList_EmitsRegistryMigratedSignalFirst(t *testing.T) {
 	if err := os.WriteFile(r.RegistryFile(), legacy, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Ensure marker dir exists for walk-up.
+	// Ensure marker dir exists for walk-up discovery.
 	if err := os.MkdirAll(filepath.Join(dir, "sensors"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HARNESS_REGISTRY_ROOT", dir)
 
-	res, reports, err := registry.LookupSanitized(dir)
-	if err != nil {
-		t.Fatal(err)
+	// Run via Bootstrap so the migrated-signal path is exercised.
+	var buf, errBuf bytes.Buffer
+	b := cli.Bootstrap("list-sensors", &buf, &errBuf)
+	if b.ExitCode != 0 {
+		t.Fatalf("Bootstrap exit: %d; stderr: %s", b.ExitCode, errBuf.String())
 	}
-	if len(reports) == 0 {
-		t.Fatal("expected sanitize reports, got none")
-	}
-	var buf bytes.Buffer
-	exit := runList(res, reports, &buf, io.Discard)
+	exit := runList(b, &buf, &errBuf)
 	if exit != 0 {
-		t.Fatalf("exit: got %d, want 0", exit)
+		t.Fatalf("runList exit: got %d, want 0", exit)
 	}
+
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("got %d JSONL line(s); want 2 (warn + list). Output:\n%s", len(lines), buf.String())
