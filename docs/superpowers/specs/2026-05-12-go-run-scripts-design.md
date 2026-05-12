@@ -36,11 +36,11 @@ The goal is one invocation contract used everywhere — by skills, by internal `
    - `HARNESS_REGISTRY_ROOT="$(pwd)"` captures the agent's `cwd` (the user's project root) *before* `-C` moves `go`. Every registry-touching script honors this env var via `lib/registry.Lookup`; non-registry scripts (`run-sensor`, `detect-sensors`, `heal-sensor`) are extended to read the same env.
    - `GOWORK=off` neutralizes any `go.work` in the user's tree. Defense in depth.
 
-2. **`lib/watcher.Spawn` reworked** to spawn the watcher via `exec.Command("go", "-C", pluginRoot, "run", "-tags=start_watcher", "./skills/start-sensor/scripts")` instead of `os.StartProcess(<sibling binary>, ...)`. `BinaryPath()` deleted. `SpawnOpts` gains `PluginRoot string`. The call sites (`skills/start-sensor/scripts/start.go`) read `os.Getenv("CLAUDE_PLUGIN_ROOT")` and pass it in; empty value emits a final Signal with `metadata.cause=plugin_root_missing` and exits non-zero before spawning anything.
+2. **Production watcher spawn migrated from inline code to `lib/watcher.Spawn`.** Today `lib/watcher` exists as a package but is unreferenced — the watcher is spawned inline inside the flock callback in `skills/start-sensor/scripts/start.go` (around lines 153 + 266). The package has the right shape but was never wired in. We finish the wiring: `start.go` calls `lib/watcher.Spawn(opts)` in place of the inline `watcherBinaryPath()` + `os.StartProcess(watcherPath, ...)` block. **`lib/watcher.Spawn` is then reworked** to use `exec.Command("go", "-C", pluginRoot, "run", "-tags=start_watcher", "./skills/start-sensor/scripts")` instead of `os.StartProcess(<sibling binary>, ...)`. `BinaryPath()` deleted. `SpawnOpts` gains `PluginRoot string`. The call site reads `os.Getenv("CLAUDE_PLUGIN_ROOT")` and passes it in; empty value emits a final Signal with `metadata.cause=plugin_root_missing` and exits non-zero before spawning anything.
 
-3. **`skills/start-sensor/scripts/start_unix.go` trimmed** — `watcherBinaryPath()` deleted; `killGroup`/`killPID` retained (still used by the SIGKILL fallback).
+3. **`skills/start-sensor/scripts/start_unix.go` trimmed** — `watcherBinaryPath()` deleted; `killGroup`/`killPID` retained (still used by the SIGKILL fallback). The inline spawn block in `start.go` (lines 257–319 approx.) shrinks to a single `watcher.Spawn(opts)` call plus the registry/envelope wiring around it.
 
-4. **`skills/heal-sensor/scripts/retry-original.go:58` updated** — the internal `exec.Command("go", "run", "-tags="+tag, "./skills/run-sensor/scripts", sensorPath)` is replaced with the new contract: `exec.Command("go", "-C", pluginRoot, "run", "-tags="+tag, "./skills/run-sensor/scripts", sensorPath)` plus `cmd.Env` setting `HARNESS_REGISTRY_ROOT`, `CLAUDE_PLUGIN_ROOT`, `GOWORK=off`.
+4. **`skills/heal-sensor/scripts/retry-original.go` updated** — line 58's `exec.Command("go", "run", "-tags="+tag, "./skills/run-sensor/scripts", sensorPath)` is replaced with `exec.Command("go", "-C", pluginRoot, "run", "-tags="+tag, "./skills/run-sensor/scripts", sensorPath)` plus `cmd.Env` setting `HARNESS_REGISTRY_ROOT`, `CLAUDE_PLUGIN_ROOT`, `GOWORK=off`. The local `repoRoot()` walk-up helper (lines 80–99) is **deleted**: with `-C "${CLAUDE_PLUGIN_ROOT}"` the directory of `cmd` no longer matters, and the walk-up exists today only to thread `cmd.Dir = root`.
 
 5. **Seven `SKILL.md` files updated mechanically** — `run-sensor`, `start-sensor`, `stop-sensor`, `tail-sensor`, `list-sensors`, `detect-sensors`, `heal-sensor`. The `run-sensor/SKILL.md` is the canonical source for the contract explanation; the others link to it instead of repeating the rationale.
 
@@ -194,7 +194,15 @@ We unify: all seven scripts call `lib/registry.Lookup(os.Getwd())`. `Lookup` is 
 
 ### Diagnostics: `error-issue-autofiler` regex extension
 
-Current matcher targets `harness-<skill>` and `harness-watcher` binary names. Extended matcher adds patterns for `go run -tags=<tag>` invocations. The mapping table:
+Current `frameworkCommandPatterns` (`hooks/error-issue-autofiler.go:63-75`) **already** matches `go run -tags=<tag> ./skills/<name>/scripts` and `go run -tags=<tag> ./hooks`. What it does **not** match is the new shape with `-C <path>` between `go` and `run`:
+
+```
+go -C /Users/x/.claude/plugins/harness-framework run -tags=start_sensor ./skills/start-sensor/scripts foo
+```
+
+So the patch is narrow: in the two regexes that currently start with `go\s+run\s+...`, insert an optional `(?:-C\s+\S+\s+)?` between `go\s+` and `run`. The fourth pattern (`go (?:test|vet|build)`) gets the same insertion for consistency, since `go -C ... test ./...` is valid and the framework's own test runs may end up using it. The binary-name pattern (`harness-<skill>` / `harness-watcher`) stays as-is for legacy CI.
+
+A tag→skill mapping table is added to support a richer "which skill crashed?" classification in future patches, but it is **not** required by the regex extension itself; the existing classifier already extracts the skill name from the `./skills/<name>/scripts` capture group. The mapping table is therefore deferred to a follow-up unless a concrete case in the test suite needs it. We document it here for completeness:
 
 | Tag                                              | Skill          |
 |--------------------------------------------------|----------------|
@@ -206,7 +214,7 @@ Current matcher targets `harness-<skill>` and `harness-watcher` binary names. Ex
 | `heal_diagnose`, `heal_apply_safe`,              |                |
 |   `heal_apply_sensors`, `heal_retry_original`    | `heal-sensor`  |
 
-Panics in `go run` produce stderr like `panic: ... goroutine ... /tmp/go-build.../start-sensor/start.go:42`. The fingerprint extraction keeps using the first `github.com/iurykrieger/harness-framework/...` frame, which the compiled binary still contains in its panic backtrace regardless of where the binary lives. Only the skill-detection regex needs extension.
+Panics in `go run` produce stderr like `panic: ... goroutine ... /tmp/go-build.../start-sensor/start.go:42`. The fingerprint extraction keeps using the first `github.com/iurykrieger/harness-framework/...` frame, which the compiled binary still contains in its panic backtrace regardless of where the binary lives.
 
 ## Edge cases and failure modes
 
@@ -300,10 +308,10 @@ Zero `go build`/`go install` should be required at any point. Close issue #15 wi
 
 Single branch (`binary-compiling`), five commits in logical order; each leaves the test suite green so bisect/rollback is granular.
 
-1. **`refactor(watcher): inject spawnFn for testability`** — adds `var spawnFn = realSpawn`; production behavior unchanged. Tests use `spawnFn` swap; stub-watcher install paths kept but unreferenced.
-2. **`feat(watcher): spawn via go run instead of sibling binary`** — `realSpawn` rewritten to `exec.Command("go", "-C", ...)`. `BinaryPath()`, `start_unix.go::watcherBinaryPath`, and stub-binary test scaffolding deleted. New `SpawnOpts.PluginRoot` plumbed from `start.go`. `earlyDeathProbe` added. New unit tests for the rewritten path.
-3. **`feat(skills): adopt go run -C invocation contract`** — all seven `SKILL.md` updated. `heal-sensor/scripts/retry-original.go:58` updated. `run-sensor`, `detect-sensors`, `heal-sensor` walk-up replaced with `lib/registry.Lookup`. Runner adds `os.Chdir(projectRoot)` before subprocess spawn. Tests for the inline `exec.Command` (`run-computational_test.go:163`, `run-inferential_test.go:347`) updated to match the new contract.
-4. **`feat(autofiler): match go run -tags invocations`** — regex extended; tag→skill table added; backwards-compat regex retained. New test cases.
+1. **`refactor(start-sensor): delegate watcher spawn to lib/watcher`** — `start.go` is refactored so the inline `watcherBinaryPath() + os.StartProcess(...)` block is replaced by a single `watcher.Spawn(opts)` call. `lib/watcher.Spawn` is **also** modified in this commit so its production behavior at the call site is preserved (still sibling-binary lookup at this point). The package gains the `var spawnFn = realSpawn` injection point; tests start using it. `lib/orchestrator/main_test.go` and `skills/start-sensor/scripts/start_test.go` swap stub-binary install for `spawnFn` override. This commit fixes the long-standing dead-code state of `lib/watcher` and isolates the test surface — *but it does not yet change watcher spawn semantics*.
+2. **`feat(watcher): spawn via go run instead of sibling binary`** — `realSpawn` rewritten to `exec.Command("go", "-C", pluginRoot, "run", "-tags=start_watcher", "./skills/start-sensor/scripts")`. `BinaryPath()` and `start_unix.go::watcherBinaryPath` deleted. New `SpawnOpts.PluginRoot` plumbed from `start.go` (reads `os.Getenv("CLAUDE_PLUGIN_ROOT")`). `earlyDeathProbe` added. New unit tests via `withFakeGo` helper.
+3. **`feat(skills): adopt go run -C invocation contract`** — all seven `SKILL.md` updated. `heal-sensor/scripts/retry-original.go` updated (line 58 contract; `repoRoot()` helper deleted). `run-sensor`, `detect-sensors`, `heal-sensor` walk-up replaced with `lib/registry.Lookup`. Runner adds `os.Chdir(projectRoot)` before subprocess spawn. Tests for the inline `exec.Command` (`run-computational_test.go:163`, `run-inferential_test.go:347`) updated to match the new contract.
+4. **`feat(autofiler): match go -C run invocations`** — the four regexes in `buildFrameworkCommandPatterns` extended with optional `(?:-C\s+\S+\s+)?` between `go\s+` and the verb. Legacy binary-name regex retained. New test cases for `go -C <path> run -tags=...`.
 5. **`docs: invocation contract, watcher latency, README`** — `CLAUDE.md` "Build, validate, test" section rewritten; `README.md` populated; `CHANGELOG.md` entry; `SKILL.md` cross-references consolidated.
 
 Plus the E2E test additions, which fit naturally into commit 3.
