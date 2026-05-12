@@ -88,8 +88,10 @@ func TestRetryOriginal_UsesPluginRootAndContract(t *testing.T) {
 	tmpDir := t.TempDir()
 	argsFile := filepath.Join(tmpDir, "args.txt")
 	envFile := filepath.Join(tmpDir, "env.txt")
+	// Use octal \037 instead of \x1f: dash (Ubuntu /bin/sh) passes \xNN
+	// through as literal text; \037 is POSIX-portable.
 	script := fmt.Sprintf(`#!/bin/sh
-printf '%%s\x1f' "$@" > %q
+printf '%%s\037' "$@" > %q
 env > %q
 exit 0
 `, argsFile, envFile)

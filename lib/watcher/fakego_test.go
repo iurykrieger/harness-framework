@@ -25,8 +25,10 @@ func withFakeGo(t *testing.T, sleepMS int, exitCode int, stderr string) (tmpDir,
 	envFile = filepath.Join(tmpDir, "env.txt")
 
 	script := fmt.Sprintf(`#!/bin/sh
-# Record args, one per line, separated by ASCII unit-separator.
-printf '%%s\x1f' "$@" > %q
+# Record args separated by ASCII unit-separator (0x1F).
+# Use octal \037 so /bin/sh-as-dash on Ubuntu CI accepts it; \x1f is a
+# bash/zsh extension that dash silently passes through as literal text.
+printf '%%s\037' "$@" > %q
 # Record env.
 env > %q
 %s
