@@ -156,7 +156,8 @@ Single conceptual change: the walk-up sentinel becomes `.harness/` instead of `s
 - `LockFile()` → `<root>/.harness/runtime/running_sensors.lock`
 - `SignalsLogRun(id, runID)` → `<root>/.harness/runtime/<id>/<runID>/signals.log`
 - `LegacySignalsLog(id)` → `<root>/.harness/runtime/<id>/signals.log` (internal "legacy" still names the per-sensor flat path, just under the new namespace)
-- New: `SensorFile(id)` → `<root>/.harness/sensors/<id>.json` — replaces hard-coded `sensors/<id>.json` in `lib/sensor/path.go`.
+- New: `RunDir(id, runID)` → `<root>/.harness/runtime/<id>/<runID>/` — directory containing `raw.log`, `signals.log`, and any other per-run artifacts. Replaces the `filepath.Join(".runtime", "sensors", id, runID)` call sites in `lib/orchestrator/{lifecycle.go, live_deps.go}`.
+- New: `SensorFile(id)` → `<root>/.harness/sensors/<id>.json` — replaces hard-coded `sensors/<id>.json` in `lib/sensor/path.go` and `lib/orchestrator/cascade.go`.
 
 **`lib/sensor/path.go`**: `Resolve(id)` walks up via `lib/registry.Lookup` and returns `Root.SensorFile(id)`. The current logic that joins `sensors/<id>.json` directly is removed.
 
@@ -247,10 +248,9 @@ The fixture test does **not** exercise the LLM. It tests that **given a well-for
 
 Four phases, ideally four PRs:
 
-1. **Schema + lib/stack/ + write-stack.go.** Adds the new entity with no consumers yet. Mergeable independently; exercised only by golden-case tests. Low blast radius.
+1. **Schema + lib/stack/ + write-stack.go + write_sensor build tag.** Adds the new entity with no consumers yet, plus the one-line `//go:build write_sensor` on the existing `write-sensor.go`. The build tag MUST land in this phase, not in phase 2 — without it, the two `package main` files in `skills/detect-sensors/scripts/` collide on the untagged default build and phase 1 would fail to compile on its own. Mergeable independently; exercised only by golden-case tests. Low blast radius.
 2. **Layout migration.** All path-touching call sites updated atomically:
    - `lib/registry` (new accessors, walk-up sentinel), `lib/sensor/path`, `lib/orchestrator/{run.go, lifecycle.go, live_deps.go, cascade.go}`, `hooks/error-issue-autofiler`.
-   - `skills/detect-sensors/scripts/write-sensor.go` gets `//go:build write_sensor` (the prerequisite for `write_stack` to coexist).
    - Five blocking-sensor `SKILL.md` files (`start-sensor`, `stop-sensor`, `list-sensors`, `tail-sensor`, `run-sensor`) have their frontmatter and body prose updated to `.harness/` paths.
    - Repo dogfood: `git mv sensors .harness/sensors`, `git mv .runtime .harness/runtime` (if present), `.gitignore` swap.
    - CLAUDE.md "Registry root discovery" + "Auto issue opening" updated; project rule §2 acknowledges three entity schemas.
