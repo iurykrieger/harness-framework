@@ -340,3 +340,4 @@ func TestRunDeps_TransitiveCascade(t *testing.T) {
 		t.Fatal("target should have CascadeSig (its dep middle cascaded)")
 	}
 }
+

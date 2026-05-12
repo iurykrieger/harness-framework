@@ -48,6 +48,14 @@ func (r Root) SignalsLog(id string) string {
 	return filepath.Join(r.SensorDir(id), "signals.log")
 }
 
+// ProjectRoot returns the absolute path of the project root that anchors
+// this Root. Exposed so callers in lib/orchestrator can derive sibling
+// paths (like .runtime/sensors/<id>/<run_id>/) without re-computing the
+// walk from cwd.
+func (r Root) ProjectRoot() string {
+	return r.projectRoot
+}
+
 // RunDir returns the per-run directory under .runtime/sensors/<id>/<runID>/.
 func (r Root) RunDir(id, runID string) string {
 	return filepath.Join(r.SensorDir(id), runID)

@@ -13,12 +13,13 @@ const (
 	ShapeBinaryNotFound     Shape = "binary-not-found"
 	ShapeEnvFileAbsent      Shape = "env-file-absent"
 	ShapeServiceUnavailable Shape = "service-unavailable"
+	ShapeMissingContext     Shape = "missing-context"
 )
 
 // IsKnown reports whether s is one of the registered shapes.
 func (s Shape) IsKnown() bool {
 	switch s {
-	case ShapeMissingEnv, ShapeBinaryNotFound, ShapeEnvFileAbsent, ShapeServiceUnavailable:
+	case ShapeMissingEnv, ShapeBinaryNotFound, ShapeEnvFileAbsent, ShapeServiceUnavailable, ShapeMissingContext:
 		return true
 	}
 	return false

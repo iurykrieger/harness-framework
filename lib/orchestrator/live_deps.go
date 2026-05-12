@@ -198,10 +198,12 @@ func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, 
 	if err := os.WriteFile(r.SignalsLog(dep.ID), nil, 0o644); err != nil {
 		return "", fmt.Errorf("create signals.log: %w", err)
 	}
+
 	det, err := subprocess.SpawnDetached(subprocess.DetachConfig{Command: command, LogFile: r.RawLog(dep.ID)})
 	if err != nil {
 		return "", fmt.Errorf("spawn: %w", err)
 	}
+
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	shortUUID := uuid.NewString()
 	if len(shortUUID) >= 8 {
@@ -217,13 +219,21 @@ func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, 
 		WatcherPID: 0,
 		StartedAt:  now,
 		Command:    command,
-		LogDir:     filepath.Join(".runtime", "sensors", dep.ID),
+		LogDir:     filepath.Join(".runtime", "sensors", dep.ID, runID),
 		HeldBy:     []registry.HeldByEntry{holder},
 	})
 	if err := registry.Save(r, *rs); err != nil {
 		return "", err
 	}
 	return runID, nil
+}
+
+// stringFieldFromJSON extracts a string field from a sensor's parsed JSON
+// without panicking on type mismatch. Local helper to keep the orchestrator
+// independent of start.go's stringField (same purpose, different package).
+func stringFieldFromJSON(m map[string]interface{}, key string) string {
+	s, _ := m[key].(string)
+	return s
 }
 
 // stopBlockingDep terminates the dep's process group and removes its
