@@ -453,6 +453,42 @@ func TestRunInferential_BlockingSensorRejected(t *testing.T) {
 	}
 }
 
+// TestRunInferential_UsesProjectRootAsSubprocessDir verifies that the inferential
+// runner sets Dir=projectRoot on the StreamConfig so that sensor commands that
+// reference relative paths (e.g. "cat README.md") run from the user's project
+// root, not from the plugin root.
+//
+// The test creates a SENTINEL file in the project root and writes a sensor whose
+// command is "cat SENTINEL". If Dir is not set the subprocess runs from the
+// test's cwd (the plugin root, which has no SENTINEL), and the command fails.
+func TestRunInferential_UsesProjectRootAsSubprocessDir(t *testing.T) {
+	schemasDir := repoSchemasDir(t)
+	proj := t.TempDir()
+
+	// Place SENTINEL only in the project root so the command fails if Dir is wrong.
+	if err := os.WriteFile(filepath.Join(proj, "SENTINEL"), []byte("project-root-confirmed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	id := writeInferentialSensor(t, proj, "infr-cwd-probe", "cat SENTINEL")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"--schemas-dir", schemasDir,
+		"--slot", "a=x",
+		"--slot", "b=y",
+		id,
+	}, proj, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s stdout=%s\n(Dir not set on StreamConfig: command ran from wrong dir)", code, stderr.String(), stdout.String())
+	}
+	lines := parseJSONL(t, stdout.String())
+	agg := lines[len(lines)-1]
+	if agg["verdict"] != "pass" {
+		t.Fatalf("aggregate verdict=%v, want pass\n(cat SENTINEL should succeed when Dir=projectRoot)", agg["verdict"])
+	}
+}
+
 // TestRunInferential_AcceptsAbsolutePath verifies that run-inferential accepts
 // an absolute file path in addition to a bare sensor id. This mirrors the
 // fix applied to run-computational in commit 7ebf962.

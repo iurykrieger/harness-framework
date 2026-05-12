@@ -252,6 +252,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 
 	res, _ := subprocess.StreamSubprocess(ctx, subprocess.StreamConfig{
 		Command:   command,
+		Dir:       projectRoot,
 		Env:       map[string]string{"HARNESS_PROMPT": rendered},
 		TimeoutMS: timeoutMS,
 		Patterns:  patterns,
