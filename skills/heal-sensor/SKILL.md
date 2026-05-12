@@ -22,7 +22,9 @@ The hook's `additionalContext` includes both arguments. When invoked manually, a
 Run the deterministic input collector:
 
 ```bash
-go run ./skills/heal-sensor/scripts/diagnose.go \
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" \
+  ./skills/heal-sensor/scripts/diagnose.go \
   --signal=<signal-path> \
   --sensor=<sensor-path> \
   --root=<project-root> > /tmp/heal-input.json
@@ -70,7 +72,9 @@ Rules for filling in the slots:
 ### 3. Apply file mutations
 
 ```bash
-go run ./skills/heal-sensor/scripts/apply-safe.go \
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" \
+  ./skills/heal-sensor/scripts/apply-safe.go \
   --plan=/tmp/heal-plan.json \
   --sensor=<sensor-path> \
   --root=<project-root> > /tmp/heal-apply.json
@@ -89,7 +93,9 @@ If the user cancels or returns empty: skip step 5 (retry), jump to step 6 (surfa
 ### 4. Apply sensor mutations
 
 ```bash
-go run ./skills/heal-sensor/scripts/apply-sensors.go \
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" \
+  ./skills/heal-sensor/scripts/apply-sensors.go \
   --plan=/tmp/heal-plan.json \
   --out=<project-root>/sensors > /tmp/heal-persist.json
 ```
@@ -99,7 +105,9 @@ This validates each `sensor_patches[]` and `new_setup_sensors[]` entry against `
 ### 5. Retry exactly once
 
 ```bash
-go run ./skills/heal-sensor/scripts/retry-original.go --sensor=<sensor-path>
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" \
+  ./skills/heal-sensor/scripts/retry-original.go --sensor=<sensor-path>
 ```
 
 Pipe its stdout into the response. The retry's aggregate Signal is the LAST JSONL line. If the aggregate's verdict is now `pass` or `warn`, heal succeeded — surface it as the outcome.

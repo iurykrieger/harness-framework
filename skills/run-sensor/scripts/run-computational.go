@@ -5,7 +5,7 @@
 //
 // Usage:
 //
-//	go run -tags=run_computational ./skills/run-sensor/scripts <sensor-id>
+//	go run -tags=run_computational ./skills/run-sensor/scripts <sensor-id|path>
 //
 // Stdout is JSONL: every dep's aggregate Signal first, then the requested
 // sensor's individual Signals (one per matched output line), terminated by
@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
@@ -53,20 +54,20 @@ func signalCancellableContext() (context.Context, context.CancelFunc) {
 
 func main() {
 	cwd, _ := os.Getwd()
-	// registry.Discover prefers HARNESS_REGISTRY_ROOT over walk-up, so an
-	// operator can redirect the runner's runtime persistence by setting
-	// that env var. When discovery fails (no marker, no env var), fall
-	// back to cwd — preserves the pre-existing behavior for callers that
-	// run inside a project.
-	projectRoot, _, err := registry.Discover(cwd)
-	if err != nil {
-		projectRoot = cwd
+	// registry.Lookup honors HARNESS_REGISTRY_ROOT first, then walks up
+	// from cwd looking for the .harness/ marker. Fall back to cwd so a
+	// direct invocation from inside a project (without the env var) keeps
+	// working; sensor.Resolve will surface a clearer error if the path is
+	// genuinely unfindable.
+	projectRoot := cwd
+	if res, err := registry.Lookup(cwd); err == nil {
+		projectRoot = res.ProjectRoot
 	}
 	os.Exit(run(os.Args[1:], projectRoot, os.Stdout, os.Stderr))
 }
 
 // run is the testable entry point. projectRoot is the directory from which
-// sensor ids are resolved (sensors/<id>.json); pass os.Getwd() for production.
+// sensor ids are resolved (.harness/sensors/<id>.json); pass os.Getwd() for production.
 func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run-computational", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -77,13 +78,16 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(stderr, "usage: run-computational [--schemas-dir=DIR] <sensor-id>")
+		fmt.Fprintln(stderr, "usage: run-computational [--schemas-dir=DIR] <sensor-id|path>")
 		return 2
 	}
 
-	id := rest[0]
-
-	sensorPath, err := sensor.Resolve(id, projectRoot)
+	// sensor.Resolve accepts both bare ids and path-shaped inputs (@-prefixed,
+	// containing "/", or .json-suffixed). For path inputs we then re-derive id
+	// and projectRoot from the canonical location so the orchestrator's
+	// registry-persistence path (RunWithDepsRoot) works in both cases.
+	arg := rest[0]
+	sensorPath, err := sensor.Resolve(arg, projectRoot)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: resolve:", err)
 		return 2
@@ -104,6 +108,10 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
+
+	// Canonical location: <projectRoot>/.harness/sensors/<id>.json
+	id := orchestrator.StripJSONExt(filepath.Base(sensorPath))
+	projectRoot = filepath.Dir(filepath.Dir(filepath.Dir(sensorPath)))
 
 	ctx, cancel := signalCancellableContext()
 	defer cancel()

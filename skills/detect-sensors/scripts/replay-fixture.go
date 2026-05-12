@@ -1,34 +1,39 @@
 //go:build replay_fixture
 
-// Command replay-fixture runs a sensor against a fixture file without
-// polluting the project's .harness/runtime/ tree. It loads the sensor
-// JSON, overrides execution.command to "cat <fixture>", and invokes
-// the runner (run-computational | run-inferential) with
-// HARNESS_REGISTRY_ROOT pointed at an ephemeral tempdir. The runner's
-// stdout/stderr stream through; the temp tree is removed on exit.
+// Command replay-fixture exercises a sensor against a fixture file as a
+// regular run: it loads the sensor JSON, swaps execution.command for
+// "cat <fixture>", and feeds the modified sensor through the orchestrator
+// just like /run-sensor would. The run is registered under the project's
+// real .harness/runtime/<sensor-id>/<run-id>/ tree so replay attempts sit
+// alongside any other valid run of that sensor in the runtime history.
 //
-// The sensor.id field is preserved verbatim — earlier versions of this
-// step (a shell snippet in skills/detect-sensors/SKILL.md) mutated id
-// to "replay-" + id, which leaked into .harness/runtime/replay-<id>/
-// once runtime persistence shipped (issue #28).
+// sensor.id is preserved verbatim — the runtime directory naturally aligns
+// with the sensor it exercises rather than being shoved into a synthetic
+// "replay-*" namespace.
 //
 // Usage:
 //
 //	go run -tags=replay_fixture ./skills/detect-sensors/scripts \
 //	  --sensor=PATH --fixture=PATH
 //
-// Exit codes: same as the underlying runner. 2 on usage or I/O error
-// before the runner is spawned.
+// Exit codes mirror the orchestrator: 0 on a clean aggregate, 1 on
+// schema/DAG/cascade failure, 2 on usage or I/O error before the
+// orchestrator is invoked.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+
+	"github.com/iurykrieger/harness-framework/lib/orchestrator"
+	"github.com/iurykrieger/harness-framework/lib/registry"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -36,14 +41,15 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("replay-fixture", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var sensorPath, fixturePath string
+	var sensorPath, fixturePath, schemasDir string
 	fs.StringVar(&sensorPath, "sensor", "", "path to the sensor JSON (required)")
 	fs.StringVar(&fixturePath, "fixture", "", "path to the fixture file (required)")
+	fs.StringVar(&schemasDir, "schemas-dir", "", "schemas directory (default: walk up from cwd)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if sensorPath == "" || fixturePath == "" {
-		fmt.Fprintln(stderr, "usage: replay-fixture --sensor=PATH --fixture=PATH")
+		fmt.Fprintln(stderr, "usage: replay-fixture --sensor=PATH --fixture=PATH [--schemas-dir=DIR]")
 		return 2
 	}
 
@@ -57,8 +63,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "parse sensor:", err)
 		return 2
 	}
-	sensorType, _ := raw["type"].(string)
-	tag := tagForType(sensorType)
 	absFixture, err := filepath.Abs(fixturePath)
 	if err != nil {
 		fmt.Fprintln(stderr, "abs fixture:", err)
@@ -71,22 +75,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	execBlock["command"] = fmt.Sprintf("cat %q", absFixture)
 
-	tempRoot, err := os.MkdirTemp("", "harness-replay-")
+	projectRoot, err := resolveProjectRoot(sensorPath)
 	if err != nil {
-		fmt.Fprintln(stderr, "mkdtemp:", err)
+		fmt.Fprintln(stderr, "resolve project root:", err)
 		return 2
 	}
-	defer func() {
-		if err := os.RemoveAll(tempRoot); err != nil {
-			fmt.Fprintln(stderr, "cleanup:", err)
-		}
-	}()
 
-	tempSensor, err := os.CreateTemp(tempRoot, "sensor-*.json")
+	tempSensor, err := os.CreateTemp("", "replay-sensor-*.json")
 	if err != nil {
 		fmt.Fprintln(stderr, "create temp sensor:", err)
 		return 2
 	}
+	tempPath := tempSensor.Name()
+	defer func() {
+		if err := os.Remove(tempPath); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintln(stderr, "cleanup temp sensor:", err)
+		}
+	}()
 	enc := json.NewEncoder(tempSensor)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(raw); err != nil {
@@ -99,57 +104,51 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	cmd := exec.Command("go", "run", "-tags="+tag, "./skills/run-sensor/scripts", tempSensor.Name())
-	if root := repoRoot(); root != "" {
-		cmd.Dir = root
-	}
-	cmd.Env = append(os.Environ(), "HARNESS_REGISTRY_ROOT="+tempRoot)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
-		}
-		fmt.Fprintln(stderr, "exec:", err)
-		return 2
-	}
-	return 0
+	ctx, cancel := signalCancellableContext()
+	defer cancel()
+	return orchestrator.RunWithDepsRoot(ctx, tempPath, projectRoot, schemasDir, stdout, stderr)
 }
 
-// tagForType selects the runner's build tag based on sensor.type.
-// Defaults to run_computational when the field is empty or unknown —
-// the schema's discriminator enforces the inferential branch, so
-// any non-"inferential" value the runner sees will fail validation
-// downstream regardless of our pick here.
-func tagForType(sensorType string) string {
-	if sensorType == "inferential" {
-		return "run_inferential"
+// resolveProjectRoot finds the user's project root so the orchestrator
+// persists this run under <projectRoot>/.harness/runtime/<sensor-id>/.
+// Preference order:
+//
+//  1. registry.Lookup(cwd) — honors HARNESS_REGISTRY_ROOT, then walks up
+//     from cwd looking for the .harness/ marker. This is the canonical
+//     discovery path other skills use.
+//  2. Three Dir() calls above sensorPath, assuming the sensor lives at
+//     the canonical <projectRoot>/.harness/sensors/<id>.json location.
+//     Useful when invoked from outside the project tree (e.g. CI).
+//
+// Both candidates are required to be existing directories before they
+// are accepted; otherwise the next strategy is tried.
+func resolveProjectRoot(sensorPath string) (string, error) {
+	cwd, _ := os.Getwd()
+	if res, err := registry.Lookup(cwd); err == nil {
+		return res.ProjectRoot, nil
 	}
-	return "run_computational"
-}
-
-// repoRoot walks up from cwd looking for a directory that contains
-// both go.mod and skills/run-sensor/scripts (the runner package).
-// Mirrors skills/heal-sensor/scripts/retry-original.go::repoRoot
-// — duplicated rather than coupled per project rule #4. Returns
-// "" if no ancestor matches; the caller may fall back to cwd.
-func repoRoot() string {
-	cwd, err := os.Getwd()
+	abs, err := filepath.Abs(sensorPath)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("abs(%q): %w", sensorPath, err)
 	}
-	dir := cwd
-	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			if _, err := os.Stat(filepath.Join(dir, "skills", "run-sensor", "scripts")); err == nil {
-				return dir
-			}
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
+	candidate := filepath.Dir(filepath.Dir(filepath.Dir(abs)))
+	info, err := os.Stat(filepath.Join(candidate, ".harness"))
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("no project root found: cwd %q is not inside a harness project, and %q has no .harness/ child", cwd, candidate)
 	}
-	return ""
+	return candidate, nil
+}
+
+func signalCancellableContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-ch:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
 }

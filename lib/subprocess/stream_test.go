@@ -217,6 +217,36 @@ func TestStreamSubprocess_NoTeeWhenRunDirEmpty(t *testing.T) {
 	// Nothing to assert about disk; the absence of a panic / RunDir-related error is the check.
 }
 
+func TestStreamSubprocess_RespectsDir(t *testing.T) {
+	tmp := t.TempDir()
+	outFile := filepath.Join(tmp, "pwd.out")
+
+	var stdout, stderr bytes.Buffer
+	res, err := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
+		Command:  "pwd > " + outFile,
+		Envelope: envelopeFor(t),
+		Stdout:   &stdout,
+		Stderr:   &stderr,
+		Dir:      tmp,
+	})
+	if err != nil {
+		t.Fatalf("StreamSubprocess: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit=%d want 0", res.ExitCode)
+	}
+
+	got, readErr := os.ReadFile(outFile)
+	if readErr != nil {
+		t.Fatalf("read pwd.out: %v", readErr)
+	}
+	want, _ := filepath.EvalSymlinks(tmp)
+	gotResolved, _ := filepath.EvalSymlinks(strings.TrimSpace(string(got)))
+	if gotResolved != want {
+		t.Errorf("subprocess cwd = %q, want %q", gotResolved, want)
+	}
+}
+
 func TestStreamSubprocess_WritesIndividualsToSignalsLog(t *testing.T) {
 	_, runID, runDir := testfixtures.WithRunDir(t, "alpha", "")
 

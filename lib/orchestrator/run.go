@@ -121,7 +121,7 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 	}
 
 	target := pre.Order[len(pre.Order)-1]
-	_, code = RunOneWithRoot(ctx, target, schemasDir, v, root, stdout, stderr)
+	_, code = RunOneWithRoot(ctx, target, projectRoot, schemasDir, v, root, stdout, stderr)
 	return code
 }
 

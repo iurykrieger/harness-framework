@@ -3,6 +3,7 @@ package subprocess_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -36,6 +37,42 @@ func TestSpawnDetached_StartsAndWritesToLog(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("log never populated")
+}
+
+func TestSpawnDetached_RespectsDir(t *testing.T) {
+	tmp := t.TempDir()
+	logFile := filepath.Join(tmp, "out.log")
+	if err := os.WriteFile(logFile, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := subprocess.SpawnDetached(subprocess.DetachConfig{
+		Command: "pwd > " + filepath.Join(tmp, "pwd.out"),
+		LogFile: logFile,
+		Dir:     tmp,
+	})
+	if err != nil {
+		t.Fatalf("SpawnDetached: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-res.PGID, syscall.SIGKILL)
+	})
+
+	// Wait for the pwd command to flush.
+	deadline := time.Now().Add(1 * time.Second)
+	var got []byte
+	for time.Now().Before(deadline) {
+		got, _ = os.ReadFile(filepath.Join(tmp, "pwd.out"))
+		if len(got) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	want, _ := filepath.EvalSymlinks(tmp)
+	gotResolved, _ := filepath.EvalSymlinks(strings.TrimSpace(string(got)))
+	if gotResolved != want {
+		t.Errorf("subprocess cwd = %q, want %q", gotResolved, want)
+	}
 }
 
 func TestSpawnDetached_PIDAndPGIDPopulated(t *testing.T) {

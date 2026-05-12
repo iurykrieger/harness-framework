@@ -29,6 +29,7 @@ Durable conventions. Apply them to every change.
 7. **One script, one clear job.** Each script does a single thing. No subcommands, no `--mode` flags, no positional dispatch arguments. If the same Go file would be invoked as `tool foo` and `tool bar` for different operations, split it into `foo.go` and `bar.go`. Required positional inputs and one-shot toggles (e.g. `--schemas-dir`) are fine; mode/operation switches are not. Shared logic lives in a sibling `lib/` subpackage; build tags on each main file (e.g. `//go:build foo` on `foo.go`) let several `package main` scripts coexist in the same directory.
 8. **Every Go script ships with Go tests** in the same `scripts/` directory. Tests cover behavior, functional requirements, declared use cases, and acceptance criteria. Use the standard `testing` package; table-driven tests are the default.
 9. **`lib/` organizes by context, not by type.** Subdirectories under `lib/` are contexts — entities (`sensor/`, `signal/`) or runtime concerns (`schema/`, `subprocess/`, `template/`, `cli/`). Each file inside a context is named for the action or aspect it implements (`validate.go`, `load.go`, `aggregate.go`, `render.go`), not for the function or struct it contains. Two extremes to avoid: a single sprawling file per package, and one public function per file. Aim for 2–6 cohesive files per context, each with a sibling `_test.go`. Promote a context to its own subdirectory only when it has enough cohesive code to justify the boundary; until then, fold related actions together. Cross-package test fixtures live in `lib/testfixtures/` (regular Go package, not `_test.go`) so subpackage tests can import them.
+10. **No temporal or version-history content inside `skills/<name>/SKILL.md` (or any other Skill instruction).** Skill bodies are durable agent instructions; they describe the current behavior of the plugin in present tense and nothing else. Never reference issue numbers, closed/open PRs, prior plugin versions, "legacy" paths, migration notes for upgraders, or "after PR #X" annotations inside a Skill — that prose decays the moment the surrounding code moves and silently misleads future agents. The same restraint applies to Go script package comments and runtime evidence text read by other skills. If a fact only makes sense in light of a particular point in the project's timeline, it belongs in a commit message, a CHANGELOG entry, a PR description, or a generic project-rule line in this CLAUDE.md — not inside a Skill.
 
 ## Architecture
 
@@ -111,24 +112,51 @@ Disable per-shell with `HARNESS_AUTOFILE_ISSUES=0`. The repo it files against is
 
 Single Go module at the repo root: `module github.com/iurykrieger/harness-framework` (Go 1.25). Per-skill modules only if a skill needs an isolated dependency graph.
 
+The plugin **does not ship pre-built binaries**. Every script — runners, registry skills, hooks, and the watcher — is invoked via `go run`. The canonical invocation contract is:
+
+```bash
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=<tag> \
+  ./skills/<name>/scripts <args>
+```
+
+Three pieces, each load-bearing:
+
+- `-C "${CLAUDE_PLUGIN_ROOT}"` chdirs the `go` process itself to the plugin checkout before any module resolution. The user's `go.mod`/`go.work` cannot interfere.
+- `HARNESS_REGISTRY_ROOT="$(pwd)"` captures the agent's cwd (the user's project root) before `-C` moves `go`. Every registry-touching skill consults this via `lib/registry.Lookup`; the runner threads it into subprocess `Dir` so sensor commands keep running from the project root.
+- `GOWORK=off` neutralizes any `go.work` in the user's tree.
+
+`${CLAUDE_PLUGIN_ROOT}` is exposed by Claude Code to plugin-originated commands. Scripts emit `verdict=error metadata.cause=plugin_root_missing` if it is empty.
+
+### Local verification
+
 ```bash
 go test ./lib/...                                     # the shared library
 go test -tags=run_computational ./skills/...          # the computational runner
 go test -tags=run_inferential   ./skills/...          # the inferential runner
+go test -tags=start_sensor      ./skills/...          # the start-sensor runner
+go test -tags=stop_sensor       ./skills/...
+go test -tags=list_sensors      ./skills/...
+go test -tags=tail_sensor       ./skills/...
+go test -tags=heal_retry_original ./skills/heal-sensor/...
 go vet -tags=run_computational  ./...
 go vet -tags=run_inferential    ./...
 
-# Run a sensor end-to-end:
-go run -tags=run_computational ./skills/run-sensor/scripts <sensor>.json
-go run -tags=run_inferential ./skills/run-sensor/scripts [--slot k=v]... <sensor>.json
+# Run a sensor end-to-end (from the user's project, with CLAUDE_PLUGIN_ROOT set):
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_computational \
+  ./skills/run-sensor/scripts <sensor-id>
 ```
 
-The `run-sensor` skill ships two scripts under `skills/run-sensor/scripts/`, each gated by a build tag so they coexist:
+### Watcher latency
 
-- **`run-computational.go`** (`//go:build run_computational`) — thin CLI wrapper over `lib.StreamSubprocess`. Resolves the sensor path, validates against `schemas/sensor.json`, compiles `execution.output_parsing.patterns` (when present), spawns `sh -c <command>`, streams JSONL individual Signals, computes the aggregate via `MapExitCode` × `MaxStreamVerdict` × `Aggregate`, validates and prints.
-- **`run-inferential.go`** (`//go:build run_inferential`) — thin CLI wrapper that uses the same streaming pipeline. The sensor's `command` is an LLM CLI; the runner exposes the rendered `user_prompt_template` as `HARNESS_PROMPT` and post-processes a `HARNESS_AGGREGATE_CONFIDENCE=<float>` line (if present on the subprocess stdout) to drive the calibration `fail → warn` downgrade. No HTTP and no Anthropic-specific knowledge — any LLM CLI that respects the env-var prompt protocol works.
+`/start-sensor` spawns the watcher via `go run`, which means the watcher is compiled on every invocation. With a warm Go build cache, the compile-link step costs ~150–500ms; with a cold cache (fresh plugin install or after `go clean -cache`), it costs ~600ms–1s. The cost is paid once per `/start-sensor`; subsequent reads via `/tail-sensor` and `/list-sensors` are unaffected.
 
-Shared logic lives in the top-level `lib/` package (`schema.go`, `envelope.go`, `path.go`, `exitcode.go`, `template.go`, `patterns.go`, `aggregate.go`, `stream.go`), importable as `github.com/iurykrieger/harness-framework/lib`. Both runner scripts auto-discover `schemas/` by walking up from `cwd`; pass `--schemas-dir=<path>` to override. Exit codes: `0` Signal printed, `1` schema/pattern/slot failure, `2` usage or I/O error. Dependency: `github.com/santhosh-tekuri/jsonschema/v5` (Draft 2020-12 with cross-file `$ref`).
+### Requirements
+
+- Go 1.20+ (the `-C` flag arrived in 1.20; `go.mod` pins `go 1.25`).
+- `CLAUDE_PLUGIN_ROOT` exposed by Claude Code.
+- `go` on PATH (Claude Code's `go` toolchain is the default).
 
 ## References
 

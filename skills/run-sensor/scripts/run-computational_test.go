@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
@@ -238,50 +237,36 @@ func TestRun_BlockingSensorRejected(t *testing.T) {
 	}
 }
 
-func TestRunComputational_HarnessRegistryRootRedirectsPersistence(t *testing.T) {
-	// Set the env var to an isolated tempdir. The runner should use this
-	// as its project root, NOT the cwd that invoked it.
-	tempRoot := t.TempDir()
-	t.Setenv("HARNESS_REGISTRY_ROOT", tempRoot)
+// TestRunComputational_AcceptsAbsolutePath verifies that run-computational
+// accepts an absolute file path in addition to a bare sensor id.
+//
+// /heal-sensor's retry-original.go passes absolute paths to the runner.
+// sensor.Resolve detects path-shaped inputs via looksLikePath and routes
+// through resolvePath instead of the bare-id regex, so this test guards
+// against regressions to id-only resolution.
+func TestRunComputational_AcceptsAbsolutePath(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	root := t.TempDir()
+	id := writeSensor(t, root, "abs-path-sensor", func(s map[string]interface{}) {
+		s["execution"].(map[string]interface{})["command"] = "true"
+	})
+	absPath := filepath.Join(root, ".harness", "sensors", id+".json")
 
-	// Materialize a minimal sensor at the canonical location inside tempRoot.
-	if err := os.MkdirAll(filepath.Join(tempRoot, ".harness", "sensors"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	s := testfixtures.ValidSensorComputational()
-	s["id"] = "redirect-test"
-	body, err := json.Marshal(s)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tempRoot, ".harness", "sensors", "redirect-test.json"), body, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	// Discover should resolve to tempRoot (env var wins).
-	cwd := t.TempDir()
-	projectRoot, _, err := registry.Discover(cwd)
-	if err != nil {
-		t.Fatalf("Discover: %v", err)
-	}
-	want, _ := filepath.EvalSymlinks(tempRoot)
-	got, _ := filepath.EvalSymlinks(projectRoot)
-	if got != want {
-		t.Fatalf("Discover returned %q, want %q (HARNESS_REGISTRY_ROOT must win over cwd)", projectRoot, tempRoot)
+	if !filepath.IsAbs(absPath) {
+		t.Fatalf("expected absolute path, got %q", absPath)
 	}
 
-	// Invoke the run() entry directly.
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"redirect-test"}, projectRoot, &stdout, &stderr)
+	var out, errBuf bytes.Buffer
+	// Pass the absolute path. The runner re-derives projectRoot from the
+	// sensor's canonical location (.../<projectRoot>/.harness/sensors/<id>.json),
+	// so projectRoot passed in here is overridden inside run().
+	code := run([]string{"--schemas-dir", schemasDir, absPath}, "" /* projectRoot overridden */, &out, &errBuf)
+
+	// Sentinel for a regression to id-only resolution: exit 2 + "does not match".
+	if code == 2 && strings.Contains(errBuf.String(), "does not match") {
+		t.Fatalf("runner rejected absolute path via id regex: stderr=%s", errBuf.String())
+	}
 	if code != 0 {
-		t.Fatalf("run exit=%d, stderr=%s", code, stderr.String())
-	}
-
-	// Runtime artifacts must be under tempRoot, NOT under cwd.
-	if _, err := os.Stat(filepath.Join(cwd, ".harness", "runtime")); !os.IsNotExist(err) {
-		t.Errorf("runtime polluted cwd: %s/.harness/runtime exists", cwd)
-	}
-	if _, err := os.Stat(filepath.Join(tempRoot, ".harness", "runtime", "redirect-test")); err != nil {
-		t.Errorf("runtime missing in tempRoot: %v", err)
+		t.Fatalf("expected exit 0 for absolute path, got %d stderr=%s", code, errBuf.String())
 	}
 }

@@ -16,15 +16,17 @@ import (
 )
 
 // uniqueSensorID returns a schema-valid id ([a-z][a-z0-9-]*) that no
-// previous test run could have created — used to assert "the real repo's
-// .harness/runtime/ has no entry by this name after the script runs."
+// previous test run could have created — used to assert per-run runtime
+// directories independently from any other test.
 func uniqueSensorID(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
 
-// writeTempSensor materializes a computational sensor JSON file with the
-// given id. Returns the absolute file path.
-func writeTempSensor(t *testing.T, id string) string {
+// writeProjectSensor materializes a computational sensor JSON at the
+// canonical <root>/.harness/sensors/<id>.json location and returns its
+// absolute path. The orchestrator persists runtime under
+// <root>/.harness/runtime/<id>/<run-id>/ when invoked against this path.
+func writeProjectSensor(t *testing.T, root, id string) string {
 	t.Helper()
 	s := testfixtures.ValidSensorComputational()
 	s["id"] = id
@@ -32,7 +34,11 @@ func writeTempSensor(t *testing.T, id string) string {
 	if err != nil {
 		t.Fatalf("marshal sensor: %v", err)
 	}
-	path := filepath.Join(t.TempDir(), "sensor.json")
+	dir := filepath.Join(root, ".harness", "sensors")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sensors: %v", err)
+	}
+	path := filepath.Join(dir, id+".json")
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatalf("write sensor: %v", err)
 	}
@@ -49,49 +55,63 @@ func writeTempFixture(t *testing.T, content string) string {
 	return path
 }
 
-// repoRootDir resolves the harness-framework repo root from cwd, mirroring
-// the script's own repoRoot() helper. Used to assert pollution did not
-// land in the project's .harness/runtime/ tree.
-func repoRootDir(t *testing.T) string {
-	t.Helper()
-	got := repoRoot()
-	if got == "" {
-		t.Fatal("repoRoot() returned empty; test cannot locate project root")
-	}
-	return got
-}
-
-func TestReplayFixture_PreservesSensorIDAndIsolatesRuntime(t *testing.T) {
-	id := uniqueSensorID("replay-iso")
-	sensorPath := writeTempSensor(t, id)
+// TestReplayFixture_PersistsRunUnderCanonicalRuntime drives the script
+// against a freshly-created project tree. It asserts:
+//   - the aggregate Signal preserves sensor.id verbatim
+//   - the run materializes a <projectRoot>/.harness/runtime/<id>/<run-id>/
+//     directory, i.e. the same shape any other valid /run-sensor run
+//     would produce.
+func TestReplayFixture_PersistsRunUnderCanonicalRuntime(t *testing.T) {
+	proj := t.TempDir()
+	id := uniqueSensorID("replay-canonical")
+	sensorPath := writeProjectSensor(t, proj, id)
 	fixturePath := writeTempFixture(t, "")
 
+	// Point HARNESS_REGISTRY_ROOT at the test project so resolveProjectRoot
+	// picks it up regardless of where `go test` was invoked from.
+	t.Setenv("HARNESS_REGISTRY_ROOT", proj)
+
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--sensor", sensorPath, "--fixture", fixturePath}, &stdout, &stderr)
+	code := run([]string{
+		"--sensor", sensorPath,
+		"--fixture", fixturePath,
+		"--schemas-dir", testfixtures.RepoSchemasDir(t),
+	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
 
-	// The aggregate Signal is the last line of stdout (JSONL). Decode it.
+	// The aggregate Signal is the last JSONL line on stdout.
 	out := strings.TrimSpace(stdout.String())
-	lines := strings.Split(out, "\n")
-	if len(lines) == 0 {
+	if out == "" {
 		t.Fatalf("no stdout; stderr=%s", stderr.String())
 	}
+	lines := strings.Split(out, "\n")
 	var agg map[string]interface{}
 	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &agg); err != nil {
 		t.Fatalf("decode aggregate: %v; raw=%q", err, lines[len(lines)-1])
 	}
 	if got, _ := agg["sensor_id"].(string); got != id {
-		t.Fatalf("aggregate.sensor_id = %q, want %q (no replay- prefix)", got, id)
+		t.Fatalf("aggregate.sensor_id = %q, want %q (sensor.id preserved verbatim)", got, id)
 	}
 
-	// Runtime isolation: the project's .harness/runtime/<id>/ MUST NOT
-	// exist. The script set HARNESS_REGISTRY_ROOT to a tempdir for the
-	// runner; any artifacts went there and were removed on exit.
-	polluted := filepath.Join(repoRootDir(t), ".harness", "runtime", id)
-	if _, err := os.Stat(polluted); !os.IsNotExist(err) {
-		t.Fatalf("runtime pollution: %s exists (stat err=%v)", polluted, err)
+	// The orchestrator wrote a <run-id>/ directory under the canonical
+	// runtime tree. Its name is <pid>-<short>, so just assert the parent
+	// directory exists and contains exactly one entry.
+	sensorRuntimeDir := filepath.Join(proj, ".harness", "runtime", id)
+	entries, err := os.ReadDir(sensorRuntimeDir)
+	if err != nil {
+		t.Fatalf("read runtime dir %s: %v", sensorRuntimeDir, err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("runtime entries: got %d, want 1 (single <run-id>/)", len(entries))
+	}
+	runID := entries[0].Name()
+	runDir := filepath.Join(sensorRuntimeDir, runID)
+	for _, name := range []string{"raw.log", "signals.log"} {
+		if _, err := os.Stat(filepath.Join(runDir, name)); err != nil {
+			t.Errorf("expected %s in %s: %v", name, runDir, err)
+		}
 	}
 }
 
@@ -167,19 +187,5 @@ func TestReplayFixture_SensorFileMissing(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "read sensor") {
 		t.Fatalf("stderr lacks read error: %s", stderr.String())
-	}
-}
-
-func TestTagForType(t *testing.T) {
-	cases := map[string]string{
-		"computational": "run_computational",
-		"inferential":   "run_inferential",
-		"":              "run_computational",
-		"unknown":       "run_computational",
-	}
-	for input, want := range cases {
-		if got := tagForType(input); got != want {
-			t.Errorf("tagForType(%q) = %q, want %q", input, got, want)
-		}
 	}
 }

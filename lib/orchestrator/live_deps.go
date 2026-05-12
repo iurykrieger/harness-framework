@@ -83,7 +83,7 @@ func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string
 		}
 		// Not live: start it.
 		startedFresh = true
-		newID, startErr := startBlockingDep(&rs, r, dep, holder)
+		newID, startErr := startBlockingDep(&rs, r, dep, holder, projectRoot)
 		if startErr != nil {
 			return startErr
 		}
@@ -186,11 +186,15 @@ func DetachLiveDep(dep LiveDep, projectRoot, holderID string, v *schema.Validato
 // given holder. Returns the freshly-minted run_id so the caller can
 // thread it into LiveDep.
 //
+// projectRoot is set as the working directory for the detached subprocess
+// so the blocking dep's command runs from the user's project directory,
+// not from the runner's own cwd.
+//
 // No watcher process is spawned for orchestrator-managed deps — the
 // dep runs unobserved (signals.log stays empty); /stop-sensor of dep
 // would also see no individuals, which is intentional for the
 // orchestrator path (the dependent's aggregate is what matters).
-func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, holder registry.HeldByEntry) (string, error) {
+func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, holder registry.HeldByEntry, projectRoot string) (string, error) {
 	execMap, _ := dep.JSON["execution"].(map[string]interface{})
 	command, _ := execMap["command"].(string)
 	if err := os.MkdirAll(r.SensorDir(dep.ID), 0o755); err != nil {
@@ -203,7 +207,7 @@ func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, 
 		return "", fmt.Errorf("create signals.log: %w", err)
 	}
 
-	det, err := subprocess.SpawnDetached(subprocess.DetachConfig{Command: command, LogFile: r.RawLog(dep.ID)})
+	det, err := subprocess.SpawnDetached(subprocess.DetachConfig{Command: command, LogFile: r.RawLog(dep.ID), Dir: projectRoot})
 	if err != nil {
 		return "", fmt.Errorf("spawn: %w", err)
 	}
