@@ -1,5 +1,4 @@
-// test/heal-e2e/heal_e2e_test.go
-package healE2E_test
+package heal_test
 
 import (
 	"bytes"
