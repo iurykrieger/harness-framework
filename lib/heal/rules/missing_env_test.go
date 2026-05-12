@@ -57,25 +57,36 @@ func TestRuleMissingEnv_NegativeWrongVerdict(t *testing.T) {
 }
 
 // TestRuleMissingEnv_MatchesRunnerOutput locks the contract that the
-// runner's per-var rationale (built by sensor.BuildMissingEnvSignal)
-// is matched by missingEnvRegex. The previous block-style rationale
-// ("Sensor cannot run: N required env var(s) missing ...") did not
-// match the regex, leaving rule_missing_env dead in production.
+// runner's per-var rationale (built by sensor.BuildRequiresGateSignal
+// from a Gate of kind=env Failures) is matched by missingEnvRegex. The
+// previous block-style rationale ("Sensor cannot run: N required env
+// var(s) missing ...") did not match the regex, leaving
+// rule_missing_env dead in production.
 func TestRuleMissingEnv_MatchesRunnerOutput(t *testing.T) {
 	envelope := sensor.Envelope{
 		SensorID: "x", Version: "0.1.0", RunID: "abc",
 		StartedAt: "2026-05-08T00:00:00Z", SensorType: "computational",
 	}
-	missing := []sensor.MissingEnv{
-		{Name: "RSA_PRIVATE_KEY", Description: "PEM contents for JWT signing"},
-		{Name: "GCP_PROJECT"},
-	}
-	sig := sensor.BuildMissingEnvSignal(envelope, "single", missing)
+	gate := sensor.Gate{Failures: []sensor.Failure{
+		{
+			Kind:       "env",
+			Identifier: "RSA_PRIVATE_KEY",
+			Rationale:  "Required environment variable RSA_PRIVATE_KEY is not set: PEM contents for JWT signing",
+			HealShape:  "missing-env",
+		},
+		{
+			Kind:       "env",
+			Identifier: "GCP_PROJECT",
+			Rationale:  "Required environment variable GCP_PROJECT is not set",
+			HealShape:  "missing-env",
+		},
+	}}
+	sig := sensor.BuildRequiresGateSignal(envelope, "single", gate)
 
 	// Convert the runner-emitted Signal map into the heal.Signal view.
 	rawEv, _ := sig["evidence"].([]interface{})
-	if len(rawEv) != len(missing) {
-		t.Fatalf("expected one evidence entry per missing var, got %d", len(rawEv))
+	if len(rawEv) != len(gate.Failures) {
+		t.Fatalf("expected one evidence entry per failure, got %d", len(rawEv))
 	}
 	healSig := heal.Signal{
 		Verdict:  "error",
