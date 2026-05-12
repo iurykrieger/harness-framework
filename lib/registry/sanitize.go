@@ -111,6 +111,21 @@ func SanitizeAll(rs *RunningSensors) []SanitizeReport {
 			newHolders = append(newHolders, h)
 		}
 		e.HeldBy = newHolders
+
+		// Legacy migration: pre-spec entries lack RunID/Blocking. Synthesize a
+		// <pid>-legacy run_id and assume blocking=true (start-sensor was the
+		// only producer before this spec). LogDir is preserved as-is; the
+		// *Run path helpers won't apply — read-only consumers fall back to
+		// LegacyRawLog / LegacySignalsLog when RunID has the "-legacy" suffix.
+		if e.RunID == "" {
+			legacyRunID := fmt.Sprintf("%d-legacy", e.PID)
+			reports = append(reports, SanitizeReport{
+				SensorID: e.SensorID, Field: "run_id", OldValue: 0, Dropped: false,
+			})
+			e.RunID = legacyRunID
+			e.Blocking = true
+		}
+
 		keep = append(keep, e)
 	}
 	rs.Entries = keep

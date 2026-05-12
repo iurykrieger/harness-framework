@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -154,7 +155,8 @@ func TestStop_HoldByDependent_RefusesStop(t *testing.T) {
 		Version: 1,
 		Entries: []registry.RunningSensorEntry{
 			{
-				SensorID: "live", PID: registry.SelfPID(), PGID: registry.SelfPID(), HeldBy: []registry.HeldByEntry{
+				SensorID: "live", RunID: "1-aa", Blocking: true,
+				PID: registry.SelfPID(), PGID: registry.SelfPID(), HeldBy: []registry.HeldByEntry{
 					{Kind: "manual"},
 					{Kind: "sensor", ID: "B", PID: registry.SelfPID()},
 				},
@@ -192,6 +194,8 @@ func TestStop_ReapsDeadHolders_WhenFlagSet(t *testing.T) {
 		Entries: []registry.RunningSensorEntry{
 			{
 				SensorID: "live",
+				RunID:    "1-bb",
+				Blocking: true,
 				PID:      3_999_998,
 				PGID:     3_999_998,
 				HeldBy: []registry.HeldByEntry{
@@ -258,5 +262,118 @@ func TestStopWatcher_NonPositivePID(t *testing.T) {
 		if killedForcefully || latencyMS != 0 {
 			t.Errorf("pid=%d: got (%v, %d), want (false, 0)", pid, killedForcefully, latencyMS)
 		}
+	}
+}
+
+func TestStop_BlockingFalse_TerminatesRunnerSubprocess(t *testing.T) {
+	proj := t.TempDir()
+	// Spawn a real, long-running subprocess we'll target. Use Setpgid so
+	// kill(-pgid, …) reaches only the subprocess group, not the test
+	// binary's group.
+	sub := exec.Command("sleep", "30")
+	sub.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := sub.Start(); err != nil {
+		t.Skipf("cannot spawn sleep: %v", err)
+	}
+	defer func() { _ = sub.Process.Kill(); _, _ = sub.Process.Wait() }()
+
+	r := registry.NewRoot(proj)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{{
+		SensorID:  "alpha",
+		RunID:     fmt.Sprintf("%d-runX", sub.Process.Pid),
+		Blocking:  false,
+		PID:       sub.Process.Pid,
+		PGID:      sub.Process.Pid,
+		StartedAt: "2026-05-11T00:00:00Z",
+	}}}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatal(err)
+	}
+
+	res := resultFor(t, proj, true)
+	exit, sig := runStop(res, []string{"alpha"}, false)
+	if exit != 0 {
+		t.Fatalf("exit=%d, sig=%+v", exit, sig)
+	}
+	// Subprocess should be reaped (Wait returns once it exits).
+	done := make(chan struct{})
+	go func() { _, _ = sub.Process.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("subprocess pid=%d did not exit after stop", sub.Process.Pid)
+	}
+	// Entry should be removed.
+	after, _ := registry.Load(r)
+	if len(after.Entries) != 0 {
+		t.Errorf("entry not removed: %+v", after.Entries)
+	}
+	if sig != nil {
+		md, _ := sig["metadata"].(map[string]interface{})
+		if md != nil && md["kind"] != "stopped" && md["kind"] != "aggregate" {
+			t.Errorf("metadata.kind: got %v, want stopped or aggregate", md["kind"])
+		}
+	}
+}
+
+func TestStop_BlockingPreferred_WhenMixedActives(t *testing.T) {
+	// Two entries for "alpha": one blocking:true (real PID), one blocking:false.
+	// /stop-sensor alpha (no run-id) must target the blocking:true one.
+	proj := t.TempDir()
+	blockingSub := exec.Command("sleep", "30")
+	blockingSub.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := blockingSub.Start(); err != nil {
+		t.Skipf("spawn: %v", err)
+	}
+	defer func() { _ = blockingSub.Process.Kill(); _, _ = blockingSub.Process.Wait() }()
+	nonBlockingSub := exec.Command("sleep", "30")
+	nonBlockingSub.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := nonBlockingSub.Start(); err != nil {
+		t.Skipf("spawn: %v", err)
+	}
+	defer func() { _ = nonBlockingSub.Process.Kill(); _, _ = nonBlockingSub.Process.Wait() }()
+
+	r := registry.NewRoot(proj)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{
+			SensorID: "alpha", RunID: "nb-1", Blocking: false,
+			PID: nonBlockingSub.Process.Pid, PGID: nonBlockingSub.Process.Pid,
+			StartedAt: "2026-05-11T00:00:00Z",
+		},
+		{
+			SensorID: "alpha", RunID: "b-1", Blocking: true,
+			PID: blockingSub.Process.Pid, PGID: blockingSub.Process.Pid,
+			WatcherPID: 1, StartedAt: "2026-05-11T00:00:00Z",
+		},
+	}}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatal(err)
+	}
+
+	res := resultFor(t, proj, true)
+	exit, _ := runStop(res, []string{"alpha"}, false)
+	if exit != 0 {
+		t.Fatalf("exit=%d", exit)
+	}
+	after, _ := registry.Load(r)
+	var leftBlocking, leftNonBlocking int
+	for _, e := range after.Entries {
+		if e.Blocking {
+			leftBlocking++
+		} else {
+			leftNonBlocking++
+		}
+	}
+	if leftBlocking != 0 {
+		t.Errorf("blocking entry not removed: %+v", after.Entries)
+	}
+	if leftNonBlocking != 1 {
+		t.Errorf("non-blocking entry mistakenly removed: %+v", after.Entries)
 	}
 }

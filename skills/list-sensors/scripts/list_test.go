@@ -154,6 +154,73 @@ func TestList_AnnotatesOrphan(t *testing.T) {
 	}
 }
 
+// TestList_MultipleEntriesPerSensor verifies that when the registry carries
+// multiple active runs of the same sensor (different run_ids), runList emits
+// one entry per run, includes run_id and blocking on each, and conditionally
+// adds watcher_pid / watcher_alive only for blocking entries.
+func TestList_MultipleEntriesPerSensor(t *testing.T) {
+	proj := t.TempDir()
+	r := registry.NewRoot(proj)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{Version: 1, Entries: []registry.RunningSensorEntry{
+		{SensorID: "alpha", RunID: "1-aa", Blocking: false, PID: registry.SelfPID(), PGID: registry.SelfPID(), StartedAt: "2026-05-11T00:00:00Z"},
+		{SensorID: "alpha", RunID: "2-bb", Blocking: true, PID: registry.SelfPID(), PGID: registry.SelfPID(), WatcherPID: 9999, StartedAt: "2026-05-11T00:00:00Z"},
+	}}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatal(err)
+	}
+
+	res := resultFor(t, proj, true)
+	var buf, errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	exit := runList(b, &buf, &errBuf)
+	if exit != 0 {
+		t.Fatalf("exit: got %d, want 0", exit)
+	}
+	var sig map[string]interface{}
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &sig); err != nil {
+		t.Fatal(err)
+	}
+	md, _ := sig["metadata"].(map[string]interface{})
+	entries, _ := md["entries"].([]interface{})
+	if len(entries) != 2 {
+		t.Fatalf("entries=%d, want 2", len(entries))
+	}
+	for _, raw := range entries {
+		e, _ := raw.(map[string]interface{})
+		if _, ok := e["run_id"].(string); !ok {
+			t.Errorf("entry missing run_id: %+v", e)
+		}
+		if _, ok := e["blocking"].(bool); !ok {
+			t.Errorf("entry missing blocking: %+v", e)
+		}
+	}
+	// Non-blocking entry must NOT have watcher_pid / watcher_alive.
+	nonBlocking := entries[0].(map[string]interface{})
+	if nonBlocking["blocking"].(bool) {
+		nonBlocking = entries[1].(map[string]interface{})
+	}
+	if _, ok := nonBlocking["watcher_pid"]; ok {
+		t.Errorf("non-blocking entry should not carry watcher_pid: %+v", nonBlocking)
+	}
+	if _, ok := nonBlocking["watcher_alive"]; ok {
+		t.Errorf("non-blocking entry should not carry watcher_alive: %+v", nonBlocking)
+	}
+	// Blocking entry MUST have watcher_pid / watcher_alive.
+	blocking := entries[0].(map[string]interface{})
+	if !blocking["blocking"].(bool) {
+		blocking = entries[1].(map[string]interface{})
+	}
+	if _, ok := blocking["watcher_pid"]; !ok {
+		t.Errorf("blocking entry missing watcher_pid: %+v", blocking)
+	}
+	if _, ok := blocking["watcher_alive"]; !ok {
+		t.Errorf("blocking entry missing watcher_alive: %+v", blocking)
+	}
+}
+
 // TestList_RegistryMigratedSignal_ViaBootstrap verifies that when the registry
 // file contains legacy entries (e.g. missing watcher_pid), cli.Bootstrap emits
 // a registry_migrated warn Signal before runList emits the main list Signal.

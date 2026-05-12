@@ -46,3 +46,32 @@ func TestPaths_PerSensor(t *testing.T) {
 		t.Errorf("SignalsLog: got %q, want %q", got, want)
 	}
 }
+
+func TestRunDir(t *testing.T) {
+	r := registry.NewRoot("/tmp/proj")
+	got := r.RunDir("alpha", "12345-abc12345")
+	want := "/tmp/proj/.runtime/sensors/alpha/12345-abc12345"
+	if got != want {
+		t.Errorf("RunDir = %q, want %q", got, want)
+	}
+}
+
+func TestRawLogRun_SignalsLogRun(t *testing.T) {
+	r := registry.NewRoot("/tmp/proj")
+	if got := r.RawLogRun("alpha", "1-aa"); got != "/tmp/proj/.runtime/sensors/alpha/1-aa/raw.log" {
+		t.Errorf("RawLogRun = %q", got)
+	}
+	if got := r.SignalsLogRun("alpha", "1-aa"); got != "/tmp/proj/.runtime/sensors/alpha/1-aa/signals.log" {
+		t.Errorf("SignalsLogRun = %q", got)
+	}
+}
+
+func TestLegacyRawLog_LegacySignalsLog(t *testing.T) {
+	r := registry.NewRoot("/tmp/proj")
+	if got := r.LegacyRawLog("alpha"); got != "/tmp/proj/.runtime/sensors/alpha/raw.log" {
+		t.Errorf("LegacyRawLog = %q", got)
+	}
+	if got := r.LegacySignalsLog("alpha"); got != "/tmp/proj/.runtime/sensors/alpha/signals.log" {
+		t.Errorf("LegacySignalsLog = %q", got)
+	}
+}

@@ -6,6 +6,7 @@ import "testing"
 func TestRegisteredRules_OrderIsStable(t *testing.T) {
 	expected := []string{
 		"missing-env",
+		"missing-context",
 		"heal-hint",
 		"exit-code-127",
 		"prepare-template-copy",

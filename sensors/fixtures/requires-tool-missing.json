@@ -1,0 +1,42 @@
+{
+  "id": "requires-tool-missing",
+  "version": "0.1.0",
+  "name": "Requires Tool Missing (fixture)",
+  "description": "Asserts that the requires[] gate fails when a declared tool is not on PATH.",
+  "kind": "assertion",
+  "type": "computational",
+  "regulation": "maintainability",
+  "phase": "on-demand",
+  "determinism": "high",
+  "output": "stream",
+  "cost": {
+    "class": "cheap",
+    "latency": { "p50_ms": 1, "p95_ms": 5, "timeout_ms": 5000 },
+    "compute": { "cpu": "low", "memory_mb": 1 }
+  },
+  "triggers": [{ "on": "manual" }],
+  "requires": [
+    { "kind": "tool", "name": "definitely-not-on-PATH-xyz-1234" }
+  ],
+  "execution": {
+    "command": "echo this command should never run",
+    "exit_code_map": [
+      { "exit_code": 0, "verdict": "pass", "severity": "info" }
+    ],
+    "output_parsing": {
+      "patterns": [
+        { "regex": "never", "verdict": "pass", "severity": "info" }
+      ]
+    }
+  },
+  "verification": {
+    "golden_cases": [
+      {
+        "fixture": "self",
+        "expected_verdict": "error",
+        "expected_severity": "high",
+        "notes": "Tool 'definitely-not-on-PATH-xyz-1234' will never be on PATH."
+      }
+    ]
+  }
+}
