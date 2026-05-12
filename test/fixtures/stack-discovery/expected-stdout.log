@@ -1,0 +1,4 @@
+{"level":"info","ts":1747130000.123,"caller":"server/main.go:30","msg":"server listening","addr":":8080"}
+{"level":"info","ts":1747130001.234,"caller":"middleware/logger.go:80","msg":"\"GET http://localhost:8080/echo HTTP/1.1\" from 127.0.0.1:54321 - 200 3B in 312µs"}
+{"level":"info","ts":1747130002.345,"caller":"middleware/logger.go:80","msg":"\"GET http://localhost:8080/echo?status=400 HTTP/1.1\" from 127.0.0.1:54322 - 400 3B in 250µs"}
+{"level":"info","ts":1747130003.456,"caller":"middleware/logger.go:80","msg":"\"GET http://localhost:8080/echo?status=500 HTTP/1.1\" from 127.0.0.1:54323 - 500 3B in 280µs"}
