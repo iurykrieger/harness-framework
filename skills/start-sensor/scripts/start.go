@@ -299,7 +299,7 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 			WatcherPID: watcherPID,
 			StartedAt:  envelope.StartedAt,
 			Command:    command,
-			LogDir:     filepath.Join(".runtime", "sensors", id, runID),
+			LogDir:     filepath.Join(".harness", "runtime", id, runID),
 			HeldBy: []registry.HeldByEntry{
 				{Kind: "manual", AttachedAt: envelope.StartedAt},
 			},
@@ -354,7 +354,7 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 	aux := map[string]interface{}{
 		"pid":         spawned.det.PID,
 		"watcher_pid": spawned.watcherPID,
-		"log_dir":     filepath.Join(".runtime", "sensors", id, spawned.runID),
+		"log_dir":     filepath.Join(".harness", "runtime", id, spawned.runID),
 		"next_cursor": 0,
 	}
 	if len(prepResults) > 0 {

@@ -17,7 +17,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
-// writeSensor writes a sensor fixture to <root>/sensors/<id>.json and returns
+// writeSensor writes a sensor fixture to <root>/.harness/sensors/<id>.json and returns
 // the sensor id. Tests pass root as projectRoot so ResolveByID can find it.
 func writeSensor(t *testing.T, root, id string, mut func(map[string]interface{})) string {
 	t.Helper()
@@ -26,7 +26,7 @@ func writeSensor(t *testing.T, root, id string, mut func(map[string]interface{})
 	if mut != nil {
 		mut(s)
 	}
-	sensorsDir := filepath.Join(root, "sensors")
+	sensorsDir := filepath.Join(root, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestRun_UsageError(t *testing.T) {
 
 func TestRun_SensorNotFound(t *testing.T) {
 	root := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(root, "sensors"), 0o755)
+	_ = os.MkdirAll(filepath.Join(root, ".harness", "sensors"), 0o755)
 	var out, errBuf bytes.Buffer
 	code := run([]string{"--schemas-dir", testfixtures.RepoSchemasDir(t), "nonexistent"}, root, &out, &errBuf)
 	if code != 2 {
@@ -117,7 +117,7 @@ func TestRun_SensorNotFound(t *testing.T) {
 // 200ms sleep before SIGTERM is a known flake risk on slow CI.
 func TestRunComputational_SIGTERMSetsTerminatedExternally(t *testing.T) {
 	proj := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// Hand-rolled fixture: minimal valid computational sensor with a
@@ -151,7 +151,7 @@ func TestRunComputational_SIGTERMSetsTerminatedExternally(t *testing.T) {
 		},
 	}
 	b, _ := json.Marshal(sensorJSON)
-	if err := os.WriteFile(filepath.Join(proj, "sensors", "sleeper.json"), b, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(proj, ".harness", "sensors", "sleeper.json"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 

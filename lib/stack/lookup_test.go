@@ -7,14 +7,11 @@ import (
 )
 
 // Lookup tests use HARNESS_REGISTRY_ROOT to pin the project root.
-// Phase 2 changes the walk-up marker; until then, fixtures include an
-// empty sensors/ subdir so registry.Discover succeeds via either path.
+// Fixtures include an empty .harness/ subdir so registry.Discover
+// walk-up finds the marker.
 
 func TestLookup_StackPresent(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "sensors"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.MkdirAll(filepath.Join(root, ".harness"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +39,7 @@ func TestLookup_StackPresent(t *testing.T) {
 
 func TestLookup_StackAbsent(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "sensors"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, ".harness"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HARNESS_REGISTRY_ROOT", root)

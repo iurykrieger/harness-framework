@@ -99,7 +99,7 @@ func TestValidateAndPersist_OverwritesStale(t *testing.T) {
 func TestValidateAndPersist_CreatesNestedOutDir(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
 	parent := t.TempDir()
-	out := filepath.Join(parent, "deep", "sensors")
+	out := filepath.Join(parent, "deep", ".harness", "sensors")
 	body, _ := json.Marshal(testfixtures.ValidSensorComputational())
 
 	if _, err := sensor.ValidateAndPersist(body, out, schemasDir); err != nil {

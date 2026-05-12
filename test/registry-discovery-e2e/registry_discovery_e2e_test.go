@@ -112,12 +112,12 @@ func makeScratchDir(t *testing.T) string {
 	return dir
 }
 
-// makeProject scaffolds <parent>/proj/sensors/<id>.json containing a
+// makeProject scaffolds <parent>/proj/.harness/sensors/<id>.json containing a
 // trivial blocking sensor. Returns the project root path.
 func makeProject(t *testing.T, parent, id, command string) string {
 	t.Helper()
 	proj := filepath.Join(parent, "proj")
-	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	sensor := map[string]interface{}{
@@ -160,7 +160,7 @@ func makeProject(t *testing.T, parent, id, command string) string {
 		},
 	}
 	body, _ := json.MarshalIndent(sensor, "", "  ")
-	if err := os.WriteFile(filepath.Join(proj, "sensors", id+".json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(proj, ".harness", "sensors", id+".json"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return proj
@@ -257,7 +257,7 @@ func TestE2E_DiscoverySharesStateAcrossCwds(t *testing.T) {
 		t.Fatalf("start verdict: got %v\nstdout=%s", startSig["verdict"], stdout)
 	}
 	startMD := startSig["metadata"].(map[string]interface{})
-	wantPath := filepath.Join(proj, ".runtime", "sensors", "running_sensors.json")
+	wantPath := filepath.Join(proj, ".harness", "runtime", "running_sensors.json")
 	if startMD["registry_path"] != wantPath {
 		t.Errorf("start registry_path: got %v, want %v", startMD["registry_path"], wantPath)
 	}
@@ -296,7 +296,7 @@ func TestE2E_DiscoverySharesStateAcrossCwds(t *testing.T) {
 }
 
 // TestE2E_OutsideProjectFailsDiscovery: list from a directory with no
-// sensors/ marker anywhere up to filesystem root (modulo the test's
+// .harness/ marker anywhere up to filesystem root (modulo the test's
 // tempdir parent) returns an error signal.
 func TestE2E_OutsideProjectFailsDiscovery(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
@@ -320,7 +320,7 @@ func TestE2E_OutsideProjectFailsDiscovery(t *testing.T) {
 	}
 	ev := sig["evidence"].([]interface{})
 	rationale := ev[0].(map[string]interface{})["rationale"].(string)
-	if !strings.Contains(rationale, "HARNESS_REGISTRY_ROOT") || !strings.Contains(rationale, "sensors") {
+	if !strings.Contains(rationale, "HARNESS_REGISTRY_ROOT") || !strings.Contains(rationale, ".harness") {
 		t.Errorf("rationale should mention both strategies, got: %q", rationale)
 	}
 }
@@ -386,10 +386,10 @@ func TestSanitize_LegacyMinusOneViaListSensors(t *testing.T) {
 
 	parent := makeScratchDir(t)
 	proj := filepath.Join(parent, "proj")
-	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(proj, ".runtime", "sensors"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(proj, ".harness", "runtime"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	legacy := []byte(`{
@@ -398,12 +398,12 @@ func TestSanitize_LegacyMinusOneViaListSensors(t *testing.T) {
     {
       "sensor_id": "run-api-local", "pid": 90006, "pgid": 90006,
       "watcher_pid": -1, "started_at": "2026-05-09T13:51:38Z",
-      "command": "docker compose up", "log_dir": ".runtime/sensors/run-api-local",
+      "command": "docker compose up", "log_dir": ".harness/runtime/run-api-local",
       "held_by": [{"kind": "manual", "attached_at": "2026-05-09T13:51:38Z"}]
     }
   ]
 }`)
-	regFile := filepath.Join(proj, ".runtime", "sensors", "running_sensors.json")
+	regFile := filepath.Join(proj, ".harness", "runtime", "running_sensors.json")
 	if err := os.WriteFile(regFile, legacy, 0o644); err != nil {
 		t.Fatal(err)
 	}
