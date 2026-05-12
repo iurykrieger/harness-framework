@@ -35,9 +35,11 @@ There is a second motivation for the same fix: the snippet violates project rule
 
 The fix is to extract the verification logic into a dedicated Go script that preserves `sensor.id` and isolates the runner's runtime persistence via an ephemeral `HARNESS_REGISTRY_ROOT`. `lib/registry.Discover` already accepts any absolute, existing directory for the env var (`lib/registry/root.go::validateEnvRoot` requires absolute path + existing directory + symlinks resolved, but does NOT require a `.harness/` child the way the walk-up path does), so a `mktemp -d` is a valid target.
 
-### Discovery during rebase: `RunWithDepsRoot` migration is incomplete
+### Two incomplete migrations discovered during execution
 
-PR #29 introduced `sensor.Resolve(idOrPath, projectRoot)` — a path-aware sensor reference resolver — and migrated some callers. PR #30 retargeted paths to `.harness/`. Neither completed the migration of `lib/orchestrator/live_deps.go::RunWithDepsRoot`, which still hardcodes the bare-id layout:
+PR #29 introduced `sensor.Resolve(idOrPath, projectRoot)` — a path-aware sensor reference resolver — and migrated some callers. PR #30 retargeted paths to `.harness/`. Neither finished the work in two adjacent spots:
+
+**1. `lib/orchestrator/live_deps.go::RunWithDepsRoot` still hardcodes the bare-id layout:**
 
 ```go
 // lib/orchestrator/live_deps.go:36 (current state on main)
@@ -48,29 +50,21 @@ func RunWithDepsRoot(ctx context.Context, id, projectRoot, schemasDir string, st
 }
 ```
 
-`run-computational.go` passes its raw `id` argument straight through. The documented happy-path command — `go run … @.harness/sensors/<id>.json` — works only by coincidence: the malformed path produced by the `filepath.Join` is unmade by `runWithDepsImpl`'s three-level `filepath.Dir` chain plus `loadRecursive`'s own call to `sensor.Resolve`. For an out-of-project absolute path (`/var/folders/.../sensor-XXX.json`, the shape `os.CreateTemp` produces in this spec's design), the unwind fails and the runner errors. So this spec MUST complete the `RunWithDepsRoot` migration before the replay-fixture script can pass `tempSensor.Name()` to the runner.
+`run-computational.go` passes its raw `id` argument straight through. The documented happy-path command — `go run … @.harness/sensors/<id>.json` — works only by coincidence: the malformed path produced by the `filepath.Join` is unmade by `runWithDepsImpl`'s three-level `filepath.Dir` chain plus `loadRecursive`'s own call to `sensor.Resolve`. For an out-of-project absolute path (`/var/folders/.../sensor-XXX.json`, the shape `os.CreateTemp` produces), the unwind fails and the runner errors.
 
-The completion is three lines, mirrors what `run-computational.go` does on line 76 anyway, and turns `RunWithDepsRoot` into a thin wrapper around `runWithDepsImpl` + `sensor.Resolve` (where it belongs).
+Completing this migration also forces `runWithDepsImpl` to take an explicit `projectRoot` parameter (so it does not rederive a wrong one from `filepath.Dir × 3` when given an out-of-tree path) and to read the logical `sensor.id` from inside the JSON instead of `filepath.Base(path)`.
+
+**2. The runner does not consult `HARNESS_REGISTRY_ROOT`.** `run-computational.go::main` (and the symmetric `run-inferential.go::main`) calls `os.Getwd()` directly and passes that as `projectRoot` to `RunWithDepsRoot`. `registry.NewRoot(projectRoot)` then anchors persistence at `<cwd>/.harness/runtime/`. The env var is only consulted by skills that go through `registry.Lookup` (start/stop/list/tail), not by the runner. So even with `HARNESS_REGISTRY_ROOT=<tempdir>`, the runner writes runtime artifacts into the parent shell's cwd — exactly what this spec needs the env var to redirect.
+
+Both completions are small (~3–5 lines each plus regression tests). They are prerequisites: without #1, the replay-fixture script cannot pass `tempSensor.Name()` to the runner; without #2, the script's `HARNESS_REGISTRY_ROOT=<tempdir>` has no effect on the runner.
 
 ## What changes
 
-1. **Complete the `sensor.Resolve` migration in `lib/orchestrator/live_deps.go::RunWithDepsRoot`**. Three lines:
+1. **Complete the `sensor.Resolve` migration in `lib/orchestrator/live_deps.go::RunWithDepsRoot`** and the downstream `runWithDepsImpl`. The straight `filepath.Join(projectRoot, ".harness", "sensors", id+".json")` shape on RunWithDepsRoot is replaced with `sensor.Resolve(id, projectRoot)`; `runWithDepsImpl` accepts an explicit `projectRoot` argument so callers with known project roots skip the three-`filepath.Dir`-hops derivation and `rootID` is read from `sensor.id` inside the JSON instead of `filepath.Base`. Existing callers (`RunWithDeps`) pass `""` to preserve byte-for-byte behavior. Regression test in `lib/orchestrator/live_deps_test.go` asserts an absolute-path sensor resolves and produces a valid `sensor_id` in the aggregate (and that cascade signals carry the logical id, not the abs path).
 
-   ```go
-   func RunWithDepsRoot(ctx context.Context, id, projectRoot, schemasDir string, stdout, stderr io.Writer) int {
-       path, err := sensor.Resolve(id, projectRoot)
-       if err != nil {
-           fmt.Fprintln(stderr, "error: resolve:", err)
-           return 2
-       }
-       root := registry.NewRoot(projectRoot)
-       return runWithDepsImpl(ctx, path, schemasDir, &root, stdout, stderr)
-   }
-   ```
+2. **The runner honors `HARNESS_REGISTRY_ROOT` for project-root discovery.** `skills/run-sensor/scripts/run-computational.go::main` and `run-inferential.go::main` currently call `os.Getwd()` directly and pass the result as `projectRoot`. The env var is consulted only by the registry-touching skills (start/stop/list/tail), not by the runner. Replace `os.Getwd()` with `registry.Discover(cwd)` so `HARNESS_REGISTRY_ROOT=<tempdir>` actually redirects the runner's `registry.NewRoot(projectRoot)` to that tempdir. Regression test in `skills/run-sensor/scripts/run-computational_test.go` asserts that with `HARNESS_REGISTRY_ROOT=<tempdir>`, a run leaves the project's `.harness/runtime/` untouched and writes into the tempdir.
 
-   Plus a regression test in `lib/orchestrator/live_deps_test.go` asserting that a `tempSensor.Name()`-shaped absolute path resolves and runs. Mirrors what PR #29 did for `run-computational.go:76`; finishes the migration that PR #29 and PR #30 left half-done. After this commit, the runner accepts arbitrary absolute or `@`-prefixed sensor paths through both the read step AND the orchestrator dispatch.
-
-2. **New `skills/detect-sensors/scripts/replay-fixture.go`** with build tag `replay_fixture`. CLI:
+3. **New `skills/detect-sensors/scripts/replay-fixture.go`** with build tag `replay_fixture`. CLI:
 
    ```
    go run -tags=replay_fixture ./skills/detect-sensors/scripts \
@@ -85,17 +79,17 @@ The completion is three lines, mirrors what `run-computational.go` does on line 
    - Defers `os.RemoveAll(T)` for cleanup (best-effort; failure logged to stderr).
    - Propagates the runner's exit code.
 
-3. **New `skills/detect-sensors/scripts/replay-fixture_test.go`** — table-driven, covering the cases in the Testing section below.
+4. **New `skills/detect-sensors/scripts/replay-fixture_test.go`** — table-driven, covering the cases in the Testing section below.
 
-4. **Update `skills/detect-sensors/SKILL.md` lines 357–363** to replace the shell snippet with an invocation of the new script (see "SKILL.md prose change" below).
+5. **Update `skills/detect-sensors/SKILL.md` lines 357–363** to replace the shell snippet with an invocation of the new script (see "SKILL.md prose change" below).
 
-5. **No change to** the runner script (`skills/run-sensor/`), the registry library (`lib/registry/`), the schemas, or `/heal-sensor`.
+6. **No change to** the registry library (`lib/registry/`), the schemas, or `/heal-sensor`. The runner gets one small change (item #2 above) but its CLI contract is unchanged.
 
-6. **No change to** the build-tag layout in `skills/detect-sensors/scripts/`. PR #30 already added `//go:build write_sensor` to `write-sensor.go` and the matching test file, and updated the live SKILL.md invocation at the persist step. The earlier draft of this spec (v1, v2) prescribed that work; the rebase on PR #30 dropped it as redundant.
+7. **No change to** the build-tag layout in `skills/detect-sensors/scripts/`. PR #30 already added `//go:build write_sensor` to `write-sensor.go` and the matching test file, and updated the live SKILL.md invocation at the persist step. The earlier draft of this spec (v1, v2) prescribed that work; the rebase on PR #30 dropped it as redundant.
 
-7. **No change to** the on-disk shape of `<projectRoot>/.harness/runtime/` for production runs. Only verification runs are redirected to ephemeral storage; the production happy-path remains under the project's `<projectRoot>/.harness/runtime/<id>/<run-id>/`.
+8. **No change to** the on-disk shape of `<projectRoot>/.harness/runtime/` for production runs. Only verification runs are redirected to ephemeral storage; the production happy-path remains under the project's `<projectRoot>/.harness/runtime/<id>/<run-id>/`.
 
-8. **No retroactive cleanup of existing `replay-*` directories from previous plugin versions** done in code. The user removes them once manually; subsequent runs do not regenerate them. A migration note in the SKILL.md update covers both legacy (`.runtime/sensors/replay-*`) and post-#30 (`.harness/runtime/replay-*`) paths.
+9. **No retroactive cleanup of existing `replay-*` directories from previous plugin versions** done in code. The user removes them once manually; subsequent runs do not regenerate them. A migration note in the SKILL.md update covers both legacy (`.runtime/sensors/replay-*`) and post-#30 (`.harness/runtime/replay-*`) paths.
 
 ## Architecture
 
@@ -327,10 +321,11 @@ For the inferential-type case, the test substitutes `go` via `t.Setenv("PATH", .
 1. `find .harness/runtime -maxdepth 1 -type d -name "replay-*"` returns nothing after a full `/detect-sensors` cycle on a clean project.
 2. Aggregate Signal of a fixture replay carries `sensor_id: "<original-id>"`, not `"replay-<original-id>"`.
 3. `go test -tags=replay_fixture ./skills/detect-sensors/scripts/...` passes.
-4. `go test ./lib/orchestrator/...` passes (the new regression test in `live_deps_test.go` proves `RunWithDepsRoot` accepts absolute paths).
-5. `go vet -tags=replay_fixture ./...` passes.
-6. `go vet ./...` (default build) passes (the `RunWithDepsRoot` change is in the default-build `lib/orchestrator` package, not tag-gated).
-7. `/detect-sensors` end-to-end on a sample sensor with at least one fixture still produces the same aggregate verdict shape the previous snippet produced. The aggregate's `sensor_id` matches the on-disk sensor file's `id` field.
+4. `go test ./lib/orchestrator/...` passes (regression test in `live_deps_test.go` proves `RunWithDepsRoot` accepts absolute paths).
+5. `go test -tags=run_computational ./skills/run-sensor/scripts/...` passes (regression test proves `HARNESS_REGISTRY_ROOT` redirects the runner's persistence).
+6. `go vet -tags=replay_fixture ./...` passes.
+7. `go vet ./...` (default build) passes.
+8. `/detect-sensors` end-to-end on a sample sensor with at least one fixture still produces the same aggregate verdict shape the previous snippet produced. The aggregate's `sensor_id` matches the on-disk sensor file's `id` field.
 
 ## Out of scope
 

@@ -204,6 +204,180 @@ EOF
 
 ---
 
+## Task 1B: Runner honors HARNESS_REGISTRY_ROOT
+
+`run-computational.go::main` and `run-inferential.go::main` currently call `os.Getwd()` directly and pass that as `projectRoot` to `RunWithDepsRoot`. The `HARNESS_REGISTRY_ROOT` env var is only consulted by `registry.Lookup`, which the runner does not call. So setting the env var in `replay-fixture.go` has no effect on the runner's persistence path. Replace `os.Getwd()` with `registry.Discover(cwd)` so the env var works.
+
+**Files:**
+- Modify: `skills/run-sensor/scripts/run-computational.go` (the `main` function)
+- Modify: `skills/run-sensor/scripts/run-inferential.go` (the `main` function — same shape, parity)
+- Modify: `skills/run-sensor/scripts/run-computational_test.go` (regression test)
+
+- [ ] **Step 1: Inspect the current `main` in each runner**
+
+```bash
+grep -n "func main\|os.Getwd\|registry.Discover\|registry.Lookup" skills/run-sensor/scripts/run-computational.go skills/run-sensor/scripts/run-inferential.go
+```
+
+Expected for both files: `main()` calls `cwd, _ := os.Getwd()` then passes `cwd` to `run(...)` — no `registry.Discover` or `registry.Lookup` call.
+
+- [ ] **Step 2: Edit `run-computational.go::main`**
+
+Use Edit. `old_string`:
+```go
+func main() {
+	cwd, _ := os.Getwd()
+	os.Exit(run(os.Args[1:], cwd, os.Stdout, os.Stderr))
+}
+```
+
+`new_string`:
+```go
+func main() {
+	cwd, _ := os.Getwd()
+	// registry.Discover prefers HARNESS_REGISTRY_ROOT over walk-up, so an
+	// operator can redirect the runner's runtime persistence by setting
+	// that env var. When discovery fails (no marker, no env var), fall
+	// back to cwd — preserves the pre-existing behavior for callers that
+	// run inside a project.
+	projectRoot, _, err := registry.Discover(cwd)
+	if err != nil {
+		projectRoot = cwd
+	}
+	os.Exit(run(os.Args[1:], projectRoot, os.Stdout, os.Stderr))
+}
+```
+
+- [ ] **Step 3: Add the `registry` import to `run-computational.go` if missing**
+
+```bash
+grep -n "lib/registry" skills/run-sensor/scripts/run-computational.go
+```
+
+If absent, add `"github.com/iurykrieger/harness-framework/lib/registry"` to the import block. Build to verify:
+```bash
+go build -tags=run_computational ./skills/run-sensor/scripts
+```
+
+- [ ] **Step 4: Apply the same change to `run-inferential.go::main`**
+
+Same `old_string` / `new_string` pattern (the inferential runner's `main` has the identical shape). Same import addition if needed. Build:
+```bash
+go build -tags=run_inferential ./skills/run-sensor/scripts
+```
+
+- [ ] **Step 5: Add a regression test for the computational runner**
+
+Create or extend `skills/run-sensor/scripts/run-computational_test.go`. If the file already exists, append. Test body:
+
+```go
+func TestRunComputational_HarnessRegistryRootRedirectsPersistence(t *testing.T) {
+	// Set the env var to an isolated tempdir. The runner should use this
+	// as its project root, NOT the cwd that invoked it.
+	tempRoot := t.TempDir()
+	t.Setenv("HARNESS_REGISTRY_ROOT", tempRoot)
+
+	// Materialize a minimal sensor at the canonical location inside tempRoot.
+	if err := os.MkdirAll(filepath.Join(tempRoot, ".harness", "sensors"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	s := testfixtures.ValidSensorComputational()
+	s["id"] = "redirect-test"
+	body, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tempRoot, ".harness", "sensors", "redirect-test.json"), body, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Invoke main()'s logic directly: build the projectRoot the same way
+	// main() does.
+	cwd := t.TempDir() // some unrelated cwd
+	projectRoot, _, err := registry.Discover(cwd)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if projectRoot != tempRoot {
+		// EvalSymlinks may have resolved tempRoot; compare resolved values.
+		want, _ := filepath.EvalSymlinks(tempRoot)
+		got, _ := filepath.EvalSymlinks(projectRoot)
+		if got != want {
+			t.Fatalf("Discover returned %q, want %q (HARNESS_REGISTRY_ROOT must win over cwd)", projectRoot, tempRoot)
+		}
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"redirect-test"}, projectRoot, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run exit=%d, stderr=%s", code, stderr.String())
+	}
+
+	// Runtime artifacts must be under tempRoot, NOT under cwd.
+	if _, err := os.Stat(filepath.Join(cwd, ".harness", "runtime")); !os.IsNotExist(err) {
+		t.Errorf("runtime polluted cwd: %s/.harness/runtime exists", cwd)
+	}
+	if _, err := os.Stat(filepath.Join(tempRoot, ".harness", "runtime", "redirect-test")); err != nil {
+		t.Errorf("runtime missing in tempRoot: %v", err)
+	}
+}
+```
+
+Add any missing imports to the test file: `"bytes"`, `"encoding/json"`, `"os"`, `"path/filepath"`, `"testing"`, plus `"github.com/iurykrieger/harness-framework/lib/registry"` and `"github.com/iurykrieger/harness-framework/lib/testfixtures"`.
+
+If `run-inferential_test.go` exists with a similar smoke test pattern, mirror the test there too for parity. If it doesn't have a smoke test today, skip — keeping parity is nice but not blocking.
+
+- [ ] **Step 6: Run the new test**
+
+```bash
+go test -race -count=1 -tags=run_computational ./skills/run-sensor/scripts/... -run TestRunComputational_HarnessRegistryRootRedirectsPersistence -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Full runner suite + vet**
+
+```bash
+go test -race -count=1 -tags=run_computational ./skills/run-sensor/scripts/...
+go test -race -count=1 -tags=run_inferential ./skills/run-sensor/scripts/...
+go vet -tags=run_computational ./...
+go vet -tags=run_inferential ./...
+```
+
+All exit 0.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add skills/run-sensor/scripts/run-computational.go \
+        skills/run-sensor/scripts/run-inferential.go \
+        skills/run-sensor/scripts/run-computational_test.go
+git commit -m "$(cat <<'EOF'
+fix(run-sensor): main honors HARNESS_REGISTRY_ROOT via registry.Discover (#28 prereq)
+
+run-computational.go::main and run-inferential.go::main previously
+passed os.Getwd() straight through as projectRoot. The env var was
+documented as the operator's override for registry root, but only
+the registry-touching skills (start/stop/list/tail) actually
+consulted it via registry.Lookup. The runner ignored it.
+
+Replace os.Getwd() with registry.Discover(cwd), with fallback to cwd
+when discovery fails (preserves pre-existing behavior for the
+in-project happy path). Regression test asserts that setting
+HARNESS_REGISTRY_ROOT redirects the runner's .harness/runtime/
+artifacts away from cwd.
+
+Prerequisite for the new replay-fixture script (#28), which sets the
+env var to an ephemeral tempdir to isolate verification runs from
+the project tree.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
 ## Task 2: Failing test — replay-fixture preserves sensor.id and isolates the runtime root
 
 TDD red phase. The test asserts the two load-bearing behaviors of the to-be-built script: (a) the aggregate Signal carries the original `sensor_id` (no `replay-` prefix), and (b) running the script does NOT create a `.harness/runtime/<sensor.id>/` directory under the project root.
