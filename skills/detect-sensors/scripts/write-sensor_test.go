@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
@@ -30,7 +31,7 @@ func writeDraft(t *testing.T, sensor map[string]interface{}) string {
 func TestRun_ValidComputationalSensor(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
 	outDir := t.TempDir()
-	draft := writeDraft(t, testfixtures.ValidSensorComputational())
+	draft := writeDraft(t, sensortest.LoadComputational(t).AsMap())
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"--out", outDir, "--schemas-dir", schemasDir, draft}, &stdout, &stderr)
@@ -57,7 +58,7 @@ func TestRun_ValidComputationalSensor(t *testing.T) {
 func TestRun_ValidInferentialSensor(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
 	outDir := t.TempDir()
-	draft := writeDraft(t, testfixtures.ValidSensorInferential())
+	draft := writeDraft(t, sensortest.LoadInferential(t).AsMap())
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"--out", outDir, "--schemas-dir", schemasDir, draft}, &stdout, &stderr)
@@ -84,7 +85,7 @@ func TestRun_InvalidJSON(t *testing.T) {
 
 func TestRun_SchemaViolation(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
-	bad := testfixtures.ValidSensorComputational()
+	bad := sensortest.LoadComputational(t).AsMap()
 	delete(bad, "regulation") // required field
 	draft := writeDraft(t, bad)
 
@@ -102,7 +103,7 @@ func TestRun_TypeMismatchedExecution(t *testing.T) {
 	// Inferential sensor missing the required execution.model field — the
 	// allOf discriminator must reject it.
 	schemasDir := testfixtures.RepoSchemasDir(t)
-	bad := testfixtures.ValidSensorInferential()
+	bad := sensortest.LoadInferential(t).AsMap()
 	exec := bad["execution"].(map[string]interface{})
 	delete(exec, "model")
 	draft := writeDraft(t, bad)
@@ -147,7 +148,7 @@ func TestRun_OutDirCreatedIfMissing(t *testing.T) {
 	schemasDir := testfixtures.RepoSchemasDir(t)
 	parent := t.TempDir()
 	out := filepath.Join(parent, "nested", ".harness", "sensors")
-	draft := writeDraft(t, testfixtures.ValidSensorComputational())
+	draft := writeDraft(t, sensortest.LoadComputational(t).AsMap())
 
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"--out", out, "--schemas-dir", schemasDir, draft}, &stdout, &stderr); code != 0 {
@@ -166,7 +167,7 @@ func TestRun_OverwritesExistingFile(t *testing.T) {
 	if err := os.WriteFile(target, []byte("STALE"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	draft := writeDraft(t, testfixtures.ValidSensorComputational())
+	draft := writeDraft(t, sensortest.LoadComputational(t).AsMap())
 
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"--out", outDir, "--schemas-dir", schemasDir, draft}, &stdout, &stderr); code != 0 {

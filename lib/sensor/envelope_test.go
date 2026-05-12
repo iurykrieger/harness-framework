@@ -5,12 +5,13 @@ import (
 	"time"
 
 	"github.com/iurykrieger/harness-framework/lib/sensor"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
 func TestBuildEnvelope(t *testing.T) {
 	defer testfixtures.FreezeClock(t)()
-	env, err := sensor.BuildEnvelope(testfixtures.ValidSensorComputational())
+	env, err := sensor.BuildEnvelope(sensortest.LoadComputational(t).AsMap())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +29,7 @@ func TestBuildEnvelope(t *testing.T) {
 func TestBuildEnvelope_MissingFields(t *testing.T) {
 	for _, missing := range []string{"id", "version", "type"} {
 		t.Run(missing, func(t *testing.T) {
-			s := testfixtures.ValidSensorComputational()
+			s := sensortest.LoadComputational(t).AsMap()
 			delete(s, missing)
 			if _, err := sensor.BuildEnvelope(s); err == nil {
 				t.Fatalf("expected error when %q missing", missing)

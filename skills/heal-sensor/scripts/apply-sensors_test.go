@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
@@ -16,7 +17,7 @@ func TestApplySensors_NewSetupSensor(t *testing.T) {
 	dir := t.TempDir()
 	plan := map[string]interface{}{
 		"diagnosis":         map[string]interface{}{"failed_sensor_id": "x", "shape": "missing-env"},
-		"new_setup_sensors": []interface{}{map[string]interface{}{"id": "smoke-setup", "json": testfixtures.ValidSensorSetup()}},
+		"new_setup_sensors": []interface{}{map[string]interface{}{"id": "smoke-setup", "json": sensortest.LoadSetup(t).AsMap()}},
 	}
 	planPath := filepath.Join(dir, "plan.json")
 	pb, _ := json.Marshal(plan)
@@ -34,7 +35,7 @@ func TestApplySensors_NewSetupSensor(t *testing.T) {
 
 func TestApplySensors_PatchBumpsPatchVersion(t *testing.T) {
 	dir := t.TempDir()
-	patched := testfixtures.ValidSensorComputational()
+	patched := sensortest.LoadComputational(t).AsMap()
 	patched["version"] = "0.1.0"
 	patched["description"] = "patched by heal"
 
@@ -61,7 +62,7 @@ func TestApplySensors_PatchBumpsPatchVersion(t *testing.T) {
 
 func TestApplySensors_InvalidSensorRejected(t *testing.T) {
 	dir := t.TempDir()
-	bad := testfixtures.ValidSensorComputational()
+	bad := sensortest.LoadComputational(t).AsMap()
 	delete(bad, "regulation")
 
 	plan := map[string]interface{}{

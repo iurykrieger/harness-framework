@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/iurykrieger/harness-framework/lib/sensor"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
@@ -297,7 +298,7 @@ func TestRun_InferentialWithComputationalDep(t *testing.T) {
 	_ = os.MkdirAll(sensorsDir, 0o755)
 
 	// Setup dep: a kind=setup computational sensor.
-	depJSON := testfixtures.ValidSensorSetup()
+	depJSON := sensortest.LoadSetup(t).AsMap()
 	depJSON["id"] = "setup-x"
 	depExec := depJSON["execution"].(map[string]interface{})
 	depExec["command"] = "true"
@@ -307,7 +308,7 @@ func TestRun_InferentialWithComputationalDep(t *testing.T) {
 	}
 
 	// Inferential requested sensor that depends on the setup.
-	infJSON := testfixtures.ValidSensorInferential()
+	infJSON := sensortest.LoadInferential(t).AsMap()
 	infJSON["id"] = "inf-with-dep"
 	infJSON["requires"] = []interface{}{
 		map[string]interface{}{"kind": "sensor", "id": "setup-x"},

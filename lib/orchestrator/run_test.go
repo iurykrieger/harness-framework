@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
@@ -21,7 +22,7 @@ func writeSensorWithDeps(t *testing.T, projectRoot, id string, depsOn []string, 
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["id"] = id
 	if len(depsOn) > 0 {
 		reqs := []interface{}{}

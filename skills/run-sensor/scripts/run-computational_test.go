@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
@@ -21,7 +22,7 @@ import (
 // the sensor id. Tests pass root as projectRoot so ResolveByID can find it.
 func writeSensor(t *testing.T, root, id string, mut func(map[string]interface{})) string {
 	t.Helper()
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["id"] = id
 	if mut != nil {
 		mut(s)

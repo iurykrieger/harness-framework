@@ -13,6 +13,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
@@ -124,7 +125,7 @@ func writeSensorJSON(t *testing.T, root, id string, body map[string]interface{})
 
 func writeNonBlockingDep(t *testing.T, root, id string, depsOn []string, command string) {
 	t.Helper()
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	if len(depsOn) > 0 {
 		reqs := []interface{}{}
 		for _, d := range depsOn {

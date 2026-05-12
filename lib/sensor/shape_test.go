@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/sensor"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 // canonicalize re-serializes a map[string]interface{} through json.Marshal
@@ -44,13 +44,13 @@ func roundTripSensor(t *testing.T, orig map[string]interface{}) {
 }
 
 func TestSensorShape_RoundTrip_Computational(t *testing.T) {
-	roundTripSensor(t, testfixtures.ValidSensorComputational())
+	roundTripSensor(t, sensortest.LoadComputational(t).AsMap())
 }
 
 func TestSensorShape_RoundTrip_Inferential(t *testing.T) {
-	roundTripSensor(t, testfixtures.ValidSensorInferential())
+	roundTripSensor(t, sensortest.LoadInferential(t).AsMap())
 }
 
 func TestSensorShape_RoundTrip_Setup(t *testing.T) {
-	roundTripSensor(t, testfixtures.ValidSensorSetup())
+	roundTripSensor(t, sensortest.LoadSetup(t).AsMap())
 }
