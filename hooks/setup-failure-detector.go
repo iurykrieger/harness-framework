@@ -251,7 +251,7 @@ type sensorInvocation struct {
 // Path-style arguments (containing "/" or "\", or starting with "@",
 // or ending in ".json") are returned with the leading "@" stripped.
 // Bare-id arguments (e.g., "watch-logs") are resolved against
-// <cwd>/sensors/<id>.json.
+// <cwd>/.harness/sensors/<id>.json.
 func findSensorInvocation(entries []transcriptEntry, cwd string) sensorInvocation {
 	for i := len(entries) - 1; i >= 0; i-- {
 		content := contentText(entries[i].Content)

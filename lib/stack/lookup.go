@@ -21,12 +21,6 @@ type Result struct {
 // file is absent — that is NOT an error.
 //
 // Schema validation runs only when the file exists.
-//
-// NOTE (Phase 1): lib/registry.Discover currently walks up for sensors/.
-// Phase 2 changes the marker to .harness/. Tests scaffold both an empty
-// sensors/ and the .harness/ directory so Lookup works under either
-// regime; the test fixtures will be updated to drop the sensors/ marker
-// after the Phase 2 cutover.
 func Lookup(startDir string) (Result, error) {
 	root, _, err := registry.Discover(startDir)
 	if err != nil {

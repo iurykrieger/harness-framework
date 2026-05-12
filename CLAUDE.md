@@ -32,14 +32,15 @@ Durable conventions. Apply them to every change.
 
 ## Architecture
 
-### The two schemas
+### The three schemas
 
-Both are JSON Schema **Draft 2020-12**. Validators must support that draft and resolve `$ref` across files.
+Both `signal.json` and `sensor.json` are JSON Schema **Draft 2020-12**. Validators must support that draft and resolve `$ref` across files.
 
 - `schemas/signal.json` — the output contract. Defines the canonical `Verdict` and `Severity` enums under `$defs/`. **Edit enum values here only.**
 - `schemas/sensor.json` — the definition contract. References `signal.json` two ways:
   - `#/$defs/Signal` is `{ "$ref": "signal.json" }`, so tooling can dereference a sensor's runtime output contract by chained `$ref`.
   - Enum sites inside `sensor.json` (`execution.exit_code_map[].{verdict,severity}`, `verification.golden_cases[].{expected_verdict,expected_severity}`) use `{ "$ref": "signal.json#/$defs/Verdict" }` and `…/Severity`. Adding a new verdict or severity value means editing `signal.json` only — `sensor.json` picks it up automatically.
+- `schemas/stack.json` — the project-stack contract. Produced by `/detect-sensors` Phase A; consumed by Phase B when authoring `kind=observation` + `output=stream` sensors. Independent of `signal.json` and `sensor.json` (no cross-`$ref`).
 
 ### Discriminators
 

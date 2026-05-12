@@ -1,6 +1,6 @@
 ---
 name: detect-sensors
-description: Use when the user invokes /detect-sensors or asks to scaffold a harness for the project they are working in. Inspects the project to infer its archetype(s) (frontend, backend API, event-consumer, event-producer, IaC, CLI, library, data-pipeline, ...), reasons about which capabilities each archetype typically exposes (lint, build, unit-test, e2e-test, integration-test, run-project, fetch-logs, fetch-metrics, trace-request, ...), drafts one sensor JSON per capability conforming to schemas/sensor.json, and persists each through the validator script at `<project>/sensors/<sensor-id>.json` so the user can immediately invoke `/run-sensor @sensors/<sensor-id>.json`.
+description: Use when the user invokes /detect-sensors or asks to scaffold a harness for the project they are working in. Inspects the project to infer its archetype(s) (frontend, backend API, event-consumer, event-producer, IaC, CLI, library, data-pipeline, ...), reasons about which capabilities each archetype typically exposes (lint, build, unit-test, e2e-test, integration-test, run-project, fetch-logs, fetch-metrics, trace-request, ...), drafts one sensor JSON per capability conforming to schemas/sensor.json, and persists each through the validator script at `<project>/.harness/sensors/<sensor-id>.json` so the user can immediately invoke `/run-sensor <sensor-id>`.
 ---
 
 # detect-sensors
@@ -15,7 +15,7 @@ There is no fixed taxonomy of project types or capabilities baked into the scrip
 /detect-sensors [project-path]
 ```
 
-If the user supplies no argument, scan the cwd. The output directory is always `<project>/sensors/`. Do not ask the user to choose; create it if it does not exist.
+If the user supplies no argument, scan the cwd. The output directory is always `<project>/.harness/sensors/`. Do not ask the user to choose; create it if it does not exist.
 
 ## Procedure
 
@@ -235,8 +235,8 @@ When the literal command is uncertain (common for `fetch-logs`, `fetch-metrics`,
   },
   "verification": {
     "golden_cases": [
-      { "fixture": "sensors/fixtures/run-project-nest/clean-boot.txt",  "expected_verdict": "pass", "expected_severity": "info", "notes": "Captured stdout from a real local boot — Nest start banner + Listening line within ~3s." },
-      { "fixture": "sensors/fixtures/run-project-nest/port-collision.txt", "expected_verdict": "fail", "expected_severity": "high", "notes": "EADDRINUSE on port 3000 when another instance is running." }
+      { "fixture": ".harness/sensors/fixtures/run-project-nest/clean-boot.txt",  "expected_verdict": "pass", "expected_severity": "info", "notes": "Captured stdout from a real local boot — Nest start banner + Listening line within ~3s." },
+      { "fixture": ".harness/sensors/fixtures/run-project-nest/port-collision.txt", "expected_verdict": "fail", "expected_severity": "high", "notes": "EADDRINUSE on port 3000 when another instance is running." }
     ]
   },
   "blind_spots": [
@@ -297,11 +297,11 @@ Example (E2E sensor with full lifecycle):
 
 ### 5. Author fixtures BEFORE you persist
 
-A sensor without real fixtures is half-built. For every `golden_cases[]` entry you wrote in step 4, create the file at `<project>/sensors/fixtures/<group>/<case>.txt` (or `.json` for parser-style sensors). The fixture must contain content shaped exactly like the production tool's stdout for that case.
+A sensor without real fixtures is half-built. For every `golden_cases[]` entry you wrote in step 4, create the file at `<project>/.harness/sensors/fixtures/<group>/<case>.txt` (or `.json` for parser-style sensors). The fixture must contain content shaped exactly like the production tool's stdout for that case.
 
 Conventions that work:
 
-- Group fixtures by tool family, not by sensor id, so `lint-go-vet-computational` and `lint-go-vet-inferential` share `sensors/fixtures/lint-go-vet/{clean,has-warning}.txt`. Same for `unit-test/{all-pass,has-failure,has-skip}.txt`, `build-runner/{clean,has-error}.txt`.
+- Group fixtures by tool family, not by sensor id, so `lint-go-vet-computational` and `lint-go-vet-inferential` share `.harness/sensors/fixtures/lint-go-vet/{clean,has-warning}.txt`. Same for `unit-test/{all-pass,has-failure,has-skip}.txt`, `build-runner/{clean,has-error}.txt`.
 - Always include at least: one **happy path** fixture (clean stdout → expected `pass`) and one **fail path** fixture (representative finding → expected `fail` or `warn`). Add a third for `skip`/`warn` semantics when the tool produces them.
 - Fixture content should be a faithful capture, not a hand-crafted approximation. For Go tests: `=== RUN ...\n--- PASS: ... (0.00s)\nPASS\nok ... 0.012s`. For Go vet/build: `# package\n./file.go:LINE:COL: message`. For schema parsers: a real malformed JSON.
 - Keep them small (a handful of lines) — they exist for verification, not for stress.
@@ -314,7 +314,7 @@ Write the draft JSON to a temp file, then run the validator-and-writer:
 
 ```bash
 go run -tags=write_sensor ./skills/detect-sensors/scripts \
-  --out=<project>/sensors \
+  --out=<project>/.harness/sensors \
   /tmp/<draft-name>.json
 ```
 
@@ -350,14 +350,14 @@ Run order:
 
 ```bash
 # 1) Production happy-path: run the sensor against the real codebase.
-go run -tags=run_computational ./skills/run-sensor/scripts @sensors/<id>.json | tail -n 1 \
+go run -tags=run_computational ./skills/run-sensor/scripts @.harness/sensors/<id>.json | tail -n 1 \
   | jq -c '{verdict, severity, counts: .metadata.counts, individuals: (.evidence|length)}'
 
 # 2) Replay each fail/warn fixture to prove the unhappy paths.
 TMP=$(mktemp /tmp/replay-XXXX.json)
-jq --arg cmd "cat sensors/fixtures/<group>/<case>.txt" \
+jq --arg cmd "cat .harness/sensors/fixtures/<group>/<case>.txt" \
    '.execution.command = $cmd | .id = "replay-" + .id' \
-   sensors/<id>.json > "$TMP"
+   .harness/sensors/<id>.json > "$TMP"
 go run -tags=run_computational ./skills/run-sensor/scripts "$TMP" | tail -n 1 \
   | jq -c '{verdict, severity, individuals: (.evidence|length)}'
 rm "$TMP"
@@ -377,7 +377,7 @@ If a `kind=observation` + `output=stream` sensor's patterns match nothing during
 When step 7's smoke run produces an aggregate Signal that is setup-shape (missing env, missing binary, absent `.env`, unavailable service), do NOT iterate inside this skill. Invoke `/heal-sensor` instead:
 
 ```
-/heal-sensor --signal=<path-to-saved-aggregate-signal-json> --sensor=@sensors/<id>.json
+/heal-sensor --signal=<path-to-saved-aggregate-signal-json> --sensor=@.harness/sensors/<id>.json
 ```
 
 `/heal-sensor` will read the project state, build a Setup Plan, apply allowlisted idempotent fixes (cp .env.example .env, mkdir, touch, set-env-in-file), persist any patched/new sensors via the same `lib/sensor.ValidateAndPersist` primitive this skill uses, and retry the original sensor. After it returns:
@@ -392,17 +392,17 @@ Setup-shape recovery used to be the responsibility of this skill's prose ("if cr
 When every draft is persisted **and verified** (step 7 passed for happy and unhappy paths), surface the result as a bulleted list of paths plus the verdict observed for each, so the user can immediately fan out into `/run-sensor`:
 
 ```
-Generated 7 sensors at /repo/sensors/ (all verified happy + replay paths):
-- /repo/sensors/lint-eslint.json           — happy: pass · replay(has-finding): fail/medium ·  4 fixtures
-- /repo/sensors/build-vite.json            — happy: pass · replay(compile-error): fail/high   · 2 fixtures
-- /repo/sensors/unit-test-vitest.json      — happy: pass(83) · replay(has-failure): fail/high · 3 fixtures
-- /repo/sensors/e2e-playwright.json        — happy: pass(12) · replay(timeout): fail/high     · 3 fixtures
-- /repo/sensors/run-project-vite-dev.json  — single-mode  · replay(crash): fail/high          · 2 fixtures
-- /repo/sensors/fetch-logs-cloudrun.json   — happy: pass · NEEDS-AUTH (gcloud login)          · 1 fixture
-- /repo/sensors/fetch-metrics-cloud-monitoring.json — happy: pass · NEEDS-AUTH                · 1 fixture
+Generated 7 sensors at /repo/.harness/sensors/ (all verified happy + replay paths):
+- /repo/.harness/sensors/lint-eslint.json           — happy: pass · replay(has-finding): fail/medium ·  4 fixtures
+- /repo/.harness/sensors/build-vite.json            — happy: pass · replay(compile-error): fail/high   · 2 fixtures
+- /repo/.harness/sensors/unit-test-vitest.json      — happy: pass(83) · replay(has-failure): fail/high · 3 fixtures
+- /repo/.harness/sensors/e2e-playwright.json        — happy: pass(12) · replay(timeout): fail/high     · 3 fixtures
+- /repo/.harness/sensors/run-project-vite-dev.json  — single-mode  · replay(crash): fail/high          · 2 fixtures
+- /repo/.harness/sensors/fetch-logs-cloudrun.json   — happy: pass · NEEDS-AUTH (gcloud login)          · 1 fixture
+- /repo/.harness/sensors/fetch-metrics-cloud-monitoring.json — happy: pass · NEEDS-AUTH                · 1 fixture
 
-Run any of them with `/run-sensor @sensors/<id>.json`.
-Fixtures live under /repo/sensors/fixtures/<group>/<case>.{txt,json}.
+Run any of them with `/run-sensor <id>`.
+Fixtures live under /repo/.harness/sensors/fixtures/<group>/<case>.{txt,json}.
 ```
 
 Be honest about anything still soft: sensors whose live command needs credentials you do not have (`NEEDS-AUTH`), `cost.latency` numbers that are estimates rather than measured, observability sensors whose query strings are best-guess. Call those out explicitly so the user knows where to focus the review.
@@ -410,6 +410,6 @@ Be honest about anything still soft: sensors whose live command needs credential
 ## Safety notes
 
 - The script never executes the detected commands. It only validates JSON and writes files.
-- Existing files at `<out>/<sensor-id>.json` are overwritten atomically by `os.Create`. Commit `sensors/` before re-running so diffs are reviewable.
+- Existing files at `<out>/<sensor-id>.json` are overwritten atomically by `os.Create`. Commit `.harness/sensors/` before re-running so diffs are reviewable.
 - Drafts you stage in `/tmp/` are yours to clean up; the script does not touch them.
 - Schemas are resolved by walking up from cwd; invoke from inside the harness-framework checkout (or pass `--schemas-dir=<plugin>/schemas`) so the validator sees the right contract.

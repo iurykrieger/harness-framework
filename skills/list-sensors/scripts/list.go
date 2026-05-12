@@ -1,6 +1,6 @@
 //go:build list_sensors
 
-// list reads .runtime/sensors/running_sensors.json (resolved via
+// list reads .harness/runtime/running_sensors.json (resolved via
 // registry.Lookup, NOT os.Getwd()), annotates each entry with PID
 // liveness, and emits one Signal verdict=pass / metadata.kind=list.
 //
