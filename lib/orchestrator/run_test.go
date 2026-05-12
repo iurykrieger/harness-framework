@@ -13,11 +13,11 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
-// writeSensorWithDeps writes a sensor JSON file to dir/sensors/<id>.json,
-// matching the <projectRoot>/sensors/<id>.json layout that RunDeps expects.
+// writeSensorWithDeps writes a sensor JSON file to dir/.harness/sensors/<id>.json,
+// matching the <projectRoot>/.harness/sensors/<id>.json layout that RunDeps expects.
 func writeSensorWithDeps(t *testing.T, projectRoot, id string, depsOn []string, command string) {
 	t.Helper()
-	sensorsDir := filepath.Join(projectRoot, "sensors")
+	sensorsDir := filepath.Join(projectRoot, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestRunWithDeps_ChainPasses(t *testing.T) {
 	writeSensorWithDeps(t, root, "use-a", []string{"setup-a"}, "true")
 
 	var out, errBuf bytes.Buffer
-	code := RunWithDeps(context.Background(), filepath.Join(root, "sensors", "use-a.json"), schemasDir, &out, &errBuf)
+	code := RunWithDeps(context.Background(), filepath.Join(root, ".harness", "sensors", "use-a.json"), schemasDir, &out, &errBuf)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
 	}
@@ -67,7 +67,7 @@ func TestRunWithDeps_CascadesOnDepFail(t *testing.T) {
 	writeSensorWithDeps(t, root, "use-it", []string{"setup-fail"}, "true")
 
 	var out, errBuf bytes.Buffer
-	code := RunWithDeps(context.Background(), filepath.Join(root, "sensors", "use-it.json"), schemasDir, &out, &errBuf)
+	code := RunWithDeps(context.Background(), filepath.Join(root, ".harness", "sensors", "use-it.json"), schemasDir, &out, &errBuf)
 	// Cascade on a dep failure now returns exit 1 (dep ran but root was skipped).
 	if code != 1 {
 		t.Fatalf("exit=%d stderr=%s; want 1 (cascade)", code, errBuf.String())
@@ -98,7 +98,7 @@ func TestRunWithDeps_CycleAborts(t *testing.T) {
 	writeSensorWithDeps(t, root, "b", []string{"a"}, "true")
 
 	var out, errBuf bytes.Buffer
-	code := RunWithDeps(context.Background(), filepath.Join(root, "sensors", "a.json"), schemasDir, &out, &errBuf)
+	code := RunWithDeps(context.Background(), filepath.Join(root, ".harness", "sensors", "a.json"), schemasDir, &out, &errBuf)
 	if code != 1 {
 		t.Fatalf("expected exit=1 for cycle, got %d", code)
 	}
@@ -126,7 +126,7 @@ func decode(t *testing.T, s string) map[string]interface{} {
 
 func TestRunWithDepsRoot_CascadeSkip_DoesNotTouchRegistryOrDir(t *testing.T) {
 	proj := t.TempDir()
-	sensorsDir := filepath.Join(proj, "sensors")
+	sensorsDir := filepath.Join(proj, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

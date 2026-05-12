@@ -39,7 +39,7 @@ func TestRunOneWithLiveDeps_AttachesAndDetachesBlockingDep(t *testing.T) {
 
 func writeBlockingDep(t *testing.T, root, id string) {
 	t.Helper()
-	dir := filepath.Join(root, "sensors")
+	dir := filepath.Join(root, ".harness", "sensors")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func writeBlockingDep(t *testing.T, root, id string) {
 
 func writeConsumer(t *testing.T, root, id string) {
 	t.Helper()
-	dir := filepath.Join(root, "sensors")
+	dir := filepath.Join(root, ".harness", "sensors")
 	body := []byte(`{
 "id": "` + id + `",
 "version": "1.0.0",
@@ -126,7 +126,7 @@ func loadValidator(t *testing.T) *schema.Validator {
 // loadDepSensor parses sensors/<id>.json from root into a Sensor struct.
 func loadDepSensor(t *testing.T, root, id string) orchestrator.Sensor {
 	t.Helper()
-	path := filepath.Join(root, "sensors", id+".json")
+	path := filepath.Join(root, ".harness", "sensors", id+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

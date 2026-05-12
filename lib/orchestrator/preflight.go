@@ -64,7 +64,7 @@ func RunDeps(
 		Signals: map[string]map[string]interface{}{},
 	}
 
-	sensorsDir := filepath.Join(projectRoot, "sensors")
+	sensorsDir := filepath.Join(projectRoot, ".harness", "sensors")
 	order, err := Resolve(targetID, sensorsDir)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)

@@ -33,7 +33,7 @@ type LiveDep struct {
 // All blocking deps along the chain are started/attached before the
 // requested sensor runs and stopped/detached after.
 func RunWithDepsRoot(ctx context.Context, id, projectRoot, schemasDir string, stdout, stderr io.Writer) int {
-	path := filepath.Join(projectRoot, "sensors", id+".json")
+	path := filepath.Join(projectRoot, ".harness", "sensors", id+".json")
 	root := registry.NewRoot(projectRoot)
 	return runWithDepsImpl(ctx, path, schemasDir, &root, stdout, stderr)
 }

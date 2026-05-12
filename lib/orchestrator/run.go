@@ -19,7 +19,7 @@ import (
 // on stdout (contract preserved from the prior streaming-sensors design).
 //
 // sensorPath must be located at <projectRoot>/.harness/sensors/<id>.json so that
-// RunDeps can discover siblings via filepath.Join(projectRoot, "sensors").
+// RunDeps can discover siblings via filepath.Join(projectRoot, ".harness", "sensors").
 //
 // Exit codes:
 //
@@ -46,7 +46,9 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 		fmt.Fprintln(stderr, "error: abs path:", err)
 		return 2
 	}
-	projectRoot := filepath.Dir(filepath.Dir(abs))
+	// Sensor files live at <projectRoot>/.harness/sensors/<id>.json, so the
+	// project root is three Dir() calls above the abs sensor path.
+	projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(abs)))
 
 	v, code := schema.LoadValidator(schemasDir, stderr)
 	if code != 0 {
