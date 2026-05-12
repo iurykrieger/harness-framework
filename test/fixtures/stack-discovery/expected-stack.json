@@ -1,0 +1,43 @@
+{
+  "version": "0.1.0",
+  "detected_at": "2026-05-12T10:00:00Z",
+  "detected_by": "manual",
+  "languages": [
+    { "name": "go", "version": "1.25" }
+  ],
+  "components": [
+    {
+      "role": "logger",
+      "name": "go.uber.org/zap",
+      "version": "1.27.0",
+      "config_summary": "zap.NewProduction() with default EncoderConfig (LevelKey=level, TimeKey=ts, MessageKey=msg, CallerKey=caller).",
+      "evidence": [
+        { "file": "cmd/server/main.go", "line_start": 19, "line_end": 21, "rationale": "logger := zap.NewProduction() call site" }
+      ]
+    },
+    {
+      "role": "http-middleware",
+      "name": "github.com/go-chi/chi/v5/middleware",
+      "version": "5.0.0",
+      "config_summary": "middleware.Logger registered before all routes; emits an INFO line per request through the configured zap logger (default logfmt-ish via fmt.Sprintf, embedded inside the JSON msg).",
+      "evidence": [
+        { "file": "cmd/server/main.go", "line_start": 24, "line_end": 24, "rationale": "r.Use(middleware.Logger)" }
+      ]
+    }
+  ],
+  "log_shapes": [
+    {
+      "id": "zap-prod-json",
+      "produced_by": ["go.uber.org/zap"],
+      "format": "json",
+      "fields": [
+        { "key": "level",  "meaning": "severity", "example_values": ["debug", "info", "warn", "error"] },
+        { "key": "ts",     "meaning": "timestamp" },
+        { "key": "msg",    "meaning": "message" },
+        { "key": "caller", "meaning": "other" }
+      ],
+      "severity_values": ["debug", "info", "warn", "error", "dpanic", "panic", "fatal"],
+      "sample": "{\"level\":\"info\",\"ts\":1747130000.123,\"caller\":\"server/main.go:30\",\"msg\":\"server listening\",\"addr\":\":8080\"}"
+    }
+  ]
+}

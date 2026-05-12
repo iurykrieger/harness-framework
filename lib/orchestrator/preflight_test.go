@@ -111,7 +111,7 @@ func TestRunPreparePhase_FirstFails_FailFast(t *testing.T) {
 
 func writeSensorJSON(t *testing.T, root, id string, body map[string]interface{}) {
 	t.Helper()
-	dir := filepath.Join(root, "sensors")
+	dir := filepath.Join(root, ".harness", "sensors")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -294,7 +294,8 @@ func TestStop_BlockingFalse_TerminatesRunnerSubprocess(t *testing.T) {
 	}
 
 	res := resultFor(t, proj, true)
-	exit, sig := runStop(res, []string{"alpha"}, false)
+	b := bootstrapFor(t, res, new(bytes.Buffer))
+	exit, sig := runStop(b, []string{"alpha"}, false)
 	if exit != 0 {
 		t.Fatalf("exit=%d, sig=%+v", exit, sig)
 	}
@@ -357,7 +358,8 @@ func TestStop_BlockingPreferred_WhenMixedActives(t *testing.T) {
 	}
 
 	res := resultFor(t, proj, true)
-	exit, _ := runStop(res, []string{"alpha"}, false)
+	b := bootstrapFor(t, res, new(bytes.Buffer))
+	exit, _ := runStop(b, []string{"alpha"}, false)
 	if exit != 0 {
 		t.Fatalf("exit=%d", exit)
 	}

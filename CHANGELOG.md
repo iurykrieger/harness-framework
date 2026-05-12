@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased] — Breaking: `.harness/` layout
+
+All framework artifacts now live under `<project>/.harness/`:
+
+- Sensor definitions: `<project>/.harness/sensors/<id>.json` (was `<project>/sensors/<id>.json`).
+- Runtime state: `<project>/.harness/runtime/` (was `<project>/.runtime/sensors/`).
+- Detected stack (new): `<project>/.harness/stack.json`.
+
+To migrate an existing project:
+
+```bash
+mkdir -p .harness
+git mv sensors .harness/sensors
+[ -d .runtime ] && git mv .runtime .harness/runtime
+# Update .gitignore: replace `/.runtime` with `/.harness/runtime`.
+```
+
+No fallback to the previous layout. `lib/registry.Discover` searches for `.harness/` only — projects with the old layout will see `registry root discovery failed: .harness/ marker not found walking up from ...`.
+
 ## 1.0.0 — 2026-05-11
 
 ### Breaking changes

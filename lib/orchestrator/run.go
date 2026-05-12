@@ -18,8 +18,8 @@ import (
 // failed. The aggregate Signal of the requested sensor is the LAST line
 // on stdout (contract preserved from the prior streaming-sensors design).
 //
-// sensorPath must be located at <projectRoot>/sensors/<id>.json so that
-// RunDeps can discover siblings via filepath.Join(projectRoot, "sensors").
+// sensorPath must be located at <projectRoot>/.harness/sensors/<id>.json so that
+// RunDeps can discover siblings via filepath.Join(projectRoot, ".harness", "sensors").
 //
 // Exit codes:
 //
@@ -37,7 +37,7 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 
 // runWithDepsImpl is the shared implementation for RunWithDeps and the
 // Root-aware paths. When root is non-nil, the target sensor is run via
-// RunOneWithRoot so the run is registered under .runtime/sensors/<id>/<run-id>/.
+// RunOneWithRoot so the run is registered under .harness/runtime/<id>/<run-id>/.
 // Cascade-skipped roots do NOT touch the registry — the cascade Signal
 // is emitted unchanged on stdout.
 func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *registry.Root, stdout, stderr io.Writer) int {
@@ -46,7 +46,9 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 		fmt.Fprintln(stderr, "error: abs path:", err)
 		return 2
 	}
-	projectRoot := filepath.Dir(filepath.Dir(abs))
+	// Sensor files live at <projectRoot>/.harness/sensors/<id>.json, so the
+	// project root is three Dir() calls above the abs sensor path.
+	projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(abs)))
 
 	v, code := schema.LoadValidator(schemasDir, stderr)
 	if code != 0 {

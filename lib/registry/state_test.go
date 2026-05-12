@@ -39,7 +39,7 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 				WatcherPID: 1235,
 				StartedAt:  "2026-05-09T15:30:00Z",
 				Command:    "tail -f /var/log/syslog",
-				LogDir:     ".runtime/sensors/watch-logs",
+				LogDir:     ".harness/runtime/watch-logs",
 				HeldBy: []registry.HeldByEntry{
 					{Kind: "manual", AttachedAt: "2026-05-09T15:30:00Z"},
 				},
@@ -219,7 +219,7 @@ func TestLoadSanitized_MigratesLegacy(t *testing.T) {
       "watcher_pid": -1,
       "started_at": "2026-05-09T13:51:38Z",
       "command": "docker compose up",
-      "log_dir": ".runtime/sensors/run-api-local",
+      "log_dir": ".harness/runtime/run-api-local",
       "held_by": [{"kind": "manual", "attached_at": "2026-05-09T13:51:38Z"}]
     }
   ]
@@ -379,7 +379,7 @@ func TestRunningSensorEntry_RunIDBlockingRoundtrip(t *testing.T) {
 		SensorID: "alpha", RunID: "12345-abc12345", Blocking: true,
 		PID: 100, PGID: 100, WatcherPID: 101,
 		StartedAt: "2026-05-11T00:00:00Z", Command: "echo hi",
-		LogDir: ".runtime/sensors/alpha/12345-abc12345",
+		LogDir: ".harness/runtime/alpha/12345-abc12345",
 		HeldBy: []registry.HeldByEntry{},
 	}}}
 	if err := registry.Save(r, rs); err != nil {
