@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
@@ -72,16 +73,25 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	id := rest[0]
+	arg := rest[0]
 
-	sensorPath, err := sensor.ResolveByID(id, projectRoot)
-	if err != nil {
-		fmt.Fprintln(stderr, "error: resolve:", err)
-		return 2
+	// Accept either a bare sensor id (^[a-z][a-z0-9-]*$) or an absolute
+	// file path. Absolute paths are resolved directly; ids are looked up
+	// under <projectRoot>/sensors/<id>.json.
+	var resolvedPath string
+	if filepath.IsAbs(arg) {
+		resolvedPath = arg
+	} else {
+		p, err := sensor.ResolveByID(arg, projectRoot)
+		if err != nil {
+			fmt.Fprintln(stderr, "error: resolve:", err)
+			return 2
+		}
+		resolvedPath = p
 	}
 
 	var sensorJSON map[string]interface{}
-	if b, rerr := os.ReadFile(sensorPath); rerr != nil {
+	if b, rerr := os.ReadFile(resolvedPath); rerr != nil {
 		fmt.Fprintln(stderr, "error: read:", rerr)
 		return 2
 	} else if jerr := json.Unmarshal(b, &sensorJSON); jerr != nil {
@@ -98,5 +108,11 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 
 	ctx, cancel := signalCancellableContext()
 	defer cancel()
-	return orchestrator.RunWithDepsRoot(ctx, id, projectRoot, schemasDir, stdout, stderr)
+	// When an absolute path was given, use the path-based variant so that
+	// projectRoot is derived from the sensor's location on disk (not from the
+	// runner's own cwd, which is the plugin root when invoked via go -C).
+	if filepath.IsAbs(arg) {
+		return orchestrator.RunWithDeps(ctx, resolvedPath, schemasDir, stdout, stderr)
+	}
+	return orchestrator.RunWithDepsRoot(ctx, arg, projectRoot, schemasDir, stdout, stderr)
 }
