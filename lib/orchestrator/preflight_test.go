@@ -13,8 +13,8 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
 func TestRunPreparePhase_NoSteps(t *testing.T) {
@@ -187,7 +187,7 @@ func writeBlockingDepFixture(t *testing.T, root, id string, depsOn []string) {
 
 func runDepsForTest(t *testing.T, root, targetID, holderID string, holderPID int) (*orchestrator.RunDepsResult, string, string) {
 	t.Helper()
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	v, code := schema.LoadValidator(schemasDir, io.Discard)
 	if code != 0 {
 		t.Fatalf("schema validator init: code=%d", code)
@@ -292,7 +292,7 @@ func TestRunDeps_BlockingDepStartFresh(t *testing.T) {
 	}
 
 	// Cleanup: detach all live deps in reverse.
-	v, _ := schema.LoadValidator(testfixtures.RepoSchemasDir(t), io.Discard)
+	v, _ := schema.LoadValidator(schematest.RepoSchemasDir(t), io.Discard)
 	for i := len(res.LiveStack) - 1; i >= 0; i-- {
 		orchestrator.DetachLiveDep(res.LiveStack[i], root, "target", v, io.Discard, io.Discard)
 	}

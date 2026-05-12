@@ -13,11 +13,11 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 )
 
 func TestRunOneWithLiveDeps_AttachesAndDetachesBlockingDep(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	writeBlockingDep(t, root, "blocking-tick")
 	writeConsumer(t, root, "uses-tick")
@@ -116,7 +116,7 @@ func writeConsumer(t *testing.T, root, id string) {
 // directory; failing to load aborts the test.
 func loadValidator(t *testing.T) *schema.Validator {
 	t.Helper()
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	v, code := schema.LoadValidator(schemasDir, io.Discard)
 	if code != 0 {
 		t.Fatalf("schema validator init failed (code=%d)", code)

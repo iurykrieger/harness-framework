@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
 func TestValidateAndPersist_ValidComputational(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	outDir := t.TempDir()
 	body, _ := json.Marshal(sensortest.LoadComputational(t).AsMap())
 
@@ -32,7 +32,7 @@ func TestValidateAndPersist_ValidComputational(t *testing.T) {
 }
 
 func TestValidateAndPersist_InvalidJSON(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	_, err := sensor.ValidateAndPersist([]byte("not-json"), t.TempDir(), schemasDir)
 	if err == nil {
 		t.Fatal("expected parse error, got nil")
@@ -40,7 +40,7 @@ func TestValidateAndPersist_InvalidJSON(t *testing.T) {
 }
 
 func TestValidateAndPersist_SchemaViolation(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	bad := sensortest.LoadComputational(t).AsMap()
 	delete(bad, "regulation")
 	body, _ := json.Marshal(bad)
@@ -57,7 +57,7 @@ func TestValidateAndPersist_SchemaViolation(t *testing.T) {
 }
 
 func TestValidateAndPersist_Idempotent(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	outDir := t.TempDir()
 	body, _ := json.Marshal(sensortest.LoadComputational(t).AsMap())
 
@@ -80,7 +80,7 @@ func TestValidateAndPersist_Idempotent(t *testing.T) {
 }
 
 func TestValidateAndPersist_OverwritesStale(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	outDir := t.TempDir()
 	stale := filepath.Join(outDir, "smoke-comp.json")
 	if err := os.WriteFile(stale, []byte("STALE"), 0o644); err != nil {
@@ -98,7 +98,7 @@ func TestValidateAndPersist_OverwritesStale(t *testing.T) {
 }
 
 func TestValidateAndPersist_CreatesNestedOutDir(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	parent := t.TempDir()
 	out := filepath.Join(parent, "deep", ".harness", "sensors")
 	body, _ := json.Marshal(sensortest.LoadComputational(t).AsMap())

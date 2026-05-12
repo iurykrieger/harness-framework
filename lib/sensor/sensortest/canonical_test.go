@@ -1,20 +1,12 @@
 package sensortest_test
 
 import (
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
-
-func schemasDir(t *testing.T) string {
-	t.Helper()
-	_, thisFile, _, _ := runtime.Caller(0)
-	// .../lib/sensor/sensortest/canonical_test.go -> 3 levels up to repo root.
-	return filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "schemas"))
-}
 
 func TestCanonicalLoadersReturnSensor(t *testing.T) {
 	for _, tc := range []struct {
@@ -35,7 +27,7 @@ func TestCanonicalLoadersReturnSensor(t *testing.T) {
 }
 
 func TestCanonicalJSONValidatesAgainstSchema(t *testing.T) {
-	v, err := schema.NewValidator(schemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
 func TestApplySensors_NewSetupSensor(t *testing.T) {
@@ -24,7 +24,7 @@ func TestApplySensors_NewSetupSensor(t *testing.T) {
 	os.WriteFile(planPath, pb, 0o644)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--plan", planPath, "--out", dir, "--schemas-dir", testfixtures.RepoSchemasDir(t)}, &stdout, &stderr)
+	code := run([]string{"--plan", planPath, "--out", dir, "--schemas-dir", schematest.RepoSchemasDir(t)}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
@@ -48,7 +48,7 @@ func TestApplySensors_PatchBumpsPatchVersion(t *testing.T) {
 	os.WriteFile(planPath, pb, 0o644)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--plan", planPath, "--out", dir, "--schemas-dir", testfixtures.RepoSchemasDir(t)}, &stdout, &stderr)
+	code := run([]string{"--plan", planPath, "--out", dir, "--schemas-dir", schematest.RepoSchemasDir(t)}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
@@ -74,7 +74,7 @@ func TestApplySensors_InvalidSensorRejected(t *testing.T) {
 	os.WriteFile(planPath, pb, 0o644)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--plan", planPath, "--out", dir, "--schemas-dir", testfixtures.RepoSchemasDir(t)}, &stdout, &stderr)
+	code := run([]string{"--plan", planPath, "--out", dir, "--schemas-dir", schematest.RepoSchemasDir(t)}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("expected 1 (validation), got %d (stderr=%s)", code, stderr.String())
 	}

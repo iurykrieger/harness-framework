@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
 // writeSensor writes a sensor fixture to <root>/.harness/sensors/<id>.json and returns
@@ -39,7 +39,7 @@ func writeSensor(t *testing.T, root, id string, mut func(map[string]interface{})
 }
 
 func TestRun_NoDeps(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	id := writeSensor(t, root, "noop", func(s map[string]interface{}) {
 		s["execution"].(map[string]interface{})["command"] = "true"
@@ -57,7 +57,7 @@ func TestRun_NoDeps(t *testing.T) {
 }
 
 func TestRun_WithDep(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	writeSensor(t, root, "dep", func(s map[string]interface{}) {
 		s["execution"].(map[string]interface{})["command"] = "true"
@@ -102,7 +102,7 @@ func TestRun_SensorNotFound(t *testing.T) {
 	root := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(root, ".harness", "sensors"), 0o755)
 	var out, errBuf bytes.Buffer
-	code := run([]string{"--schemas-dir", testfixtures.RepoSchemasDir(t), "nonexistent"}, root, &out, &errBuf)
+	code := run([]string{"--schemas-dir", schematest.RepoSchemasDir(t), "nonexistent"}, root, &out, &errBuf)
 	if code != 2 {
 		t.Fatalf("expected 2 when sensor missing, got %d", code)
 	}
@@ -168,7 +168,7 @@ func TestRunComputational_SIGTERMSetsTerminatedExternally(t *testing.T) {
 		t.Fatalf("build runner: %v\n%s", err, out)
 	}
 
-	cmd := exec.Command(bin, "--schemas-dir", testfixtures.RepoSchemasDir(t), "sleeper")
+	cmd := exec.Command(bin, "--schemas-dir", schematest.RepoSchemasDir(t), "sleeper")
 	cmd.Dir = proj
 	cmd.Env = append(os.Environ(), "HARNESS_REGISTRY_ROOT="+proj)
 	// Set a process group so we can clean up cleanly if the test bails.
@@ -210,7 +210,7 @@ func TestRunComputational_SIGTERMSetsTerminatedExternally(t *testing.T) {
 }
 
 func TestRun_BlockingSensorRejected(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	id := writeSensor(t, root, "block-me", func(s map[string]interface{}) {
 		exec := s["execution"].(map[string]interface{})

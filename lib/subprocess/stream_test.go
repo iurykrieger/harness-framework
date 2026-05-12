@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
 	"github.com/iurykrieger/harness-framework/lib/subprocess"
@@ -53,7 +54,7 @@ func decodeJSONL(t *testing.T, s string) []map[string]interface{} {
 
 func TestStreamSubprocess_EmitsJSONLPerMatch(t *testing.T) {
 	defer testfixtures.FreezeClock(t)()
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestStreamSubprocess_EmitsJSONLPerMatch(t *testing.T) {
 
 func TestStreamSubprocess_ShellFeatures(t *testing.T) {
 	defer testfixtures.FreezeClock(t)()
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
 	patterns := mustCompilePatterns(t, []interface{}{
 		map[string]interface{}{"regex": "^WARN", "verdict": "warn", "severity": "low"},
 	})
@@ -118,7 +119,7 @@ func TestStreamSubprocess_ShellFeatures(t *testing.T) {
 
 func TestStreamSubprocess_Timeout(t *testing.T) {
 	defer testfixtures.FreezeClock(t)()
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
 	var stdout, stderr bytes.Buffer
 	res, _ := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
 		Command:   `sleep 10`,
@@ -134,7 +135,7 @@ func TestStreamSubprocess_Timeout(t *testing.T) {
 }
 
 func TestStreamSubprocess_BinaryNotFound(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
 	var stdout, stderr bytes.Buffer
 	// sh exits non-zero with "command not found"; ExitCode is non-zero, no individuals.
 	res, err := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
@@ -153,7 +154,7 @@ func TestStreamSubprocess_BinaryNotFound(t *testing.T) {
 }
 
 func TestStreamSubprocess_NoPatternsNoIndividuals(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
 	var stdout, stderr bytes.Buffer
 	res, _ := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
 		Command:   `printf 'whatever\n'`,

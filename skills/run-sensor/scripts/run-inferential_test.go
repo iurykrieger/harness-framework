@@ -9,22 +9,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
-
-func repoSchemasDir(t *testing.T) string {
-	t.Helper()
-	_, thisFile, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "schemas")
-}
 
 // writeInferentialSensor writes an inferential sensor fixture to
 // <root>/sensors/<id>.json and returns the sensor id.
@@ -94,7 +87,7 @@ func parseJSONL(t *testing.T, s string) []map[string]interface{} {
 }
 
 func TestRunInferential_Pass(t *testing.T) {
-	schemasDir := repoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	id := writeInferentialSensor(t, root, "infr-pass", `printf 'PASS judgment-1\n'`)
 	var stdout, stderr bytes.Buffer
@@ -122,7 +115,7 @@ func TestRunInferential_Pass(t *testing.T) {
 }
 
 func TestRunInferential_CalibrationDowngrade(t *testing.T) {
-	schemasDir := repoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	// One FAIL line + a HARNESS_AGGREGATE_CONFIDENCE=0.5 line on stdout.
 	// Confidence 0.5 < threshold 0.7, so fail -> warn.
@@ -158,7 +151,7 @@ func TestRunInferential_CalibrationDowngrade(t *testing.T) {
 }
 
 func TestRunInferential_RejectsComputational(t *testing.T) {
-	schemasDir := repoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	sensorsDir := filepath.Join(root, ".harness", "sensors")
 	_ = os.MkdirAll(sensorsDir, 0o755)
@@ -194,7 +187,7 @@ func TestRunInferential_RejectsComputational(t *testing.T) {
 }
 
 func TestRunInferential_HonoursExitCodeMap(t *testing.T) {
-	schemasDir := repoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	id := writeInferentialSensor(t, root, "infr-ecmap", `printf 'PASS judgment\n'; exit 7`)
 	// Patch the sensor on disk to add an exit_code_map that maps 7 -> warn/medium.
@@ -229,7 +222,7 @@ func TestRunInferential_HonoursExitCodeMap(t *testing.T) {
 }
 
 func TestRunInferential_MissingRequiredEnvAborts(t *testing.T) {
-	schemasDir := repoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	id := writeInferentialSensor(t, root, "infr-env", `printf "should not run\n"; exit 0`)
 	sensorPath := filepath.Join(root, ".harness", "sensors", id+".json")
@@ -274,7 +267,7 @@ func TestRunInferential_MissingRequiredEnvAborts(t *testing.T) {
 }
 
 func TestRunInferential_UnboundSlot(t *testing.T) {
-	schemasDir := repoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	id := writeInferentialSensor(t, root, "infr-slot", `true`)
 	var stdout, stderr bytes.Buffer
@@ -292,7 +285,7 @@ func TestRunInferential_UnboundSlot(t *testing.T) {
 }
 
 func TestRun_InferentialWithComputationalDep(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	sensorsDir := filepath.Join(root, ".harness", "sensors")
 	_ = os.MkdirAll(sensorsDir, 0o755)
@@ -353,7 +346,7 @@ func TestRunInferential_SIGTERMSetsTerminatedExternally(t *testing.T) {
 	}
 
 	cmd := exec.Command(bin,
-		"--schemas-dir", testfixtures.RepoSchemasDir(t),
+		"--schemas-dir", schematest.RepoSchemasDir(t),
 		"--slot", "a=x", "--slot", "b=y", id)
 	cmd.Dir = proj
 	cmd.Env = append(os.Environ(), "HARNESS_REGISTRY_ROOT="+proj)
@@ -398,7 +391,7 @@ func TestRunInferential_SIGTERMSetsTerminatedExternally(t *testing.T) {
 }
 
 func TestRunInferential_BlockingSensorRejected(t *testing.T) {
-	schemasDir := repoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	sensorsDir := filepath.Join(root, ".harness", "sensors")
 	_ = os.MkdirAll(sensorsDir, 0o755)
