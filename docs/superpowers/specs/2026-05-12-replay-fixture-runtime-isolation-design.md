@@ -68,11 +68,18 @@ The fix is to extract the verification logic into a dedicated Go script that pre
 
 3. **Update `skills/detect-sensors/SKILL.md` lines 286–292** to replace the shell snippet with an invocation of the new script (see "SKILL.md prose change" below).
 
-4. **No change to** the runner (`skills/run-sensor/`), the registry library (`lib/registry/`), the schemas, or `/heal-sensor`.
+4. **Add a build tag to the existing `skills/detect-sensors/scripts/write-sensor.go`** so it can coexist with `replay-fixture.go`. Two `package main` files in one directory require disjoint build tags — same pattern as `skills/heal-sensor/scripts/` (`heal_apply_safe`, `heal_apply_sensors`, `heal_diagnose`, `heal_retry_original`) and `skills/run-sensor/scripts/` (`run_computational`, `run_inferential`). Concretely:
+   - Prepend `//go:build write_sensor` to `write-sensor.go` and `write-sensor_test.go`.
+   - Update the docstring example on `write-sensor.go:7` from `go run ./skills/detect-sensors/scripts \` to `go run -tags=write_sensor ./skills/detect-sensors/scripts \`.
+   - Update the live invocation in `skills/detect-sensors/SKILL.md:245` (the persistence step inside step 6) from `go run ./skills/detect-sensors/scripts \` to `go run -tags=write_sensor ./skills/detect-sensors/scripts \`.
+   - `hooks/error-issue-autofiler_test.go:101,151` matches the substring `"go run ./skills/detect-sensors/scripts"`. The substring is preserved when `-tags=write_sensor` is inserted after `go run`, so those tests stay green. No edit needed.
+   - Historical docs under `docs/superpowers/plans/` and `docs/superpowers/specs/` are not retroactively edited.
 
-5. **No change to** the on-disk shape of `.runtime/sensors/` for production runs. Only verification runs are redirected to ephemeral storage; the production happy-path remains under the project's `.runtime/sensors/<id>/<run-id>/`.
+5. **No change to** the runner (`skills/run-sensor/`), the registry library (`lib/registry/`), the schemas, or `/heal-sensor`.
 
-6. **No retroactive cleanup of existing `.runtime/sensors/replay-*` directories.** The user removes them manually once; subsequent runs do not regenerate them. A one-line `rm -rf .runtime/sensors/replay-*` note is added to the migration notes in the SKILL.md update.
+6. **No change to** the on-disk shape of `.runtime/sensors/` for production runs. Only verification runs are redirected to ephemeral storage; the production happy-path remains under the project's `.runtime/sensors/<id>/<run-id>/`.
+
+7. **No retroactive cleanup of existing `.runtime/sensors/replay-*` directories.** The user removes them manually once; subsequent runs do not regenerate them. A one-line `rm -rf .runtime/sensors/replay-*` note is added to the migration notes in the SKILL.md update.
 
 ## Architecture
 
@@ -89,13 +96,13 @@ The fix is to extract the verification logic into a dedicated Go script that pre
 
 ```
 skills/detect-sensors/scripts/
-├── persist.go                       (existing, unrelated)
-├── persist_test.go                  (existing, unrelated)
+├── write-sensor.go                  (existing; ADDS //go:build write_sensor)
+├── write-sensor_test.go             (existing; ADDS //go:build write_sensor)
 ├── replay-fixture.go                (NEW; //go:build replay_fixture)
-└── replay-fixture_test.go           (NEW)
+└── replay-fixture_test.go           (NEW; //go:build replay_fixture)
 ```
 
-The build tag pattern matches `skills/heal-sensor/scripts/retry-original.go:1` (`//go:build heal_retry_original`) and `skills/run-sensor/scripts/run-{computational,inferential}.go`. Build tags let several `package main` scripts coexist in one directory per project rule #7.
+The build tag pattern matches `skills/heal-sensor/scripts/retry-original.go:1` (`//go:build heal_retry_original`) and `skills/run-sensor/scripts/run-{computational,inferential}.go`. Build tags let several `package main` scripts coexist in one directory per project rule #7. After this change, the default build of `./skills/detect-sensors/scripts` is empty — every caller must pass `-tags=<one>`. That mirrors how `./skills/run-sensor/scripts` and `./skills/heal-sensor/scripts` are already used.
 
 ### `replay-fixture.go` outline
 
@@ -297,8 +304,10 @@ For the inferential-type case, the test substitutes `go` via `t.Setenv("PATH", .
 1. `find .runtime/sensors -maxdepth 1 -type d -name "replay-*"` returns nothing after a full `/detect-sensors` cycle on a clean project.
 2. Aggregate Signal of a fixture replay carries `sensor_id: "<original-id>"`, not `"replay-<original-id>"`.
 3. `go test -tags=replay_fixture ./skills/detect-sensors/scripts/...` passes.
-4. `go vet -tags=replay_fixture ./...` passes.
-5. `/detect-sensors` end-to-end on a sample sensor with at least one fixture still produces the same aggregate verdict shape the previous snippet produced (verified by diffing the stdout JSON of the old shell snippet against the new Go script on a representative sensor).
+4. `go test -tags=write_sensor ./skills/detect-sensors/scripts/...` passes (the existing `write-sensor_test.go` suite, now tag-gated).
+5. `go vet -tags=replay_fixture ./...` passes.
+6. `go vet -tags=write_sensor ./...` passes.
+7. `/detect-sensors` end-to-end on a sample sensor with at least one fixture still produces the same aggregate verdict shape the previous snippet produced (verified by diffing the stdout JSON of the old shell snippet against the new Go script on a representative sensor).
 
 ## Out of scope
 
