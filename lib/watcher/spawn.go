@@ -6,6 +6,7 @@
 package watcher
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,10 @@ import (
 
 // SpawnOpts captures everything needed to launch a watcher subprocess.
 type SpawnOpts struct {
+	// PluginRoot is the absolute path to the plugin checkout. realSpawn uses it
+	// as the working directory for "go -C <PluginRoot>" when compiling the
+	// watcher binary on demand (Task 2.3). Must be non-empty.
+	PluginRoot     string
 	ProjectRoot    string
 	SensorID       string
 	RunID          string
@@ -37,6 +42,9 @@ func Spawn(opts SpawnOpts) (int, error) {
 }
 
 func realSpawn(opts SpawnOpts) (int, error) {
+	if opts.PluginRoot == "" {
+		return 0, errors.New("plugin root not set (set CLAUDE_PLUGIN_ROOT)")
+	}
 	bin, err := BinaryPath()
 	if err != nil {
 		return 0, fmt.Errorf("watcher binary path: %w", err)

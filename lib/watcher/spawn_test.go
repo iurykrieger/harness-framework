@@ -29,6 +29,7 @@ func TestSpawn_ErrorWhenBinaryAbsent(t *testing.T) {
 	}
 
 	pid, err := Spawn(SpawnOpts{
+		PluginRoot:     t.TempDir(),
 		ProjectRoot:    tmp,
 		SensorID:       "x",
 		RunID:          "r1",
@@ -95,6 +96,7 @@ func TestSpawn_PropagatesRunID(t *testing.T) {
 	}
 
 	_, err := Spawn(SpawnOpts{
+		PluginRoot:     tmp,
 		ProjectRoot:    tmp,
 		SensorID:       "x",
 		RunID:          "run-abc-123",
@@ -120,5 +122,29 @@ func TestSpawn_PropagatesRunID(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "HARNESS_WATCHER_RUN_ID=run-abc-123") {
 		t.Errorf("env.out = %q, want it to contain HARNESS_WATCHER_RUN_ID=run-abc-123", got)
+	}
+}
+
+func TestSpawn_RejectsEmptyPluginRoot(t *testing.T) {
+	// Force production code path (no SpawnFn override).
+	pid, err := Spawn(SpawnOpts{
+		ProjectRoot:    t.TempDir(),
+		SensorID:       "x",
+		RunID:          "r1",
+		// PluginRoot intentionally empty
+		RawLogPath:     "/dev/null",
+		SignalsLogPath: "/dev/null",
+		EnvelopeJSON:   []byte(`{}`),
+		PatternsJSON:   []byte(`[]`),
+		SubprocessPID:  os.Getpid(),
+	})
+	if err == nil {
+		t.Fatalf("expected error for empty PluginRoot, got pid=%d", pid)
+	}
+	if !strings.Contains(err.Error(), "plugin root") {
+		t.Errorf("err = %v, want one mentioning 'plugin root'", err)
+	}
+	if pid != 0 {
+		t.Errorf("pid = %d, want 0", pid)
 	}
 }
