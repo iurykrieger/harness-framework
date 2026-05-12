@@ -3,7 +3,7 @@
 Status: proposed
 Date: 2026-05-12
 Issue: https://github.com/iurykrieger/harness-framework/issues/36
-Related: `lib/orchestrator/preflight.go`, `lib/orchestrator/lifecycle.go`, `lib/orchestrator/live_deps.go`, `lib/sensor/requires.go`, `lib/sensor/env.go`, `skills/start-sensor/scripts/start.go`, `CLAUDE.md`
+Related: `lib/orchestrator/preflight.go`, `lib/orchestrator/lifecycle.go`, `lib/orchestrator/live_deps.go`, `lib/sensor/requires.go`, `lib/sensor/env.go`, `skills/start-sensor/scripts/start.go`, `skills/run-sensor/scripts/run-inferential.go`, `hooks/setup-failure-detector.go`, `CLAUDE.md`
 
 ## Why
 
@@ -38,21 +38,31 @@ The fix in this spec is therefore not just "add a gate call in one more place." 
    - `evidence[]` per-failure (existing, rich rationale)
    - `remediation.instructions` (existing)
 
-4. **Four call sites refactored** to use `PreflightGate`:
+4. **Five call sites refactored** to use `PreflightGate`:
    - `RunOne` (`lifecycle.go:62-64`)
    - `RunOneWithRoot` (`lifecycle.go:246-248`)
-   - `/start-sensor` (`start.go:137-142`), removing the local `requiresGateAux` and `requiresGateRationale` helpers (~55 LoC)
-   - `RunDeps` blocking branch (`preflight.go:89`) — **the fix for #36**. Gate is evaluated immediately before `AttachLiveDep`; on failure, the canonical signal is emitted on stdout and recorded in `res.Signals[s.ID]`, after which the existing cascade machinery (`FirstFailedDep` + `BuildCascadeSignal`) handles dependents and the root on the next iterations.
+   - `run-inferential.go` (`skills/run-sensor/scripts/run-inferential.go:225-232`) — currently uses the deprecated `sensor.CheckRequiredEnv` + `sensor.BuildMissingEnvSignal` pair and only checks `env`-kind preconditions (no tool/context). Switches to `PreflightGate` for parity with the other runners; this also fixes a latent gap where inferential sensors with `requires[kind=tool]` are unchecked today.
+   - `/start-sensor` (`start.go:137-142`), removing the local `requiresGateAux` and `requiresGateRationale` helpers (~55 LoC). Crucially, `/start-sensor`'s envelope builder `startSignal` carries a `Diagnose` block (via `signal.NewBuilder().WithDiagnose(b.Diagnose).Build()`) that `PreflightGate`'s canonical signal does not. The refactor preserves `Diagnose` by passing it as an additional argument or by merging post-construction; spelled out in Architecture section below.
+   - `RunDeps` blocking branch — **the fix for #36**. The gate is moved **inside** `AttachLiveDep` (under the file lock, in the spawn-fresh branch only, not the re-attach branch). On failure, the canonical signal is returned to `RunDeps` via an extended return signature; `RunDeps` emits it on stdout and records it in `res.Signals[s.ID]`, after which the existing cascade machinery (`FirstFailedDep` + `BuildCascadeSignal`) handles dependents and the root on the next iterations.
 
-5. **`AttachLiveDep` is not modified.** The gate runs in the caller (`RunDeps`), not under the file lock inside `AttachLiveDep`. Justification: keeping gate in `RunDeps` avoids changing `AttachLiveDep`'s `(LiveDep, error)` signature; gate is pure and idempotent; running it in both spawn-fresh and re-attach paths keeps the invariant uniform without measurable cost.
+5. **`AttachLiveDep` signature changes** to carry the gate-fail signal back to `RunDeps` without conflating it with a hard error. Either:
+   - Return type changes from `(LiveDep, error)` to `(LiveDep, map[string]interface{}, error)` where the new return is the gate signal (non-nil iff the spawn-fresh path detected gate failure), OR
+   - A new struct `AttachResult { Live LiveDep, GateSignal map[string]interface{} }` replaces the first return value.
+   The struct form is preferred for forward-compat. The lock-scoped flow is: under the lock, if an existing alive entry is found → re-attach (no gate); otherwise → call `PreflightGate`; on failure, set `gateSignal` and return without spawning; on success, proceed to `startBlockingDep`. The reason gate must be inside the lock for the spawn-fresh path: deciding "fresh vs re-attach" is itself lock-scoped (`registry.FindBlockingEntry` + `IsPIDAlive`), and re-attach must NOT gate (see Architecture → Re-attach semantics).
 
-6. **Removed:**
+6. **`hooks/setup-failure-detector.go` is updated** to recognise `metadata.kind="failed"` as a heal candidate (added to the switch on line 173). The existing `case "aggregate", "start_failed":` is broadened to `case "aggregate", "start_failed", "failed":` so that:
+   - `/run-sensor` preflight failures (changing from `kind="aggregate"` to `kind="failed"`) continue to trigger heal classification.
+   - `/start-sensor` failures (which already emit `kind="failed"` today) start being recognised — closes a pre-existing silent gap where the comment claims `start_failed` but the code emits `failed`.
+   The stale comment on lines 174-177 is rewritten to match the actual current behavior.
+
+7. **Removed:**
    - `orchestrator.RunRequiresGate` (`preflight.go:142-157`) — superseded by `PreflightGate`
    - `orchestrator.emitRequiresGateAggregate` (`lifecycle.go:688-702`) — absorbed into `PreflightGate`; the validation/emit half is renamed `emitPreflightSignal` (~15 LoC, stays in `lifecycle.go`)
-   - `sensor.BuildMissingEnvSignal` (`env.go`) — deprecated wrapper, last caller goes away
+   - `sensor.BuildMissingEnvSignal` (`env.go:51-66`) — deprecated wrapper, last caller (`run-inferential.go`) moves to `PreflightGate`
+   - `sensor.CheckRequiredEnv` and `sensor.MissingEnv` (`env.go:11-49`) — only consumer was `BuildMissingEnvSignal` + `run-inferential.go`; both gone
    - `start.go::requiresGateAux` and `start.go::requiresGateRationale` — replaced by direct use of the canonical signal
 
-7. **CHANGELOG entry** records the breaking change to `metadata.kind` for preflight-failure signals from `/run-sensor` paths: was `"aggregate"`, now `"failed"`. Consumers reading `metadata.kind` to distinguish gate-fail from runtime-aggregate should switch to reading `metadata.cause == "preflight_failed"` (more precise and works for any future `kind="failed"` shape too).
+8. **CHANGELOG entry** records the breaking change to `metadata.kind` for preflight-failure signals from `/run-sensor` paths: was `"aggregate"`, now `"failed"`. Consumers reading `metadata.kind` to distinguish gate-fail from runtime-aggregate should switch to reading `metadata.cause == "preflight_failed"` (more precise and works for any future `kind="failed"` shape too).
 
 ## Architecture
 
@@ -103,10 +113,12 @@ Project state: `health-check.json` (non-blocking, depends on `run-project-nest`)
 `RunDeps` iterates the topo-sorted order `[run-project-nest, health-check]`:
 
 1. `s = run-project-nest`, `blocking=true` →
-   - `env, _ := sensor.BuildEnvelope(s.JSON)`
-   - `sig, failed := PreflightGate(s, env, "stream")` → `failed=true`
-   - Validate `sig` against `signal.json`; emit on stdout; `res.Signals["run-project-nest"] = sig`; `continue`.
-   - **No subprocess spawned.**
+   - `RunDeps` calls `AttachLiveDep(ctx, s, ...)`.
+   - Inside `AttachLiveDep`, under the registry file lock: `registry.FindBlockingEntry("run-project-nest")` returns nil (first run). Spawn-fresh branch.
+   - In the spawn-fresh branch: `env, _ := sensor.BuildEnvelope(s.JSON)`; `sig, failed := PreflightGate(s, env, "stream")` → `failed=true`.
+   - `AttachLiveDep` returns `(AttachResult{GateSignal: sig}, nil)` without calling `startBlockingDep`. Lock released.
+   - Back in `RunDeps`: validates `sig` against `signal.json`; emits on stdout; `res.Signals["run-project-nest"] = sig`; `continue`.
+   - **No subprocess spawned. No registry entry created.**
 
 2. `s = health-check` is the target → loop body's `if s.ID == targetID { continue }` skips it.
 
@@ -123,7 +135,29 @@ Total latency: low single-digit milliseconds. Registry: empty for `run-project-n
 
 ### Re-attach semantics
 
-`AttachLiveDep` distinguishes spawn-fresh (existing entry absent or PID dead) from re-attach (existing entry alive) under the registry file lock. Gate evaluation happens in the **caller** (`RunDeps`), *before* `AttachLiveDep`, so it cannot peek at this distinction and runs uniformly in both paths. In re-attach, this means the gate re-evaluates preconditions that the dep already satisfied when it was first started. This is intentional: gate evaluation is pure and `O(microseconds)`; running it in re-attach maintains the invariant uniformly; and if the current shell environment fails the gate, that's a real signal that the holder (the dependent that's about to use the dep) is in an environment that won't satisfy the dep's contract. The holder's own gate (in `RunOne` Phase 0 or wherever) will likely flag the same problem; flagging it here too gives the agent an attributable signal at the dep level.
+`AttachLiveDep` distinguishes spawn-fresh (existing entry absent or PID dead) from re-attach (existing entry alive) under the registry file lock. **Gate evaluation runs only in the spawn-fresh branch**, not on re-attach.
+
+Why not also gate on re-attach? Consider a `run-redis` dep with `requires: [{kind: tool, name: "redis-cli"}]`. Holder A's shell has `redis-cli` on PATH; it spawns the dep fresh, gate passes, dep is alive. Holder B (different terminal, different PATH) wants to attach to the same live `run-redis` to use it. Holder B's PATH lacks `redis-cli` — but Holder B is not using `redis-cli` to talk to the dep; the dep is already running, exposing its protocol on a socket. Gating Holder B's re-attach on the dep's `requires[kind=tool]` would falsely abort a legitimate attach. The `requires[]` of the **dep** describes what the **dep's own process** needed when it started; once it is alive, those preconditions are baked in.
+
+The invariant — "gate runs before any sensor spawn" — is therefore satisfied by gating exactly when a spawn is about to happen. Re-attach is not a spawn; it is registering a new holder in an existing registry entry. Putting the gate inside `AttachLiveDep` under the file lock is what enables this distinction to be observed atomically: the same critical section that reads "is there a live entry?" decides whether to gate.
+
+### `/start-sensor`'s Diagnose block
+
+`/start-sensor` builds its terminal signals via `startSignal(...)` (start.go:480-505) which wraps `signal.NewBuilder().WithDiagnose(diagnose).Build()`. The `diagnose` block is `/start-sensor`-specific metadata (registry path, project root resolution evidence, etc.) absent from `RunOne`'s aggregate signals and absent from the canonical preflight signal that `PreflightGate` produces.
+
+The refactor preserves `Diagnose` by **merging it into the canonical signal's metadata after construction**:
+
+```go
+sig, failed := orchestrator.PreflightGate(target, env, output)
+if failed {
+    md := sig["metadata"].(map[string]interface{})
+    md["diagnose"] = b.Diagnose
+    detachAll()
+    return 1, signal.ValidateOrEmergency(v, sig, id, os.Stderr)
+}
+```
+
+This keeps `PreflightGate`'s contract caller-agnostic (it knows nothing about `/start-sensor`'s diagnose conventions) while letting `/start-sensor` enrich the signal with its envelope-specific metadata. The alternative of threading `diagnose` into `PreflightGate`'s signature was rejected as caller-knowledge leakage.
 
 ### Why `kind="failed"` and not `kind="preflight_failed"`
 
@@ -153,11 +187,21 @@ New: `TestBuildRequiresGateSignal_OmitsEmptyMissingLists` — gate with only env
 - `TestPreflightGate_FailReturnsCanonicalSignal` — sensor with unset env returns `(sig, true)` with `metadata.kind="failed"`, `cause="preflight_failed"`, populated `missing_envs`, `heal_hint`.
 - `TestPreflightGate_UsesProvidedEnvelope` — confirms the returned signal carries the caller's `env.SensorID`, `env.Version`, `env.RunID`, `env.StartedAt` (not a freshly-generated envelope).
 
-### C. `lib/orchestrator/preflight_test.go` — closes #36
+### C. `lib/orchestrator/preflight_test.go` and `lib/orchestrator/live_deps_test.go` — closes #36
 
-Existing tests (`TestRunDeps_NoDeps`, `_SetupDepPASS`, `_SetupDepFAIL_RootCascadesViaCascadeSig`, `_BlockingDepStartFresh`, `_DAGCycle`, `_DepFileMissing`, `_TransitiveCascade`) remain green. New:
+Existing tests (`TestRunDeps_NoDeps`, `_SetupDepPASS`, `_SetupDepFAIL_RootCascadesViaCascadeSig`, `_BlockingDepStartFresh`, `_DAGCycle`, `_DepFileMissing`, `_TransitiveCascade`) remain green. New tests:
 
-- `TestRunDeps_BlockingDepGateFails_EmitsPreflightSignalAndCascadesRoot`:
+- `TestAttachLiveDep_SpawnFreshGateFails_ReturnsGateSignalNoSpawn` (in `live_deps_test.go`):
+  - Empty registry; dep declares `requires: [{kind: "env", name: "UNSET_FOO"}]`; env not set.
+  - Calls `AttachLiveDep` directly.
+  - Asserts: `result.GateSignal != nil`, `result.GateSignal.verdict == "error"`, `result.GateSignal.metadata.cause == "preflight_failed"`, `result.GateSignal.metadata.missing_envs` contains `"UNSET_FOO"`, no entry created in registry, no subprocess spawned.
+
+- `TestAttachLiveDep_ReattachToLiveDep_DoesNotGate` (in `live_deps_test.go`) — **directly addresses re-attach false-positive concern**:
+  - Pre-populate registry with an alive blocking entry for `dep-x` (real PID via a sleep helper). Dep declares `requires: [{kind: "tool", name: "absolutely-not-on-path-XYZ"}]`.
+  - Call `AttachLiveDep` to re-attach.
+  - Asserts: `result.GateSignal == nil` (no gate evaluation on re-attach), `result.Live.ID == "dep-x"`, holder appended to existing entry.
+
+- `TestRunDeps_BlockingDepGateFails_EmitsPreflightSignalAndCascadesRoot` (in `preflight_test.go`):
   - Setup: root `target` (non-blocking) depends on `blocking-dep` (blocking) which declares `requires: [{kind: "env", name: "REQUIRED_FOO_36"}]`.
   - Test deliberately does NOT `t.Setenv("REQUIRED_FOO_36", ...)`.
   - Runs `RunDeps(ctx, "target", root, ...)`.
@@ -178,15 +222,18 @@ Existing tests (`TestRunDeps_NoDeps`, `_SetupDepPASS`, `_SetupDepFAIL_RootCascad
   - Gate passes; `AttachLiveDep` is called; `LiveStack` populated; `dep_started` signal emitted on stdout.
   - Cleanup detaches via `DetachLiveDep` in reverse.
 
-### D. Existing tests that pattern-match on `metadata.kind == "aggregate"` for preflight paths
+### D. Existing tests that exercise the changed surfaces
 
-Audit and update. Expected impact (to be verified during implementation):
-- `lib/orchestrator/lifecycle_test.go` — any test asserting `metadata.kind` on a Phase 0 fail (likely a small number).
-- `skills/run-sensor/scripts/*_test.go` — possibly affected, depending on integration coverage of the gate path.
-- `skills/start-sensor/scripts/*_test.go` — `metadata.kind == "failed"` and `cause == "preflight_failed"` are preserved; tests should remain green. `missing_envs/missing_tools/missing_contexts` payload shape may differ from the old `requiresGateAux` output (e.g., omitted-when-empty vs. always-present-as-empty-array); update tests where this matters.
-- `test/heal-e2e/heal_e2e_test.go` — heal classifier routes on `heal_hint`, not on `kind`. Expected neutral.
+Audit and update:
+- `lib/sensor/env_test.go` — `TestBuildMissingEnvSignal_*` and any test of `CheckRequiredEnv` go away with `env.go` deletion. Move the few useful assertions into `requires_test.go` against the canonical helper.
+- `lib/heal/rules/missing_env_test.go:60-73` — uses `sensor.BuildMissingEnvSignal` to build a heal-classifier fixture. Switch to `sensor.CheckRequiresGate` + `sensor.BuildRequiresGateSignal` to construct the same fixture.
+- `lib/orchestrator/lifecycle_test.go` — any test asserting `metadata.kind == "aggregate"` on a Phase 0 fail (audit at implementation time).
+- `skills/run-sensor/scripts/*_test.go` — `run-inferential.go`'s tests will reflect the `kind` change.
+- `skills/start-sensor/scripts/*_test.go` — `metadata.kind == "failed"` and `cause == "preflight_failed"` are preserved; tests should remain green. `missing_envs/missing_tools/missing_contexts` payload shape may differ from the old `requiresGateAux` output (omitted-when-empty vs. always-present-as-empty-array); update tests where this matters. `evidence[]` is now per-failure rich rationale instead of the single coarse summary from `requiresGateRationale` — tests asserting evidence content must update.
+- `hooks/setup-failure-detector_test.go` (if exists) — verify that the broadened switch case (`"failed"` added) still routes `cascade` and `aggregate` correctly, and now also accepts `"failed"`.
+- `test/heal-e2e/heal_e2e_test.go` — heal classifier routes on `heal_hint`, not on `kind`. Expected neutral, but verify.
 
-The audit happens before merging the spec implementation; this section lists the expected blast radius, not a guess.
+The audit happens before merging the spec implementation; this section lists the expected blast radius.
 
 ### E. `lib/orchestrator/gate_invariant_test.go` (new file)
 
@@ -221,11 +268,13 @@ This roteiro is recorded in the design doc for future regression checks and is n
 
 ## Migration and compatibility
 
-- **`metadata.kind` for preflight failures from `/run-sensor`** changes from `"aggregate"` to `"failed"`. Consumers reading `kind` to detect gate-fail should switch to `metadata.cause == "preflight_failed"`. `/heal-sensor`'s classifier routes on `metadata.heal_hint` (unchanged shape), so it is neutral.
-- **`/start-sensor` preflight signal payload** stays the same on the outside (`kind="failed"`, `cause="preflight_failed"`, `missing_envs/tools/contexts`, `heal_hint`) but is now built by the canonical helper. The flat `aux` keys (`missing_envs[]`, etc.) are preserved; the only observable difference is the added richer `evidence[]` per-failure (was a single coarse summary in `requiresGateRationale`) and `remediation.instructions`. Tests that inspect `evidence[0].rationale` for the old summary string must update.
-- **`orchestrator.RunRequiresGate` is removed.** No callers exist outside the four refactored sites. External users of `lib/orchestrator/` (if any beyond this repo) call `PreflightGate` instead.
-- **`sensor.BuildMissingEnvSignal` is removed** (`env.go`). It was a deprecated wrapper around `BuildRequiresGateSignal` since the unified gate landed; final cleanup.
-- **Schema compatibility**: `signal.json`'s `metadata` is `additionalProperties: true` (no enum on `metadata.kind`), so no schema changes are needed.
+- **`metadata.kind` for preflight failures from `/run-sensor`** changes from `"aggregate"` to `"failed"`. Consumers reading `kind` to detect gate-fail should switch to `metadata.cause == "preflight_failed"`. `/heal-sensor`'s classifier routes on `metadata.heal_hint` (unchanged shape), so it is neutral; `setup-failure-detector` hook needs its switch case broadened in the same PR (covered in item 6 of "What changes").
+- **`/start-sensor` preflight signal payload** stays the same on the outside (`kind="failed"`, `cause="preflight_failed"`, `missing_envs/tools/contexts`, `heal_hint`) but is now built by the canonical helper. The flat `aux` keys (`missing_envs[]`, etc.) are preserved; observable differences: (a) richer `evidence[]` per-failure (was a single coarse summary in `requiresGateRationale`), (b) `remediation.instructions` populated, (c) `metadata.diagnose` block preserved (Diagnose merged post-construction). Tests that inspect `evidence[0].rationale` for the old summary string must update.
+- **`run-inferential.go`'s preflight signal** changes payload: was env-only (via `BuildMissingEnvSignal`), becomes the full canonical shape (env + tool + context, with per-failure evidence and remediation). Inferential sensors with `requires[kind=tool]` start being gated for the first time; this is a feature gain, not a regression.
+- **`orchestrator.RunRequiresGate` is removed.** No callers exist outside the five refactored sites. External users of `lib/orchestrator/` (if any beyond this repo) call `PreflightGate` instead.
+- **`sensor.BuildMissingEnvSignal`, `sensor.CheckRequiredEnv`, `sensor.MissingEnv` are removed** (`env.go`). They were transitional API for the env-only era. Heal classifier tests that use `BuildMissingEnvSignal` to build fixtures must switch to `CheckRequiresGate` + `BuildRequiresGateSignal`.
+- **`hooks/setup-failure-detector.go` switch is broadened** to `case "aggregate", "start_failed", "failed":`. This is required for `/run-sensor` preflight failures to reach the heal classifier under the new `kind="failed"` shape, and incidentally closes a pre-existing silent gap where `/start-sensor`'s `kind="failed"` envelopes were already not being recognised (the comment claimed `start_failed` but the code emits `failed`). The stale comment is rewritten.
+- **Schema compatibility**: `signal.json`'s `metadata` has no `additionalProperties: false` constraint, no enum on `kind` (signal.json:122-125), so payload additions are schema-safe. `cost_actual.latency_ms: 0` is valid (`minimum: 0`, signal.json:115).
 
 ## Rejected alternatives
 
@@ -247,10 +296,8 @@ E.g. `metadata.kind ∈ {aggregate, cascade, preflight_failed, prepare_failed, r
 
 ## Open questions
 
-None blocking. Implementation surfaces two minor decisions to make during coding:
+None blocking. One implementation detail:
 
-1. Whether to keep `cost_actual.latency_ms: 0` on preflight signals or omit `cost_actual` entirely. Current behavior keeps it at `0`; spec preserves that for consistency with `signal.json`'s `required` list (if it includes `cost_actual`). To be verified against the schema during implementation.
+1. Whether `lib/orchestrator/gate_invariant_test.go` should use Go's `go/ast`/`go/parser` (compile-correct) or plain regex over file bytes (simpler). Default to regex; switch to AST only if false positives become noisy.
 
-2. Whether `lib/orchestrator/gate_invariant_test.go` should use Go's `go/ast`/`go/parser` (compile-correct) or plain regex over file bytes (simpler). Default to regex; switch to AST only if false positives become noisy.
-
-Both are implementation details that do not affect the design contract.
+This does not affect the design contract.
