@@ -6,7 +6,26 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
+
+// stableNow is a frozen clock used by tests that assert on signal timestamps.
+func stableNow() time.Time {
+	return time.Date(2026, 5, 8, 0, 0, 0, 0, time.UTC)
+}
+
+// withFakeEnv replaces LookupEnvFn with a map-backed lookup for the duration
+// of the test, restoring the previous hook on cleanup. Tests rely on this to
+// drive checkEnv without mutating the process environment.
+func withFakeEnv(t *testing.T, env map[string]string) {
+	t.Helper()
+	prev := LookupEnvFn
+	LookupEnvFn = func(name string) (string, bool) {
+		v, ok := env[name]
+		return v, ok
+	}
+	t.Cleanup(func() { LookupEnvFn = prev })
+}
 
 // ---------------------------------------------------------------------------
 // 2.1 – Gate / Failure types
@@ -251,6 +270,39 @@ func TestCheckEnv_MissingWithoutDescription(t *testing.T) {
 	}
 	if strings.Contains(f.Rationale, ": ") {
 		t.Errorf("Rationale should not contain ': ' when no description, got %q", f.Rationale)
+	}
+}
+
+func TestCheckEnv_OptionalMissingIsSkipped(t *testing.T) {
+	withFakeEnv(t, map[string]string{})
+	sensor := map[string]interface{}{
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env", "name": "DEBUG", "optional": true},
+			map[string]interface{}{"kind": "env", "name": "REGION"},
+		},
+	}
+	g := CheckRequiresGate(sensor, GateOpts{})
+	if len(g.Failures) != 1 {
+		t.Fatalf("expected only REGION to fail, got %d: %+v", len(g.Failures), g.Failures)
+	}
+	if g.Failures[0].Identifier != "REGION" {
+		t.Errorf("Identifier = %q, want %q", g.Failures[0].Identifier, "REGION")
+	}
+}
+
+func TestCheckEnv_MalformedEntriesIgnored(t *testing.T) {
+	withFakeEnv(t, map[string]string{})
+	sensor := map[string]interface{}{
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env"},                          // no name
+			map[string]interface{}{"kind": "env", "name": ""},              // empty name
+			map[string]interface{}{"kind": "env", "name": "REAL_ONE"},      // counted
+			map[string]interface{}{"kind": "env", "description": "orphan"}, // missing name
+		},
+	}
+	g := CheckRequiresGate(sensor, GateOpts{})
+	if len(g.Failures) != 1 || g.Failures[0].Identifier != "REAL_ONE" {
+		t.Fatalf("expected only REAL_ONE to fail, got %+v", g.Failures)
 	}
 }
 

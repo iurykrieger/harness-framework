@@ -7,7 +7,6 @@ import (
 	"io"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
-	"github.com/iurykrieger/harness-framework/lib/sensor"
 )
 
 // RunDepsResult carries the post-pre-flight state for the caller to
@@ -144,21 +143,4 @@ func RunDeps(
 // without paying for command + teardown.
 func RunPreparePhase(ctx context.Context, target Sensor, projectRoot string, defaultTimeoutMS int) (results []interface{}, failed bool) {
 	return runPreparePhase(ctx, target.JSON, projectRoot, defaultTimeoutMS)
-}
-
-// RunRequiresGate evaluates target's requires[kind ∈ {tool, context, env}]
-// preconditions and returns the resulting Gate. Callers MUST check
-// gate.Failed() before invoking the sensor's command — both /run-sensor
-// (lifecycle.go Phase 0) and /start-sensor (before its detached spawn)
-// share this entry point so the fail-closed behavior is identical across
-// runners.
-//
-// LookupEnv uses sensor.LookupEnvFn (process env). Entries with
-// kind=sensor are handled by the DAG resolver (Resolve + RunDeps);
-// kind=step entries are executed by RunPreparePhase; kind=permission is
-// handled by Claude Code's permission engine.
-func RunRequiresGate(target Sensor) sensor.Gate {
-	return sensor.CheckRequiresGate(target.JSON, sensor.GateOpts{
-		LookupEnv: sensor.LookupEnvFn,
-	})
 }

@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+// LookupEnvFn is the package-level hook that CheckRequiresGate consults when
+// GateOpts.LookupEnv is nil. Tests override it to inject a synthetic
+// environment without mutating the process.
+var LookupEnvFn = os.LookupEnv
+
 // Failure describes a single unmet precondition detected by CheckRequiresGate.
 type Failure struct {
 	Kind       string
