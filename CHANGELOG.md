@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.1.0 — 2026-05-12
+
+### Changed (breaking-ish)
+
+- **Invocation contract overhaul.** All skills and internal `exec.Command` chains now use:
+  ```
+  HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+    go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=<tag> \
+    ./skills/<name>/scripts <args>
+  ```
+  The change is invisible to slash-command users. Anyone who copy-pasted `SKILL.md` commands into scripts or CI must update them. Closes #15.
+- **Watcher is no longer a pre-built sibling binary.** `/start-sensor` spawns the watcher via `go run`, compiling on demand. Adds ~150ms–1s latency to the first `/start-sensor` after a fresh checkout; subsequent calls hit Go's build cache.
+
+### Removed
+
+- `lib/watcher.BinaryPath`, `skills/start-sensor/scripts/start_unix.go::watcherBinaryPath`, and `skills/heal-sensor/scripts/retry-original.go::repoRoot` are deleted as no longer needed.
+
+### Added
+
+- `lib/watcher.SpawnFn` injection point for test substitution.
+- `lib/subprocess.{Detach,Step,Stream}Config.Dir` field so the runner can keep sensor commands at the project root after `-C` moves the runner itself to the plugin root.
+- `metadata.cause=plugin_root_missing` for `failed` Signals emitted by `/start-sensor` when `CLAUDE_PLUGIN_ROOT` is empty.
+- Autofiler regex now matches `go -C <path> run …` invocations.
+- `run-computational.go` and `run-inferential.go` accept absolute file paths (in addition to sensor IDs), fixing a pre-existing bug in `/heal-sensor`'s retry path.
+
 ## 1.0.0 — 2026-05-11
 
 ### Breaking changes
