@@ -24,12 +24,16 @@ func writeSensorJSON(t *testing.T, root, id string, depsOn []string) {
 }
 
 func TestResolve_Linear(t *testing.T) {
-	root := t.TempDir()
-	writeSensorJSON(t, root, "a", nil)
-	writeSensorJSON(t, root, "b", []string{"a"})
-	writeSensorJSON(t, root, "c", []string{"b"})
+	projectRoot := t.TempDir()
+	sensorRoot := filepath.Join(projectRoot, "sensors")
+	if err := os.Mkdir(sensorRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSensorJSON(t, sensorRoot, "a", nil)
+	writeSensorJSON(t, sensorRoot, "b", []string{"a"})
+	writeSensorJSON(t, sensorRoot, "c", []string{"b"})
 
-	order, err := Resolve("c", root)
+	order, err := Resolve("c", projectRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,13 +49,17 @@ func TestResolve_Linear(t *testing.T) {
 
 func TestResolve_Diamond(t *testing.T) {
 	// d → b, c ; b → a ; c → a   ⇒   a before b,c  ; b,c before d
-	root := t.TempDir()
-	writeSensorJSON(t, root, "a", nil)
-	writeSensorJSON(t, root, "b", []string{"a"})
-	writeSensorJSON(t, root, "c", []string{"a"})
-	writeSensorJSON(t, root, "d", []string{"b", "c"})
+	projectRoot := t.TempDir()
+	sensorRoot := filepath.Join(projectRoot, "sensors")
+	if err := os.Mkdir(sensorRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSensorJSON(t, sensorRoot, "a", nil)
+	writeSensorJSON(t, sensorRoot, "b", []string{"a"})
+	writeSensorJSON(t, sensorRoot, "c", []string{"a"})
+	writeSensorJSON(t, sensorRoot, "d", []string{"b", "c"})
 
-	order, err := Resolve("d", root)
+	order, err := Resolve("d", projectRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,29 +76,41 @@ func TestResolve_Diamond(t *testing.T) {
 }
 
 func TestResolve_Cycle(t *testing.T) {
-	root := t.TempDir()
-	writeSensorJSON(t, root, "a", []string{"b"})
-	writeSensorJSON(t, root, "b", []string{"a"})
+	projectRoot := t.TempDir()
+	sensorRoot := filepath.Join(projectRoot, "sensors")
+	if err := os.Mkdir(sensorRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSensorJSON(t, sensorRoot, "a", []string{"b"})
+	writeSensorJSON(t, sensorRoot, "b", []string{"a"})
 
-	if _, err := Resolve("a", root); err == nil {
+	if _, err := Resolve("a", projectRoot); err == nil {
 		t.Fatal("expected cycle error")
 	}
 }
 
 func TestResolve_SelfLoop(t *testing.T) {
-	root := t.TempDir()
-	writeSensorJSON(t, root, "a", []string{"a"})
+	projectRoot := t.TempDir()
+	sensorRoot := filepath.Join(projectRoot, "sensors")
+	if err := os.Mkdir(sensorRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSensorJSON(t, sensorRoot, "a", []string{"a"})
 
-	if _, err := Resolve("a", root); err == nil {
+	if _, err := Resolve("a", projectRoot); err == nil {
 		t.Fatal("expected self-loop to be rejected")
 	}
 }
 
 func TestResolve_MissingDep(t *testing.T) {
-	root := t.TempDir()
-	writeSensorJSON(t, root, "a", []string{"ghost"})
+	projectRoot := t.TempDir()
+	sensorRoot := filepath.Join(projectRoot, "sensors")
+	if err := os.Mkdir(sensorRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSensorJSON(t, sensorRoot, "a", []string{"ghost"})
 
-	if _, err := Resolve("a", root); err == nil {
+	if _, err := Resolve("a", projectRoot); err == nil {
 		t.Fatal("expected missing dep error")
 	}
 }

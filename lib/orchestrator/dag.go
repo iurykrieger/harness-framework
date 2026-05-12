@@ -22,20 +22,20 @@ type Sensor struct {
 	JSON map[string]interface{}
 }
 
-// Resolve loads the sensor identified by rootID from sensorRoot, walks
+// Resolve loads the sensor identified by rootID from projectRoot, walks
 // its requires[kind=sensor] transitively, and returns the slice topo-sorted (leaves
 // first, rootID last). Cycles (including self-loops A → A) and missing
 // dependency files cause an error and an empty slice.
-func Resolve(rootID, sensorRoot string) ([]Sensor, error) {
+func Resolve(rootID, projectRoot string) ([]Sensor, error) {
 	sensors := map[string]Sensor{}
 	deps := map[string][]string{}
-	if err := loadRecursive(rootID, sensorRoot, sensors, deps, map[string]bool{}); err != nil {
+	if err := loadRecursive(rootID, projectRoot, sensors, deps, map[string]bool{}); err != nil {
 		return nil, err
 	}
 	return topoSort(rootID, sensors, deps)
 }
 
-func loadRecursive(id, root string, sensors map[string]Sensor, deps map[string][]string, visiting map[string]bool) error {
+func loadRecursive(id, projectRoot string, sensors map[string]Sensor, deps map[string][]string, visiting map[string]bool) error {
 	if _, ok := sensors[id]; ok {
 		return nil
 	}
@@ -45,7 +45,7 @@ func loadRecursive(id, root string, sensors map[string]Sensor, deps map[string][
 	visiting[id] = true
 	defer delete(visiting, id)
 
-	path, err := sensor.FindSensorByID(id, root)
+	path, err := sensor.Resolve(id, projectRoot)
 	if err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func loadRecursive(id, root string, sensors map[string]Sensor, deps map[string][
 		if depID == id {
 			return fmt.Errorf("dependency cycle detected at sensor %q (self-loop)", id)
 		}
-		if err := loadRecursive(depID, root, sensors, deps, visiting); err != nil {
+		if err := loadRecursive(depID, projectRoot, sensors, deps, visiting); err != nil {
 			return err
 		}
 	}
