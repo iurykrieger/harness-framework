@@ -358,15 +358,13 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   | jq -c '{verdict, severity, counts: .metadata.counts, individuals: (.evidence|length)}'
 
 # 2) Replay each fail/warn fixture to prove the unhappy paths.
-TMP=$(mktemp /tmp/replay-XXXX.json)
-jq --arg cmd "cat .harness/sensors/fixtures/<group>/<case>.txt" \
-   '.execution.command = $cmd | .id = "replay-" + .id' \
-   .harness/sensors/<id>.json > "$TMP"
-HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
-  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_computational \
-  ./skills/run-sensor/scripts "$TMP" | tail -n 1 \
-  | jq -c '{verdict, severity, individuals: (.evidence|length)}'
-rm "$TMP"
+#    The Go script preserves sensor.id and routes the run through the
+#    orchestrator with the project's real registry root, so each replay
+#    lands at .harness/runtime/<sensor-id>/<run-id>/ alongside any other
+#    valid run of that sensor.
+go run -tags=replay_fixture ./skills/detect-sensors/scripts \
+  --sensor=.harness/sensors/<id>.json --fixture=.harness/sensors/fixtures/<group>/<case>.txt \
+  | tail -n 1 | jq -c '{verdict, severity, individuals: (.evidence|length)}'
 ```
 
 For each sensor, both must hold:
