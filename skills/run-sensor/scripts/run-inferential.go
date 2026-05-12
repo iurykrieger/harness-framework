@@ -183,7 +183,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 			depSignals[dep.ID] = cascade
 			continue
 		}
-		sig, depCode := orchestrator.RunOne(ctx, dep, schemasDir, v, stdout, stderr)
+		sig, depCode := orchestrator.RunOne(ctx, dep, projectRoot, schemasDir, v, stdout, stderr)
 		if depCode != 0 {
 			return depCode
 		}

@@ -136,7 +136,7 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 	target := pre.Order[len(pre.Order)-1]
 
 	// Run target's prepare[] fail-fast.
-	prepResults, prepFailed := orchestrator.RunPreparePhase(context.Background(), target, readTimeoutMS(target.JSON))
+	prepResults, prepFailed := orchestrator.RunPreparePhase(context.Background(), target, projectRoot, readTimeoutMS(target.JSON))
 	if prepFailed {
 		detachAll()
 		aux := map[string]interface{}{

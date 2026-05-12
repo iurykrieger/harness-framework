@@ -40,9 +40,14 @@ const healHintExcerptCap = 120
 // Teardown failures contribute warn evidence but do NOT downgrade the
 // aggregate verdict.
 //
+// projectRoot is the user's project directory. All subprocesses (prepare,
+// command, teardown) run with their working directory set to projectRoot so
+// that sensor commands remain correct regardless of the runner's own cwd
+// (e.g. when the runner is invoked via `go run -C <pluginRoot>`).
+//
 // Returns (signal, exitCode). exitCode is 0 unless schema validation
 // fails (1) or input is malformed (2).
-func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validator, stdout, stderr io.Writer) (map[string]interface{}, int) {
+func RunOne(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator, stdout, stderr io.Writer) (map[string]interface{}, int) {
 	envelope, err := sensor.BuildEnvelope(s.JSON)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: envelope:", err)
@@ -73,7 +78,7 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 	timeoutMS := readTimeoutMS(s.JSON)
 
 	// Phase 1: prepare (fail-fast). Reads requires[kind=step] via sensor.Project().
-	prepResults, prepFailed := runPreparePhase(ctx, s.JSON, timeoutMS)
+	prepResults, prepFailed := runPreparePhase(ctx, s.JSON, projectRoot, timeoutMS)
 
 	var aggregateMD map[string]interface{}
 	var aggVerdict, aggSeverity string
@@ -110,6 +115,7 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 			Validator: v,
 			Stdout:    stdout,
 			Stderr:    stderr,
+			Dir:       projectRoot,
 		})
 
 		ecMap, _ := execMap["exit_code_map"].([]interface{})
@@ -151,7 +157,7 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 	}
 
 	// Phase 3: teardown (best-effort, runs regardless of prepare/command outcome).
-	tdResults := runTeardownPhase(ctx, execMap, timeoutMS)
+	tdResults := runTeardownPhase(ctx, execMap, projectRoot, timeoutMS)
 
 	if aggregateMD == nil {
 		aggregateMD = map[string]interface{}{
@@ -215,15 +221,19 @@ func RunOne(ctx context.Context, s Sensor, schemasDir string, v *schema.Validato
 //   - Insert a RunningSensorEntry with blocking=<sensor.execution.blocking>
 //   - defer remove the entry on any exit path
 //
+// projectRoot is the user's project directory passed through to all
+// subprocess working-directory fields so sensor commands run from the
+// correct directory regardless of the runner's own cwd.
+//
 // When root is nil, behavior is identical to RunOne.
 func RunOneWithRoot(
-	ctx context.Context, s Sensor, schemasDir string, v *schema.Validator,
+	ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator,
 	root *registry.Root, stdout, stderr io.Writer,
 ) (map[string]interface{}, int) {
 	if root == nil {
-		return RunOne(ctx, s, schemasDir, v, stdout, stderr)
+		return RunOne(ctx, s, projectRoot, schemasDir, v, stdout, stderr)
 	}
-	return runOneWithPersistence(ctx, s, schemasDir, v, *root, stdout, stderr)
+	return runOneWithPersistence(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr)
 }
 
 // runOneWithPersistence mirrors RunOne but persists a <run-id>/ directory
@@ -232,7 +242,7 @@ func RunOneWithRoot(
 // registry insert failure, normal exit). Aggregate Signals are written
 // to both stdout and <run-id>/signals.log.
 func runOneWithPersistence(
-	ctx context.Context, s Sensor, schemasDir string, v *schema.Validator,
+	ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator,
 	root registry.Root, stdout, stderr io.Writer,
 ) (map[string]interface{}, int) {
 	envelope, err := sensor.BuildEnvelope(s.JSON)
@@ -261,7 +271,7 @@ func runOneWithPersistence(
 	timeoutMS := readTimeoutMS(s.JSON)
 
 	// Phase 1: prepare (fail-fast). No subprocess yet, no persistence.
-	prepResults, prepFailed := runPreparePhase(ctx, s.JSON, timeoutMS)
+	prepResults, prepFailed := runPreparePhase(ctx, s.JSON, projectRoot, timeoutMS)
 
 	var aggregateMD map[string]interface{}
 	var aggVerdict, aggSeverity string
@@ -303,6 +313,7 @@ func runOneWithPersistence(
 			Validator: v,
 			Stdout:    stdout,
 			Stderr:    stderr,
+			Dir:       projectRoot,
 		}
 		handle, startErr := subprocess.Start(ctx, cfg)
 		if startErr != nil {
@@ -423,7 +434,7 @@ func runOneWithPersistence(
 	}
 
 	// Phase 3: teardown (best-effort).
-	tdResults := runTeardownPhase(ctx, execMap, timeoutMS)
+	tdResults := runTeardownPhase(ctx, execMap, projectRoot, timeoutMS)
 
 	if aggregateMD == nil {
 		aggregateMD = map[string]interface{}{
@@ -496,7 +507,9 @@ func runOneWithPersistence(
 // sensor.Project) and runs each step fail-fast. Per-step results are folded
 // into metadata.lifecycle.prepare (the metadata key keeps its name; it is
 // the phase name, not the schema field name).
-func runPreparePhase(ctx context.Context, sensorJSON map[string]interface{}, defaultTimeoutMS int) ([]interface{}, bool) {
+// projectRoot is forwarded to StepConfig.Dir so prepare steps run in the
+// user's project directory.
+func runPreparePhase(ctx context.Context, sensorJSON map[string]interface{}, projectRoot string, defaultTimeoutMS int) ([]interface{}, bool) {
 	steps := sensor.Project(sensorJSON, "step")
 	var out []interface{}
 	for _, step := range steps {
@@ -505,7 +518,7 @@ func runPreparePhase(ctx context.Context, sensorJSON map[string]interface{}, def
 		if v, ok := step["timeout_ms"]; ok {
 			t = int(asNumber(v))
 		}
-		res, _ := subprocess.RunStep(ctx, subprocess.StepConfig{Command: cmd, TimeoutMS: t})
+		res, _ := subprocess.RunStep(ctx, subprocess.StepConfig{Command: cmd, TimeoutMS: t, Dir: projectRoot})
 		ecMap, _ := step["exit_code_map"].([]interface{})
 		verdict, severity := mapStepExitCode(res.ExitCode, ecMap, "prepare")
 		entry := map[string]interface{}{
@@ -531,7 +544,9 @@ func runPreparePhase(ctx context.Context, sensorJSON map[string]interface{}, def
 // per-step result entries. Teardown lives in execution.teardown[];
 // sensor-local setup steps live in requires[kind=step] (consumed by
 // runPreparePhase).
-func runTeardownPhase(ctx context.Context, execMap map[string]interface{}, defaultTimeoutMS int) []interface{} {
+// projectRoot is forwarded to StepConfig.Dir so teardown steps run in the
+// user's project directory.
+func runTeardownPhase(ctx context.Context, execMap map[string]interface{}, projectRoot string, defaultTimeoutMS int) []interface{} {
 	steps, _ := execMap["teardown"].([]interface{})
 	var out []interface{}
 	for _, raw := range steps {
@@ -544,7 +559,7 @@ func runTeardownPhase(ctx context.Context, execMap map[string]interface{}, defau
 		if v, ok := step["timeout_ms"]; ok {
 			t = int(asNumber(v))
 		}
-		res, _ := subprocess.RunStep(ctx, subprocess.StepConfig{Command: cmd, TimeoutMS: t})
+		res, _ := subprocess.RunStep(ctx, subprocess.StepConfig{Command: cmd, TimeoutMS: t, Dir: projectRoot})
 		ecMap, _ := step["exit_code_map"].([]interface{})
 		verdict, severity := mapStepExitCode(res.ExitCode, ecMap, "teardown")
 		entry := map[string]interface{}{

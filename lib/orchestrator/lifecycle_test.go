@@ -50,7 +50,7 @@ func TestRunOne_SimpleNoLifecycle(t *testing.T) {
 	s := Sensor{ID: "smoke-comp", Path: makeSensorPath(t, "smoke-comp"), JSON: roundTripJSON(t, testfixtures.ValidSensorComputational())}
 
 	var out, errBuf bytes.Buffer
-	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	sig, code := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), schemasDir, v, &out, &errBuf)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
 	}
@@ -76,7 +76,7 @@ func TestRunOne_PrepareFailFast(t *testing.T) {
 	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 
 	var out, errBuf bytes.Buffer
-	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	sig, code := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), schemasDir, v, &out, &errBuf)
 	if code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
@@ -111,7 +111,7 @@ func TestRunOne_TeardownBestEffort(t *testing.T) {
 	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 
 	var out, errBuf bytes.Buffer
-	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	sig, code := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), schemasDir, v, &out, &errBuf)
 	if code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
@@ -147,7 +147,7 @@ func TestRunOne_TeardownRunsAfterCommandFail(t *testing.T) {
 	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 
 	var out, errBuf bytes.Buffer
-	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	sig, code := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), schemasDir, v, &out, &errBuf)
 	if code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
@@ -175,7 +175,7 @@ func TestRunOne_HealHintEmittedOnStderrPattern(t *testing.T) {
 	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 
 	var out, errBuf bytes.Buffer
-	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	sig, code := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), schemasDir, v, &out, &errBuf)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
 	}
@@ -207,7 +207,7 @@ func TestRunOne_HealHintAbsentOnBenignFailure(t *testing.T) {
 	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 
 	var out, errBuf bytes.Buffer
-	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	sig, code := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), schemasDir, v, &out, &errBuf)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
 	}
@@ -231,7 +231,7 @@ func TestRunOne_HealHintAbsentOnPassingCommand(t *testing.T) {
 	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 
 	var out, errBuf bytes.Buffer
-	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	sig, code := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), schemasDir, v, &out, &errBuf)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
 	}
@@ -280,7 +280,7 @@ func TestRunOne_AbortsOnMissingRequiresEnv(t *testing.T) {
 
 	s := Sensor{ID: js["id"].(string), Path: makeSensorPath(t, js["id"].(string)), JSON: js}
 	var out, errBuf bytes.Buffer
-	sig, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf)
+	sig, code := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), schemasDir, v, &out, &errBuf)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
 	}
@@ -341,7 +341,7 @@ func TestRunOne_GateFailure_Tool(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	sig, code := RunOne(context.Background(), s, "", nil, &stdout, &stderr)
+	sig, code := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), "", nil, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -386,7 +386,7 @@ func TestRunOne_GateFailure_Context(t *testing.T) {
 		},
 	}
 	var stdout, stderr bytes.Buffer
-	sig, _ := RunOne(context.Background(), s, "", nil, &stdout, &stderr)
+	sig, _ := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), "", nil, &stdout, &stderr)
 	if sig["verdict"] != "error" {
 		t.Fatalf("verdict = %v", sig["verdict"])
 	}
@@ -429,7 +429,7 @@ func TestRunOne_GateFailure_Env(t *testing.T) {
 		},
 	}
 	var stdout, stderr bytes.Buffer
-	sig, _ := RunOne(context.Background(), s, "", nil, &stdout, &stderr)
+	sig, _ := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), "", nil, &stdout, &stderr)
 	if sig["verdict"] != "error" {
 		t.Fatalf("verdict = %v", sig["verdict"])
 	}
@@ -464,7 +464,7 @@ func TestRunOne_WithRoot_CreatesAndRemovesEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	sig, code := RunOneWithRoot(context.Background(), s, "", nil, &root, &stdout, &stderr)
+	sig, code := RunOneWithRoot(context.Background(), s, proj, "", nil, &root, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d, stderr=%s", code, stderr.String())
 	}
@@ -528,7 +528,7 @@ func TestRunOne_WithRoot_RegistryInsertFailureCleansUpDir(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	sig, code := RunOneWithRoot(context.Background(), s, "", nil, &root, &stdout, &stderr)
+	sig, code := RunOneWithRoot(context.Background(), s, proj, "", nil, &root, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d, stderr=%s", code, stderr.String())
 	}
@@ -588,7 +588,7 @@ func TestRunOne_OutputIsValidJSON(t *testing.T) {
 	s := Sensor{ID: "smoke-comp", Path: makeSensorPath(t, "smoke-comp"), JSON: roundTripJSON(t, testfixtures.ValidSensorComputational())}
 
 	var out, errBuf bytes.Buffer
-	if _, code := RunOne(context.Background(), s, schemasDir, v, &out, &errBuf); code != 0 {
+	if _, code := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), schemasDir, v, &out, &errBuf); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")

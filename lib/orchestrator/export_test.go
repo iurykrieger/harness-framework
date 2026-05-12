@@ -9,6 +9,6 @@ import "github.com/iurykrieger/harness-framework/lib/registry"
 // startBlockingDep so orchestrator_test can exercise it directly without
 // going through the full AttachLiveDep codepath (which holds flock,
 // does liveness checks, etc.).
-func ExportedStartBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, holder registry.HeldByEntry) (string, error) {
-	return startBlockingDep(rs, r, dep, holder)
+func ExportedStartBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, holder registry.HeldByEntry, projectRoot string) (string, error) {
+	return startBlockingDep(rs, r, dep, holder, projectRoot)
 }
