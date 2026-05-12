@@ -59,7 +59,8 @@ const harnessConfidencePrefix = "HARNESS_AGGREGATE_CONFIDENCE="
 
 func main() {
 	cwd, _ := os.Getwd()
-	os.Exit(run(os.Args[1:], cwd, os.Stdout, os.Stderr))
+	projectRoot := resolveProjectRoot(cwd)
+	os.Exit(run(os.Args[1:], projectRoot, os.Stdout, os.Stderr))
 }
 
 // run is the testable entry point. projectRoot is the directory from which
