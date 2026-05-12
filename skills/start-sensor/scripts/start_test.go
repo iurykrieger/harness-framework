@@ -3,12 +3,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/iurykrieger/harness-framework/lib/cli"
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
@@ -37,7 +39,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// testResult builds a minimal registry.Result usable by runStart in
+// testResult builds a minimal registry.Result usable by bootstrapFor in
 // tests. The diagnostic fields it carries (registry_path, _source,
 // _exists) populate every emitted signal's metadata; tests that need to
 // assert those values can also use this helper.
@@ -48,6 +50,19 @@ func testResult(projectRoot string) registry.Result {
 		Source:      registry.SourceWalkUp,
 		Exists:      false,
 		State:       registry.RunningSensors{Version: 1},
+	}
+}
+
+// bootstrapFor wraps a registry.Result in a cli.BootstrapResult suitable for
+// passing to runStart in tests. The schema validator is loaded so that signal
+// validation runs; errors are written to errBuf.
+func bootstrapFor(t *testing.T, res registry.Result, errBuf *bytes.Buffer) cli.BootstrapResult {
+	t.Helper()
+	v, _ := schema.LoadValidator("", errBuf)
+	return cli.BootstrapResult{
+		Res:       res,
+		Validator: v,
+		Diagnose:  registry.DiagnoseMetadata(res),
 	}
 }
 
@@ -102,7 +117,7 @@ func TestStart_RejectsNonBlocking(t *testing.T) {
 			},
 		},
 	})
-	exit, sig := runStart(testResult(root), []string{"not-blocking"})
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"not-blocking"})
 	if exit != 2 {
 		t.Fatalf("expected exit 2, got %d", exit)
 	}
@@ -130,7 +145,7 @@ func TestStart_RejectsAlreadyRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFixtureSensor(t, root, "loop", blockingFixtureBody())
-	exit, sig := runStart(testResult(root), []string{"loop"})
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"loop"})
 	if exit != 1 {
 		t.Fatalf("expected exit 1, got %d", exit)
 	}
@@ -314,7 +329,7 @@ func TestStart_WithSetupDepPASS(t *testing.T) {
 	writeNonBlockingSetupDep(t, root, "setup-pass", "true")
 	writeBlockingTarget(t, root, "target", []string{"setup-pass"}, nil)
 
-	exit, sig := runStart(testResult(root), []string{"target"})
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"target"})
 	defer cleanupStartedTarget(t, root, "target")
 
 	if exit != 0 {
@@ -340,7 +355,7 @@ func TestStart_WithSetupDepFAIL(t *testing.T) {
 	writeNonBlockingSetupDep(t, root, "setup-fail", "false")
 	writeBlockingTarget(t, root, "target", []string{"setup-fail"}, nil)
 
-	exit, sig := runStart(testResult(root), []string{"target"})
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"target"})
 
 	if exit != 1 {
 		t.Fatalf("exit: got %d, want 1; sig=%+v", exit, sig)
@@ -368,7 +383,7 @@ func TestStart_WithBlockingDepStartFresh(t *testing.T) {
 	writeBlockingDepFixtureForStart(t, root, "blocking-tick")
 	writeBlockingTarget(t, root, "target", []string{"blocking-tick"}, nil)
 
-	exit, sig := runStart(testResult(root), []string{"target"})
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"target"})
 	defer cleanupStartedTarget(t, root, "target")
 	defer cleanupBlockingDep(t, root, "blocking-tick", "target")
 
@@ -409,7 +424,7 @@ func TestStart_PrepareFAIL(t *testing.T) {
 		{"command": "false"},
 	})
 
-	exit, sig := runStart(testResult(root), []string{"target"})
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"target"})
 
 	if exit != 1 {
 		t.Fatalf("exit: got %d, want 1; sig=%+v", exit, sig)
@@ -472,7 +487,7 @@ func TestStart_WithBlockingDepAttach(t *testing.T) {
 	}
 	preExistingDepPID := os.Getpid()
 
-	exit, sig := runStart(testResult(root), []string{"target"})
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"target"})
 	defer cleanupStartedTarget(t, root, "target")
 	defer cleanupBlockingDep(t, root, "blocking-tick", "target")
 	defer cleanupBlockingDep(t, root, "blocking-tick", "pre-existing-holder")
@@ -529,7 +544,7 @@ func TestStart_PrepareFAIL_DetachesLiveStack(t *testing.T) {
 		{"command": "false"},
 	})
 
-	exit, sig := runStart(testResult(root), []string{"target"})
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"target"})
 
 	if exit != 1 {
 		t.Fatalf("exit: got %d, want 1; sig=%+v", exit, sig)
