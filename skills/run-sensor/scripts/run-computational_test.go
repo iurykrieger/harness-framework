@@ -246,7 +246,7 @@ func TestRun_BlockingSensorRejected(t *testing.T) {
 // through resolvePath instead of the bare-id regex, so this test guards
 // against regressions to id-only resolution.
 func TestRunComputational_AcceptsAbsolutePath(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	id := writeSensor(t, root, "abs-path-sensor", func(s map[string]interface{}) {
 		s["execution"].(map[string]interface{})["command"] = "true"

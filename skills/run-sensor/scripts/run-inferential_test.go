@@ -456,7 +456,7 @@ func TestRunInferential_BlockingSensorRejected(t *testing.T) {
 // command is "cat SENTINEL". If Dir is not set the subprocess runs from the
 // test's cwd (the plugin root, which has no SENTINEL), and the command fails.
 func TestRunInferential_UsesProjectRootAsSubprocessDir(t *testing.T) {
-	schemasDir := repoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	proj := t.TempDir()
 
 	// Place SENTINEL only in the project root so the command fails if Dir is wrong.
@@ -491,7 +491,7 @@ func TestRunInferential_UsesProjectRootAsSubprocessDir(t *testing.T) {
 // ^[a-z][a-z0-9-]*$, which broke /heal-sensor retries of inferential sensors
 // (retry-original.go passes an absolute path to the runner).
 func TestRunInferential_AcceptsAbsolutePath(t *testing.T) {
-	schemasDir := repoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	id := writeInferentialSensor(t, root, "infr-abspath", `printf 'PASS judgment\n'`)
 	absPath := filepath.Join(root, ".harness", "sensors", id+".json")
