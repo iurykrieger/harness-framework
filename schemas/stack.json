@@ -76,7 +76,7 @@
         "meaning": { "$ref": "#/$defs/FieldMeaning" },
         "example_values": {
           "type": "array",
-          "description": "Sample values observed or known to be emitted (e.g. ['DEBUG','INFO','WARN','ERROR'] for severity, ['/v1/charges'] for path). Optional but strongly recommended — these become the calibration data for the regexes derived from this shape.",
+          "description": "Sample values observed or known to be emitted (e.g. ['DEBUG','INFO','WARN','ERROR'] for severity, ['/v1/charges'] for path). Optional but strongly recommended — these are the oracle values the regexes derived from this shape are expected to match, and seed test cases for those patterns. NOTE: 'calibration' is reserved in this codebase for the inferential-sensor sense (cost.tokens, confidence_threshold) — do not conflate.",
           "items": { "type": "string" }
         }
       }

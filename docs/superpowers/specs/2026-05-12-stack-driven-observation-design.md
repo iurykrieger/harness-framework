@@ -26,9 +26,13 @@ This spec moves the work to the right layer: `/detect-sensors` becomes responsib
 5. **New script `skills/detect-sensors/scripts/write-stack.go`** is the deterministic write-path: validate against `schemas/stack.json`, cross-check referential integrity (`produced_by[] ⊂ components[].name`), persist atomically.
 6. **`lib/registry/lookup.go`** changes its walk-up sentinel from `sensors/` to `.harness/`. All registry paths internally rebase from `<root>/.runtime/sensors/` to `<root>/.harness/runtime/`. `HARNESS_REGISTRY_ROOT` still names the project root; the runtime subdirectory remains an internal detail.
 7. **`lib/sensor/path.go`** resolves `<id>` to `.harness/sensors/<id>.json` instead of `sensors/<id>.json`.
-8. **`hooks/error-issue-autofiler.go`** stores its dedup cache at `.harness/runtime/auto-issues.json` instead of `.runtime/auto-issues.json`.
-9. **Dogfooded migration:** the framework's own repository moves `sensors/` → `.harness/sensors/` and `.runtime/` (if present) → `.harness/runtime/` in the same PR that lands the registry change.
-10. **CHANGELOG documents the breaking change.** First thing an outdated project sees on upgrade is a clear "registry not found at .harness/runtime/" error pointing at the migration steps.
+8. **`lib/orchestrator/`** removes its hardcoded path literals. `run.go` and `live_deps.go` doc comments update to reference `.harness/sensors/<id>.json`. `lifecycle.go:350` and `live_deps.go:222` stop building `filepath.Join(".runtime", "sensors", ...)` directly — they consume `registry.Root.SignalsLogRun()` (or a sibling accessor for the per-run directory) instead. `cascade.go:46` builds its error-evidence `file` field via `registry.Root.SensorFile(id)`. After this PR, no Go file under `lib/orchestrator/` contains the string literals `".runtime"`, `"sensors"` (as a path segment), or `"sensors/%s.json"`.
+9. **`hooks/error-issue-autofiler.go`** stores its dedup cache at `.harness/runtime/auto-issues.json` instead of `.runtime/auto-issues.json`.
+10. **`skills/detect-sensors/scripts/write-sensor.go`** gains the build tag `//go:build write_sensor`. Without this, the new `write-stack.go` (with `//go:build write_stack`) cannot coexist as a second `package main` in the same directory — Go would compile the untagged `write-sensor.go` on every build and fail with duplicate `main`. The skill's `go run` invocation in `SKILL.md` updates to `go run -tags=write_sensor ./skills/detect-sensors/scripts <draft.json>`.
+11. **All five blocking-sensor SKILL.md descriptions are updated.** `start-sensor`, `stop-sensor`, `list-sensors`, `tail-sensor`, `run-sensor` — every reference in their frontmatter `description:` or body prose to `<projectRoot>/.runtime/sensors/...` or `<root>/sensors/<id>.json` migrates to the `.harness/` paths. Mechanical but enumerated to make the diff explicit.
+12. **Framework's own `.gitignore`**: replace `.runtime/` with `.harness/runtime/`. Do NOT add `.harness/sensors/` or `.harness/stack.json` — those are committed artifacts.
+13. **Dogfooded migration:** the framework's own repository moves `sensors/` → `.harness/sensors/` and `.runtime/` (if present) → `.harness/runtime/` in the same PR that lands the registry change.
+14. **CHANGELOG documents the breaking change.** First thing an outdated project sees on upgrade is a clear "registry not found at .harness/runtime/" error pointing at the migration steps.
 
 ## Architecture
 
@@ -116,7 +120,7 @@ Typed structs mirror the schema shape; JSON tags on every field; nullable fields
 
 ## Script: `skills/detect-sensors/scripts/write-stack.go`
 
-Build tag `//go:build write_stack` (coexists with existing `write-sensor.go` under the same `scripts/` directory; same pattern used by `run-computational.go` and `run-inferential.go` in `skills/run-sensor/scripts/`).
+Build tag `//go:build write_stack`. Two `package main` files in the same directory require **both** to carry mutually-exclusive build tags. Today `write-sensor.go` has no build tag — this spec adds `//go:build write_sensor` to it as part of the same PR that introduces `write-stack.go`. After this change, the `skills/detect-sensors/scripts/` directory follows the same pattern as `skills/run-sensor/scripts/` (where `run-computational.go` and `run-inferential.go` each carry their own build tag).
 
 CLI:
 ```
@@ -158,6 +162,14 @@ Single conceptual change: the walk-up sentinel becomes `.harness/` instead of `s
 
 **`hooks/error-issue-autofiler.go`**: cache path moves to `<root>/.harness/runtime/auto-issues.json`. Same `lib/registry.Lookup(cwd)` resolution. No change to the env-disable knob (`HARNESS_AUTOFILE_ISSUES=0`).
 
+**`lib/orchestrator/`** (registry path callers):
+- `run.go`: doc comment at top now reads "sensorPath must be located at `<projectRoot>/.harness/sensors/<id>.json`". The "run is registered under" comment updates to `.harness/runtime/<id>/<run-id>/`.
+- `lifecycle.go:350` builds the per-run log directory via a new `registry.Root` accessor (e.g. `RunDir(id, runID)`) instead of `filepath.Join(".runtime", "sensors", envelope.SensorID, runID)`. The accessor centralizes the layout in `lib/registry` where the rest of the rebase lives.
+- `live_deps.go:31` doc comment updates to `<root>/.harness/sensors/<id>.json`. `live_deps.go:222` uses the same new `RunDir` accessor.
+- `cascade.go:46` builds the evidence `file` field via `Root.SensorFile(failedID)` (returning a relative path string from project root) instead of `fmt.Sprintf("sensors/%s.json", failedID)`.
+
+Invariant: after this PR, `grep -rn '"\.runtime"\|"sensors/"\|"sensors\\/%s' lib/orchestrator/` returns no matches.
+
 **Verdict semantics on missing registry** (per the table in CLAUDE.md "Registry root discovery"): unchanged. `/start-sensor`=pass (creates it), `/list-sensors`=warn, `/stop-sensor`=error, `/tail-sensor`=error. Only the path inside the diagnostic text changes.
 
 ## Skill prose updates: `/detect-sensors`
@@ -171,6 +183,8 @@ Single conceptual change: the walk-up sentinel becomes `.harness/` instead of `s
 5. **§7 (existing): Iteration loop.** Clarification: if Phase B yields a sensor with patterns that match nothing in the project's actual stdout, the first remediation is to inspect the stack (`bat .harness/stack.json`), then rerun `/detect-sensors --refresh-stack`.
 
 The skill remains LLM-judgment-heavy by design. The deterministic work (validation, persistence, cross-checks) sits in `write-stack.go` and `write-sensor.go`.
+
+The five blocking-sensor skills (`/start-sensor`, `/stop-sensor`, `/list-sensors`, `/tail-sensor`, `/run-sensor`) each have a description or body that references `<projectRoot>/.runtime/sensors/...` or `<projectRoot>/sensors/<id>.json` — each of those references migrates to its `.harness/` equivalent. Frontmatter `description:` lines are read by the Claude Code skill loader, so the migration is user-visible.
 
 ## CHANGELOG and CLAUDE.md updates
 
@@ -234,7 +248,15 @@ The fixture test does **not** exercise the LLM. It tests that **given a well-for
 Four phases, ideally four PRs:
 
 1. **Schema + lib/stack/ + write-stack.go.** Adds the new entity with no consumers yet. Mergeable independently; exercised only by golden-case tests. Low blast radius.
-2. **Layout migration.** `lib/registry`, `lib/sensor/path`, `hooks/error-issue-autofiler` updated. Repo dogfood: `git mv sensors .harness/sensors`, `git mv .runtime .harness/runtime` (if present). `.gitignore`, CLAUDE.md, CHANGELOG updated. Downstream skill tests migrated. Mechanical, no behavior change beyond layout.
+2. **Layout migration.** All path-touching call sites updated atomically:
+   - `lib/registry` (new accessors, walk-up sentinel), `lib/sensor/path`, `lib/orchestrator/{run.go, lifecycle.go, live_deps.go, cascade.go}`, `hooks/error-issue-autofiler`.
+   - `skills/detect-sensors/scripts/write-sensor.go` gets `//go:build write_sensor` (the prerequisite for `write_stack` to coexist).
+   - Five blocking-sensor `SKILL.md` files (`start-sensor`, `stop-sensor`, `list-sensors`, `tail-sensor`, `run-sensor`) have their frontmatter and body prose updated to `.harness/` paths.
+   - Repo dogfood: `git mv sensors .harness/sensors`, `git mv .runtime .harness/runtime` (if present), `.gitignore` swap.
+   - CLAUDE.md "Registry root discovery" + "Auto issue opening" updated; project rule §2 acknowledges three entity schemas.
+   - CHANGELOG entry with the `git mv` migration recipe for downstream projects.
+   - Downstream skill tests (`start`, `stop`, `list`, `tail`, `run`) fixture paths migrated.
+   - Mechanical, no behavior change beyond layout.
 3. **detect-sensors prose update.** SKILL.md gains §0 Phase A and the §4 Phase B branch. Cites `schemas/stack.json` and the degraded path. No Go changes.
 4. **End-to-end fixture.** `test/fixtures/stack-discovery/` lands with one fully worked example (Go+Zap+chi). Validates that the schema + library + script + prose work together.
 
@@ -249,8 +271,8 @@ Each is a candidate standalone issue after this lands:
 3. **New sensor types (http-proxy / log-stream / trace-sink)** — the "tap, don't poll" model. Not needed once stack-derived patterns cover the structured-log case effectively.
 4. **`/heal-sensor` stack-staleness detection** — compares `stack.detected_at` against mtimes of `components[].evidence[].file`; proposes `--refresh-stack` when sensors match zero lines for N seconds AND files have moved.
 5. **`/detect-sensors --diff-stack`** — diff between the persisted stack and a freshly-discovered one. Useful when project evolves and a subset of patterns still match.
-6. **Bug:** `/tail-sensor` not honoring `<run_id>` subdir, reads `.harness/runtime/<id>/signals.log` instead of `.harness/runtime/<id>/<run_id>/signals.log` for live sensors (issue #27 footer).
-7. **Bug:** `/stop-sensor` aggregate `counts` zero even when signals.log had matches during the run lifetime (issue #27 footer).
+
+The two bugs at the foot of issue #27 (`/tail-sensor` not honoring `<run_id>` subdir; `/stop-sensor` aggregate `counts` zero) are unrelated to stack-driven observation and should be filed as separate issues — they don't belong in this spec's deferral list because they're not deferred from *this* spec, they're orthogonal pre-existing defects surfaced by the same charge-api bootstrapping exercise.
 
 ## Acceptance criteria
 
@@ -258,12 +280,13 @@ A reader of this spec should be able to verify the work is done when:
 
 - `schemas/stack.json` exists with the contract described in this spec, and validates the fixture stack at `test/fixtures/stack-discovery/expected-stack.json`.
 - `lib/stack/` exists with the four files listed in §Library contracts and `go test ./lib/stack/...` passes.
-- `skills/detect-sensors/scripts/write-stack.go` exists with build tag `write_stack` and `go test -tags=write_stack ./skills/detect-sensors/scripts/...` passes.
-- `lib/registry.Lookup` walks up looking for `.harness/`; no code path falls back to `sensors/` or `.runtime/`. `go test ./lib/registry/...` passes.
-- `<repo>/sensors/` is gone from the framework's own tree; `<repo>/.harness/sensors/` contains all dogfooded sensors. `go test -tags=run_computational ./...` and `go test -tags=run_inferential ./...` pass against the new layout.
+- `skills/detect-sensors/scripts/write-stack.go` exists with build tag `write_stack`; `skills/detect-sensors/scripts/write-sensor.go` carries the new build tag `write_sensor`; `go test -tags=write_stack ./skills/detect-sensors/scripts/...` and `go test -tags=write_sensor ./skills/detect-sensors/scripts/...` both pass.
+- `lib/registry.Lookup` walks up looking for `.harness/`; `grep -rn '"\.runtime"\|"sensors/"' lib/registry/ lib/orchestrator/ lib/sensor/ hooks/` returns no path-literal hits. `go test ./lib/registry/... ./lib/orchestrator/... ./lib/sensor/...` passes.
+- `<repo>/sensors/` is gone from the framework's own tree; `<repo>/.harness/sensors/` contains all dogfooded sensors. `<repo>/.gitignore` no longer references `.runtime/` and instead lists `.harness/runtime/`. `go test -tags=run_computational ./...` and `go test -tags=run_inferential ./...` pass against the new layout.
 - `CHANGELOG.md` documents the breaking change with the `git mv` recipe.
-- `CLAUDE.md` "Registry root discovery" and "Auto issue opening" reference `.harness/` paths.
-- `skills/detect-sensors/SKILL.md` describes Phase A and Phase B as separate steps and references `schemas/stack.json`.
+- `CLAUDE.md` "Registry root discovery" and "Auto issue opening" reference `.harness/` paths. `CLAUDE.md` project rule §2 acknowledges three entity schemas (`sensor.json`, `signal.json`, `stack.json`).
+- `skills/detect-sensors/SKILL.md` contains a "Stack discovery" section before the per-capability authoring guidance, and the per-capability section contains a branch beginning with the literal phrase "For kind=observation + output=stream sensors:". Both grep cleanly. The prose cites `schemas/stack.json` and `.harness/stack.json` by exact filename.
+- `skills/{start-sensor,stop-sensor,list-sensors,tail-sensor,run-sensor}/SKILL.md` frontmatter `description:` and body prose reference `.harness/` paths only; no remaining mentions of `.runtime/sensors/` or `<projectRoot>/sensors/`.
 - `test/fixtures/stack-discovery/` exists with the Go service, `expected-stdout.log`, `expected-stack.json`, and the end-to-end test passes.
 
 ## References
