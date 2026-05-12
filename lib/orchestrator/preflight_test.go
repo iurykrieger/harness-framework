@@ -341,3 +341,53 @@ func TestRunDeps_TransitiveCascade(t *testing.T) {
 	}
 }
 
+func TestRunDeps_BlockingDepGateFails_EmitsPreflightSignalAndCascadesRoot(t *testing.T) {
+	const envName = "__HARNESS_RUNDEPS_NEVER_SET__"
+	root := t.TempDir()
+	writeBlockingDepWithRequiresEnv(t, root, "blocking-dep", envName)
+	writeNonBlockingDep(t, root, "target", []string{"blocking-dep"}, "true")
+
+	res, stdout, _ := runDepsForTest(t, root, "target", "target", os.Getpid())
+
+	if res.ExitCode != 0 {
+		t.Fatalf("ExitCode: got %d, want 0", res.ExitCode)
+	}
+
+	depSig, ok := res.Signals["blocking-dep"]
+	if !ok {
+		t.Fatal("Signals[blocking-dep] missing")
+	}
+	if depSig["verdict"] != "error" {
+		t.Errorf("dep verdict: got %v, want error", depSig["verdict"])
+	}
+	depMD := depSig["metadata"].(map[string]interface{})
+	if depMD["kind"] != "failed" || depMD["cause"] != "preflight_failed" {
+		t.Errorf("dep metadata: got kind=%v cause=%v; want failed/preflight_failed", depMD["kind"], depMD["cause"])
+	}
+	envs, ok := depMD["missing_envs"].([]interface{})
+	if !ok || len(envs) != 1 || envs[0] != envName {
+		t.Errorf("dep missing_envs: got %v, want [%s]", depMD["missing_envs"], envName)
+	}
+
+	if len(res.LiveStack) != 0 {
+		t.Errorf("LiveStack: got %v, want [] (no spawn)", res.LiveStack)
+	}
+
+	if res.CascadeSig == nil {
+		t.Fatal("CascadeSig: got nil, want non-nil (root would cascade)")
+	}
+	cascadeMD := res.CascadeSig["metadata"].(map[string]interface{})
+	if cascadeMD["failed_dep_id"] != "blocking-dep" {
+		t.Errorf("CascadeSig.failed_dep_id: got %v, want blocking-dep", cascadeMD["failed_dep_id"])
+	}
+
+	if !strings.Contains(stdout, `"sensor_id":"blocking-dep"`) || !strings.Contains(stdout, `"cause":"preflight_failed"`) {
+		t.Errorf("stdout should carry the dep's preflight-failed signal; got:\n%s", stdout)
+	}
+
+	rs, _ := registry.Load(registry.NewRoot(root))
+	if rs.FindEntry("blocking-dep") != nil {
+		t.Error("registry has entry for blocking-dep; expected none")
+	}
+}
+
