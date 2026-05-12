@@ -1,6 +1,7 @@
 package signal
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -138,4 +139,20 @@ func (b *Builder) Build() map[string]interface{} {
 		"cost_actual": map[string]interface{}{"latency_ms": b.latencyMS},
 		"metadata":    md,
 	}
+}
+
+// BuildTyped is the typed companion to Build(). Returns *Signal instead of
+// map[string]interface{}. Useful when downstream code wants struct
+// access; falls back to AsMap() for map-consuming APIs.
+func (b *Builder) BuildTyped() *Signal {
+	m := b.Build()
+	body, err := json.Marshal(m)
+	if err != nil {
+		return &Signal{}
+	}
+	var s Signal
+	if err := json.Unmarshal(body, &s); err != nil {
+		return &Signal{}
+	}
+	return &s
 }

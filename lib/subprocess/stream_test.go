@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
 	"github.com/iurykrieger/harness-framework/lib/subprocess"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
 )
 
 func mustCompilePatterns(t *testing.T, raw []interface{}) []signal.Pattern {
@@ -52,8 +55,8 @@ func decodeJSONL(t *testing.T, s string) []map[string]interface{} {
 }
 
 func TestStreamSubprocess_EmitsJSONLPerMatch(t *testing.T) {
-	defer testfixtures.FreezeClock(t)()
-	v, err := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	defer freezeClock(t)()
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,8 +96,8 @@ func TestStreamSubprocess_EmitsJSONLPerMatch(t *testing.T) {
 }
 
 func TestStreamSubprocess_ShellFeatures(t *testing.T) {
-	defer testfixtures.FreezeClock(t)()
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	defer freezeClock(t)()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
 	patterns := mustCompilePatterns(t, []interface{}{
 		map[string]interface{}{"regex": "^WARN", "verdict": "warn", "severity": "low"},
 	})
@@ -117,8 +120,8 @@ func TestStreamSubprocess_ShellFeatures(t *testing.T) {
 }
 
 func TestStreamSubprocess_Timeout(t *testing.T) {
-	defer testfixtures.FreezeClock(t)()
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	defer freezeClock(t)()
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
 	var stdout, stderr bytes.Buffer
 	res, _ := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
 		Command:   `sleep 10`,
@@ -134,7 +137,7 @@ func TestStreamSubprocess_Timeout(t *testing.T) {
 }
 
 func TestStreamSubprocess_BinaryNotFound(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
 	var stdout, stderr bytes.Buffer
 	// sh exits non-zero with "command not found"; ExitCode is non-zero, no individuals.
 	res, err := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
@@ -153,7 +156,7 @@ func TestStreamSubprocess_BinaryNotFound(t *testing.T) {
 }
 
 func TestStreamSubprocess_NoPatternsNoIndividuals(t *testing.T) {
-	v, _ := schema.NewValidator(testfixtures.RepoSchemasDir(t))
+	v, _ := schema.NewValidator(schematest.RepoSchemasDir(t))
 	var stdout, stderr bytes.Buffer
 	res, _ := subprocess.StreamSubprocess(context.Background(), subprocess.StreamConfig{
 		Command:   `printf 'whatever\n'`,
@@ -174,7 +177,7 @@ func TestStreamSubprocess_NoPatternsNoIndividuals(t *testing.T) {
 }
 
 func TestStreamSubprocess_TeesRawLogWhenRunDirSet(t *testing.T) {
-	_, runID, runDir := testfixtures.WithRunDir(t, "alpha", "")
+	_, runID, runDir := withRunDir(t, "alpha", "")
 	_ = runID
 
 	var stdout, stderr bytes.Buffer
@@ -248,7 +251,7 @@ func TestStreamSubprocess_RespectsDir(t *testing.T) {
 }
 
 func TestStreamSubprocess_WritesIndividualsToSignalsLog(t *testing.T) {
-	_, runID, runDir := testfixtures.WithRunDir(t, "alpha", "")
+	_, runID, runDir := withRunDir(t, "alpha", "")
 
 	patterns, err := signal.CompilePatterns([]interface{}{
 		map[string]interface{}{"regex": `^FAIL: (.+)$`, "verdict": "fail", "severity": "high"},
@@ -292,4 +295,40 @@ func TestStreamSubprocess_WritesIndividualsToSignalsLog(t *testing.T) {
 			t.Errorf("line %d: signals.log=%q stdout=%q", i, lines[i], stdoutLines[i])
 		}
 	}
+}
+
+// freezeClock pins sensor.NowFn and sensor.NewRunIDFn for deterministic
+// Signal output. Returns a restore function; defer it.
+func freezeClock(t *testing.T) func() {
+	t.Helper()
+	origNow, origID := sensor.NowFn, sensor.NewRunIDFn
+	frozen := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	sensor.NowFn = func() time.Time { return frozen }
+	sensor.NewRunIDFn = func() string { return "00000000-0000-4000-8000-000000000000" }
+	return func() { sensor.NowFn = origNow; sensor.NewRunIDFn = origID }
+}
+
+// withRunDir materializes a temp registry Root, a populated <run-id>/
+// directory with empty raw.log and signals.log files. Returns the Root,
+// the synthesized run_id (<pid>-<short>), and the run directory path.
+func withRunDir(t testing.TB, sensorID, runIDSeed string) (root registry.Root, runID, runDir string) {
+	t.Helper()
+	proj := t.TempDir()
+	root = registry.NewRoot(proj)
+	if runIDSeed == "" {
+		runIDSeed = fmt.Sprintf("%d-test0001", os.Getpid())
+	}
+	runID = runIDSeed
+	runDir = root.RunDir(sensorID, runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("mkdir runDir: %v", err)
+	}
+	for _, fname := range []string{"raw.log", "signals.log"} {
+		f, err := os.Create(filepath.Join(runDir, fname))
+		if err != nil {
+			t.Fatalf("create %s: %v", fname, err)
+		}
+		_ = f.Close()
+	}
+	return root, runID, runDir
 }

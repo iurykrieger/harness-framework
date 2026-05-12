@@ -46,6 +46,19 @@ func BuildEnvelope(sensor map[string]interface{}) (Envelope, error) {
 	}, nil
 }
 
+// BuildEnvelopeTyped is the typed companion to BuildEnvelope. Produces
+// the same Envelope from a *Sensor instead of a map. Behaviour and
+// error semantics are identical except inputs cannot be nil.
+func BuildEnvelopeTyped(s *Sensor) Envelope {
+	return Envelope{
+		SensorID:   s.ID,
+		Version:    s.Version,
+		RunID:      NewRunIDFn(),
+		StartedAt:  NowFn().Format("2006-01-02T15:04:05Z"),
+		SensorType: string(s.Type),
+	}
+}
+
 // NewUUIDv4 generates a RFC 4122 v4 UUID without external dependencies.
 func NewUUIDv4() string {
 	b := make([]byte, 16)
@@ -55,4 +68,37 @@ func NewUUIDv4() string {
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// BuildErrorSignal constructs a Signal-shaped map representing the
+// "sensor could not run" outcome. Verdict is error, severity high; the
+// caller supplies the rationale (free-form explanation) and remediation
+// instructions (imperative text the next agent turn should act on).
+//
+// The returned map already conforms to schemas/signal.json — callers should
+// still validate before emitting, in case envelope fields are malformed.
+func BuildErrorSignal(env Envelope, outputMode, rationale, remediation string) map[string]interface{} {
+	finished := NowFn().Format("2006-01-02T15:04:05Z")
+	sig := map[string]interface{}{
+		"sensor_id":   env.SensorID,
+		"version":     env.Version,
+		"run_id":      env.RunID,
+		"started_at":  env.StartedAt,
+		"finished_at": finished,
+		"verdict":     "error",
+		"severity":    "high",
+		"confidence":  1.0,
+		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
+		"cost_actual": map[string]interface{}{"latency_ms": 0},
+		"metadata": map[string]interface{}{
+			"kind":        "aggregate",
+			"output_mode": outputMode,
+		},
+	}
+	if remediation != "" {
+		sig["remediation"] = map[string]interface{}{
+			"instructions": remediation,
+		}
+	}
+	return sig
 }

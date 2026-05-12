@@ -1,10 +1,8 @@
-// test/registry-discovery-e2e/registry_discovery_e2e_test.go
-//
 // Black-box regression guard for issue #6: the registry-touching skills
 // must agree on the registry path regardless of which subdirectory the
 // caller is in, as long as the project root is reachable via either the
 // sensors/ marker walk-up or HARNESS_REGISTRY_ROOT.
-package registryDiscoveryE2E_test
+package registry_test
 
 import (
 	"bytes"

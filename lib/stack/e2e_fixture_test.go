@@ -159,7 +159,7 @@ func findFixtureDir(t *testing.T) string {
 	t.Helper()
 	dir, _ := os.Getwd()
 	for i := 0; i < 8; i++ {
-		candidate := filepath.Join(dir, "test", "fixtures", "stack-discovery")
+		candidate := filepath.Join(dir, "testdata", "stack-discovery")
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return candidate
 		}
@@ -169,6 +169,6 @@ func findFixtureDir(t *testing.T) string {
 		}
 		dir = parent
 	}
-	t.Fatal("test/fixtures/stack-discovery not found")
+	t.Fatal("lib/stack/testdata/stack-discovery not found")
 	return ""
 }
