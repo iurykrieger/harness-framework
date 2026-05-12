@@ -19,6 +19,26 @@ import (
 	"time"
 )
 
+// TestMain sets CLAUDE_PLUGIN_ROOT once for all tests in this package so
+// that child processes (start-sensor, etc.) pass the plugin_root_missing
+// guard added in Task 2.4. It walks up from the test binary's cwd until it
+// finds .claude-plugin/plugin.json, which lives at the repo root.
+func TestMain(m *testing.M) {
+	dir, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".claude-plugin", "plugin.json")); err == nil {
+			os.Setenv("CLAUDE_PLUGIN_ROOT", dir)
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	os.Exit(m.Run())
+}
+
 // repoRoot returns the harness-framework repo root by walking up from
 // the test's cwd until it sees go.mod.
 func repoRoot(t *testing.T) string {
