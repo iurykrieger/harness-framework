@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -12,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iurykrieger/harness-framework/lib/cli"
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
 // helperKey is the env var that puts the test binary into helper mode.
@@ -85,10 +88,25 @@ func resultFor(t *testing.T, projectRoot string, exists bool) registry.Result {
 	}
 }
 
+// bootstrapFor wraps a registry.Result in a cli.BootstrapResult suitable for
+// passing to runStop in tests. The schema validator is loaded so that signal
+// validation runs; errors are written to errBuf.
+func bootstrapFor(t *testing.T, res registry.Result, errBuf *bytes.Buffer) cli.BootstrapResult {
+	t.Helper()
+	v, _ := schema.LoadValidator("", errBuf)
+	return cli.BootstrapResult{
+		Res:       res,
+		Validator: v,
+		Diagnose:  registry.DiagnoseMetadata(res),
+	}
+}
+
 func TestStop_RegistryFileAbsent_Error(t *testing.T) {
 	root := t.TempDir()
 	res := resultFor(t, root, false)
-	exit, sig := runStop(res, []string{"missing"}, false)
+	var errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	exit, sig := runStop(b, []string{"missing"}, false)
 	if exit != 1 {
 		t.Fatalf("exit: got %d, want 1", exit)
 	}
@@ -111,7 +129,9 @@ func TestStop_NotRunning_ReturnsWarn(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := resultFor(t, root, true)
-	exit, sig := runStop(res, []string{"missing"}, false)
+	var errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	exit, sig := runStop(b, []string{"missing"}, false)
 	if exit != 0 {
 		t.Fatalf("exit: got %d, want 0", exit)
 	}
@@ -145,7 +165,9 @@ func TestStop_HoldByDependent_RefusesStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := resultFor(t, root, true)
-	exit, sig := runStop(res, []string{"live"}, false)
+	var errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	exit, sig := runStop(b, []string{"live"}, false)
 	if exit != 0 {
 		t.Fatalf("exit: got %d, want 0", exit)
 	}
@@ -183,7 +205,9 @@ func TestStop_ReapsDeadHolders_WhenFlagSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := resultFor(t, root, true)
-	_, sig := runStop(res, []string{"live"}, true)
+	var errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	_, sig := runStop(b, []string{"live"}, true)
 	md := sig["metadata"].(map[string]interface{})
 	reaped, _ := md["reaped_holders"].([]interface{})
 	if len(reaped) != 1 {
