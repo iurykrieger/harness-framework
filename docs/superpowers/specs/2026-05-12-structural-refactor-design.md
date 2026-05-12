@@ -95,7 +95,7 @@ Today's CLAUDE.md rule 9 only mentions `lib/testfixtures/`. The remaining four a
 | From | To | Notes |
 |---|---|---|
 | `test/integration_runtime_logs_test.go` | `lib/orchestrator/integration_runtime_logs_test.go` | Keep `//go:build integration`. Package becomes `orchestrator_test` (black-box). |
-| `test/heal-e2e/heal_e2e_test.go` | `skills/heal-sensor/scripts/heal_e2e_test.go` | Package `healSensor_test`. No new build tag. |
+| `test/heal-e2e/heal_e2e_test.go` | `lib/heal/heal_e2e_test.go` | Package `heal_test`. No new build tag. The test already imports `lib/heal` and `lib/heal/rules` directly; `skills/heal-sensor/scripts/` is unsuitable because its existing `package main` files use build tags and a non-tagged `_test.go` in a different package would conflict when tags are set. |
 | `test/registry-discovery-e2e/registry_discovery_e2e_test.go` | `lib/registry/discovery_e2e_test.go` | Package `registry_test`. No new build tag. |
 | `test/fixtures/stack-discovery/` (entire subtree) | `lib/stack/testdata/stack-discovery/` | Go convention: `testdata/` is ignored by `go list ./...` even with a nested `go.mod`. |
 
