@@ -94,3 +94,92 @@ func TestReplayFixture_PreservesSensorIDAndIsolatesRuntime(t *testing.T) {
 		t.Fatalf("runtime pollution: %s exists (stat err=%v)", polluted, err)
 	}
 }
+
+func TestReplayFixture_MissingFlags(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"both missing", []string{}},
+		{"only sensor", []string{"--sensor", "/tmp/x.json"}},
+		{"only fixture", []string{"--fixture", "/tmp/y.txt"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run(tc.args, &stdout, &stderr)
+			if code != 2 {
+				t.Fatalf("exit=%d, want 2; stderr=%s", code, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "usage:") {
+				t.Fatalf("stderr lacks usage hint: %s", stderr.String())
+			}
+		})
+	}
+}
+
+func TestReplayFixture_SensorNotJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(path, []byte("this is not json"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	fixturePath := writeTempFixture(t, "")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--sensor", path, "--fixture", fixturePath}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit=%d, want 2; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "parse sensor") {
+		t.Fatalf("stderr lacks parse error: %s", stderr.String())
+	}
+}
+
+func TestReplayFixture_SensorMissingExecution(t *testing.T) {
+	bad := map[string]interface{}{
+		"id":   "no-execution-block",
+		"type": "computational",
+		// no "execution" field
+	}
+	body, _ := json.Marshal(bad)
+	sensorPath := filepath.Join(t.TempDir(), "no-exec.json")
+	if err := os.WriteFile(sensorPath, body, 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	fixturePath := writeTempFixture(t, "")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--sensor", sensorPath, "--fixture", fixturePath}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit=%d, want 2; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "execution") {
+		t.Fatalf("stderr does not name 'execution': %s", stderr.String())
+	}
+}
+
+func TestReplayFixture_SensorFileMissing(t *testing.T) {
+	fixturePath := writeTempFixture(t, "")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--sensor", "/nonexistent/sensor.json", "--fixture", fixturePath}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit=%d, want 2; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "read sensor") {
+		t.Fatalf("stderr lacks read error: %s", stderr.String())
+	}
+}
+
+func TestTagForType(t *testing.T) {
+	cases := map[string]string{
+		"computational": "run_computational",
+		"inferential":   "run_inferential",
+		"":              "run_computational",
+		"unknown":       "run_computational",
+	}
+	for input, want := range cases {
+		if got := tagForType(input); got != want {
+			t.Errorf("tagForType(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
