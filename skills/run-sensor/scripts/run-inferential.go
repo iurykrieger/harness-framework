@@ -178,12 +178,20 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		depExecMap, _ := dep.JSON["execution"].(map[string]interface{})
 		blocking, _ := depExecMap["blocking"].(bool)
 		if blocking {
-			live, aerr := orchestrator.AttachLiveDep(ctx, dep, projectRoot, rootID, os.Getpid(), v, stdout, stderr)
+			result, aerr := orchestrator.AttachLiveDep(ctx, dep, projectRoot, rootID, os.Getpid(), v, stdout, stderr)
 			if aerr != nil {
 				fmt.Fprintln(stderr, "error: attach live dep:", aerr)
 				return 1
 			}
-			liveStack = append(liveStack, live)
+			if result.GateSignal != nil {
+				// Gate failed on spawn-fresh path. AttachLiveDep already emitted
+				// the signal on stdout. Record so FirstFailedDep / cascade
+				// propagation below sees the failed dep and the requested
+				// sensor cascades cleanly.
+				depSignals[dep.ID] = result.GateSignal
+				continue
+			}
+			liveStack = append(liveStack, result.Live)
 			depSignals[dep.ID] = map[string]interface{}{"verdict": "pass"}
 			continue
 		}

@@ -87,14 +87,21 @@ func RunDeps(
 		execMap, _ := s.JSON["execution"].(map[string]interface{})
 		blocking, _ := execMap["blocking"].(bool)
 		if blocking {
-			live, attachErr := AttachLiveDep(ctx, s, projectRoot, holderID, holderPID, v, stdout, stderr)
+			result, attachErr := AttachLiveDep(ctx, s, projectRoot, holderID, holderPID, v, stdout, stderr)
 			if attachErr != nil {
 				cascade := buildSimpleSignal(targetID, "error", "high", "dep_start_failed", attachErr.Error())
 				_ = json.NewEncoder(stdout).Encode(cascade)
 				res.ExitCode = 1
 				return res
 			}
-			res.LiveStack = append(res.LiveStack, live)
+			if result.GateSignal != nil {
+				// AttachLiveDep already emitted on stdout and validated.
+				// Record so FirstFailedDep / BuildCascadeSignal propagate to
+				// dependents (including the root) on later iterations.
+				res.Signals[s.ID] = result.GateSignal
+				continue
+			}
+			res.LiveStack = append(res.LiveStack, result.Live)
 			res.Signals[s.ID] = map[string]interface{}{"verdict": "pass"}
 			continue
 		}
