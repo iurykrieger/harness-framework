@@ -15,7 +15,7 @@ type Source string
 const (
 	// SourceEnv means HARNESS_REGISTRY_ROOT was honored.
 	SourceEnv Source = "env"
-	// SourceWalkUp means the sensors/ marker was found by walking up
+	// SourceWalkUp means the .harness/ marker was found by walking up
 	// from startDir.
 	SourceWalkUp Source = "walk_up"
 )
@@ -24,10 +24,15 @@ const (
 const envVarName = "HARNESS_REGISTRY_ROOT"
 
 // markerDir is the directory name Discover walks up looking for.
-const markerDir = "sensors"
+// .harness/ is the consolidated framework-artifact namespace inside a
+// user project: it holds sensors/ (definitions), runtime/ (per-run
+// state and logs), and stack.json (the observed-stack manifest). Its
+// presence is the unambiguous signal that the surrounding directory is
+// a harness project root.
+const markerDir = ".harness"
 
 // DiscoveryError is returned when neither HARNESS_REGISTRY_ROOT nor a
-// sensors/ marker resolved a project root. Callers can use errors.As to
+// .harness/ marker resolved a project root. Callers can use errors.As to
 // distinguish discovery errors from parse or I/O failures.
 type DiscoveryError struct {
 	StartDir string
@@ -44,13 +49,13 @@ func (e *DiscoveryError) Error() string {
 }
 
 // Discover resolves the project root using HARNESS_REGISTRY_ROOT first,
-// then walking up from startDir looking for a sensors/ directory.
+// then walking up from startDir looking for a .harness/ directory.
 //
 // HARNESS_REGISTRY_ROOT takes precedence because it is the operator's
 // explicit override — useful when invoking skills from outside the project
 // tree (CI, shell scripts). When unset, the walk-up mirrors the schema
-// discovery pattern in lib/schema, but looks for sensors/ (the user-project
-// tree) rather than schemas/ (the plugin tree).
+// discovery pattern in lib/schema, but looks for .harness/ (the user-project
+// framework namespace) rather than schemas/ (the plugin tree).
 //
 // EvalSymlinks is applied to the env-var path so that a symlink pointing
 // to a directory is treated as a valid directory root; the resolved path
@@ -59,7 +64,7 @@ func (e *DiscoveryError) Error() string {
 // Errors:
 //   - HARNESS_REGISTRY_ROOT is set but not absolute, not an existing
 //     directory, or otherwise unreachable.
-//   - Walk-up reached the filesystem root with no sensors/ found.
+//   - Walk-up reached the filesystem root with no .harness/ found.
 //
 // startDir is the caller's anchor (typically os.Getwd()). It is only
 // consulted when HARNESS_REGISTRY_ROOT is unset/empty.
@@ -110,7 +115,7 @@ func validateEnvRoot(env string) (string, error) {
 }
 
 // walkUpForMarker walks parent-by-parent from startDir looking for a
-// directory whose sensors/ child is itself a directory (symlinks to dirs
+// directory whose .harness/ child is itself a directory (symlinks to dirs
 // accepted via os.Stat; emptiness allowed). Returns the absolute path of
 // the matched ancestor, or an error when the filesystem root is reached.
 func walkUpForMarker(startDir string) (string, error) {

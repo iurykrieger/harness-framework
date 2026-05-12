@@ -1,6 +1,6 @@
 ---
 name: stop-sensor
-description: Use when the user invokes /stop-sensor or asks to bring down a previously-started blocking sensor. Takes `<sensor.id>` and an optional `--reap-dead-holders` flag. Idempotent: stopping a sensor that is not running emits a warn Signal and exits 0. Otherwise removes the user's `kind=manual` hold, refuses with `held` if any sensor still holds the run, or proceeds with SIGTERM → wait `execution.graceful_timeout_ms` → SIGKILL on the subprocess group, then signals the watcher to drain, reads signals.log, and emits the aggregate Signal. Removes the entry from `.runtime/sensors/running_sensors.json` on success.
+description: Use when the user invokes /stop-sensor or asks to bring down a previously-started blocking sensor. Takes `<sensor.id>` and an optional `--reap-dead-holders` flag. Idempotent: stopping a sensor that is not running emits a warn Signal and exits 0. Otherwise removes the user's `kind=manual` hold, refuses with `held` if any sensor still holds the run, or proceeds with SIGTERM → wait `execution.graceful_timeout_ms` → SIGKILL on the subprocess group, then signals the watcher to drain, reads signals.log, and emits the aggregate Signal. Removes the entry from `.harness/runtime/running_sensors.json` on success.
 ---
 
 # stop-sensor
@@ -35,5 +35,5 @@ A single aggregate Signal on stdout. `metadata.kind` is one of:
 ## Notes
 
 - A blocking sensor's `cost.latency.timeout_ms` is forbidden; `execution.graceful_timeout_ms` (min 100ms, default 5000) controls the SIGTERM→SIGKILL window here.
-- Per-sensor `.runtime/sensors/<id>/{raw.log, signals.log}` are NOT deleted by stop — auditable. `.runtime/sensors/<id>/` cleanup is manual.
+- Per-sensor `.harness/runtime/<id>/{raw.log, signals.log}` are NOT deleted by stop — auditable. `.harness/runtime/<id>/` cleanup is manual.
 - When a subprocess dies on its own before /stop-sensor, the watcher's reaper records the exit; the aggregate then uses `Blocking: false` so `exit_code_map` interprets the verdict (a crashed dev server aggregates as fail/error rather than pass).

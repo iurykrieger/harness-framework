@@ -9,5 +9,5 @@
 .vscode/
 
 # Runtime
-.runtime/
+.harness/runtime/
 .test-tmp/

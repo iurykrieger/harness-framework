@@ -25,8 +25,8 @@ func writeSensorJSON(t *testing.T, root, id string, depsOn []string) {
 
 func TestResolve_Linear(t *testing.T) {
 	projectRoot := t.TempDir()
-	sensorRoot := filepath.Join(projectRoot, "sensors")
-	if err := os.Mkdir(sensorRoot, 0o755); err != nil {
+	sensorRoot := filepath.Join(projectRoot, ".harness", "sensors")
+	if err := os.MkdirAll(sensorRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeSensorJSON(t, sensorRoot, "a", nil)
@@ -50,8 +50,8 @@ func TestResolve_Linear(t *testing.T) {
 func TestResolve_Diamond(t *testing.T) {
 	// d → b, c ; b → a ; c → a   ⇒   a before b,c  ; b,c before d
 	projectRoot := t.TempDir()
-	sensorRoot := filepath.Join(projectRoot, "sensors")
-	if err := os.Mkdir(sensorRoot, 0o755); err != nil {
+	sensorRoot := filepath.Join(projectRoot, ".harness", "sensors")
+	if err := os.MkdirAll(sensorRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeSensorJSON(t, sensorRoot, "a", nil)
@@ -77,8 +77,8 @@ func TestResolve_Diamond(t *testing.T) {
 
 func TestResolve_Cycle(t *testing.T) {
 	projectRoot := t.TempDir()
-	sensorRoot := filepath.Join(projectRoot, "sensors")
-	if err := os.Mkdir(sensorRoot, 0o755); err != nil {
+	sensorRoot := filepath.Join(projectRoot, ".harness", "sensors")
+	if err := os.MkdirAll(sensorRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeSensorJSON(t, sensorRoot, "a", []string{"b"})
@@ -91,8 +91,8 @@ func TestResolve_Cycle(t *testing.T) {
 
 func TestResolve_SelfLoop(t *testing.T) {
 	projectRoot := t.TempDir()
-	sensorRoot := filepath.Join(projectRoot, "sensors")
-	if err := os.Mkdir(sensorRoot, 0o755); err != nil {
+	sensorRoot := filepath.Join(projectRoot, ".harness", "sensors")
+	if err := os.MkdirAll(sensorRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeSensorJSON(t, sensorRoot, "a", []string{"a"})
@@ -104,8 +104,8 @@ func TestResolve_SelfLoop(t *testing.T) {
 
 func TestResolve_MissingDep(t *testing.T) {
 	projectRoot := t.TempDir()
-	sensorRoot := filepath.Join(projectRoot, "sensors")
-	if err := os.Mkdir(sensorRoot, 0o755); err != nil {
+	sensorRoot := filepath.Join(projectRoot, ".harness", "sensors")
+	if err := os.MkdirAll(sensorRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeSensorJSON(t, sensorRoot, "a", []string{"ghost"})

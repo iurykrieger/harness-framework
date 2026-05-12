@@ -70,7 +70,7 @@ func bootstrapFor(t *testing.T, res registry.Result, errBuf *bytes.Buffer) cli.B
 
 func writeFixtureSensor(t *testing.T, projectRoot, id string, body map[string]interface{}) string {
 	t.Helper()
-	dir := filepath.Join(projectRoot, "sensors")
+	dir := filepath.Join(projectRoot, ".harness", "sensors")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func writeBlockingDepFixtureForStart(t *testing.T, root, id string) {
   "output_parsing": {"patterns":[{"regex":"^TICK$","verdict":"pass","severity":"info"}]}
 }
 }`)
-	dir := filepath.Join(root, "sensors")
+	dir := filepath.Join(root, ".harness", "sensors")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +498,7 @@ func TestStart_WithBlockingDepAttach(t *testing.T) {
 			PGID:      os.Getpid(),
 			StartedAt: "2026-05-10T00:00:00Z",
 			Command:   "while true; do echo TICK; sleep 0.1; done",
-			LogDir:    filepath.Join(".runtime", "sensors", "blocking-tick"),
+			LogDir:    filepath.Join(".harness", "runtime", "blocking-tick"),
 			HeldBy:    []registry.HeldByEntry{preExistingHolder},
 		}},
 	}); err != nil {
@@ -592,7 +592,7 @@ func TestStart_WritesNewRunIDLayout(t *testing.T) {
 	root := t.TempDir()
 	writeFixtureSensor(t, root, "longrun", blockingFixtureBody())
 
-	exit, sig := runStart(testResult(root), []string{"longrun"})
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"longrun"})
 	defer cleanupStartedTarget(t, root, "longrun")
 
 	if exit != 0 {
@@ -632,7 +632,7 @@ func TestStart_WritesNewRunIDLayout(t *testing.T) {
 	if !entry.Blocking {
 		t.Errorf("entry.Blocking: got false, want true")
 	}
-	wantLogDir := filepath.Join(".runtime", "sensors", "longrun", runID)
+	wantLogDir := filepath.Join(".harness", "runtime", "longrun", runID)
 	if entry.LogDir != wantLogDir {
 		t.Errorf("entry.LogDir: got %q, want %q", entry.LogDir, wantLogDir)
 	}
@@ -640,7 +640,7 @@ func TestStart_WritesNewRunIDLayout(t *testing.T) {
 
 func TestStart_AllowsStartWhenOnlyNonBlockingEntryExists(t *testing.T) {
 	proj := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeFixtureSensor(t, proj, "shared", blockingFixtureBody())
@@ -654,7 +654,7 @@ func TestStart_AllowsStartWhenOnlyNonBlockingEntryExists(t *testing.T) {
 	}}}
 	_ = registry.Save(r, rs)
 
-	exit, sig := runStart(testResult(proj), []string{"shared"})
+	exit, sig := runStart(bootstrapFor(t, testResult(proj), new(bytes.Buffer)), []string{"shared"})
 	if exit != 0 {
 		t.Fatalf("exit=%d, sig=%+v", exit, sig)
 	}

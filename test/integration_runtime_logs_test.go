@@ -35,7 +35,7 @@ func TestRunSensor_ConcurrentRunsCoexist(t *testing.T) {
 	}
 	t.Cleanup(func() { os.RemoveAll(proj) })
 
-	sensorsDir := filepath.Join(proj, "sensors")
+	sensorsDir := filepath.Join(proj, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

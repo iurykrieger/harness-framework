@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -347,7 +346,7 @@ func runOneWithPersistence(
 						WatcherPID: 0,
 						StartedAt:  now,
 						Command:    command,
-						LogDir:     filepath.Join(".runtime", "sensors", envelope.SensorID, runID),
+						LogDir:     root.RelativeRunDir(envelope.SensorID, runID),
 						HeldBy:     []registry.HeldByEntry{},
 					})
 					return registry.Save(root, rs)

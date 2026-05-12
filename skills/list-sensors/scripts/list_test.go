@@ -72,7 +72,7 @@ func TestList_FileAbsent_Warn(t *testing.T) {
 	if md["registry_source"] != "walk_up" {
 		t.Errorf("metadata.registry_source: got %v", md["registry_source"])
 	}
-	wantPath := filepath.Join(root, ".runtime", "sensors", "running_sensors.json")
+	wantPath := filepath.Join(root, ".harness", "runtime", "running_sensors.json")
 	if md["registry_path"] != wantPath {
 		t.Errorf("metadata.registry_path: got %v, want %v", md["registry_path"], wantPath)
 	}
@@ -247,7 +247,7 @@ func TestList_RegistryMigratedSignal_ViaBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Ensure marker dir exists for walk-up discovery.
-	if err := os.MkdirAll(filepath.Join(dir, "sensors"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harness", "sensors"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HARNESS_REGISTRY_ROOT", dir)

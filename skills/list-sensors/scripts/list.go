@@ -1,9 +1,11 @@
 //go:build list_sensors
 
-// list reads the registry (resolved via cli.Bootstrap), annotates each
-// entry with PID liveness, and emits one Signal verdict=pass /
-// metadata.kind=list. When the registry file does not exist, emits
-// verdict=warn pointing at HARNESS_REGISTRY_ROOT.
+// list reads .harness/runtime/running_sensors.json (resolved via
+// cli.Bootstrap, NOT os.Getwd()), annotates each entry with PID
+// liveness, and emits one Signal verdict=pass / metadata.kind=list.
+//
+// When the registry file does not exist, emits verdict=warn with
+// remediation pointing at HARNESS_REGISTRY_ROOT.
 package main
 
 import (

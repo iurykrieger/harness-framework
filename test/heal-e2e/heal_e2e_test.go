@@ -27,7 +27,7 @@ func TestHealE2E_MissingEnvFile_HealAndRetry(t *testing.T) {
 	}
 	root := setupFixtureProject(t)
 	sensorID := "run-needs-env"
-	sensorPath := filepath.Join(root, "sensors", sensorID+".json")
+	sensorPath := filepath.Join(root, ".harness", "sensors", sensorID+".json")
 	bin := buildRunSensor(t, root)
 
 	// 1) First run: must fail with .env missing.
@@ -88,7 +88,7 @@ func setupFixtureProject(t *testing.T) string {
 	os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".env\n"), 0o644)
 
 	// Sensor that fails when .env is missing.
-	os.MkdirAll(filepath.Join(root, "sensors"), 0o755)
+	os.MkdirAll(filepath.Join(root, ".harness", "sensors"), 0o755)
 	s := testfixtures.ValidSensorComputational()
 	s["id"] = "run-needs-env"
 	s["execution"] = map[string]interface{}{
@@ -99,14 +99,14 @@ func setupFixtureProject(t *testing.T) string {
 		},
 	}
 	body, _ := json.Marshal(s)
-	os.WriteFile(filepath.Join(root, "sensors", "run-needs-env.json"), body, 0o644)
+	os.WriteFile(filepath.Join(root, ".harness", "sensors", "run-needs-env.json"), body, 0o644)
 	return root
 }
 
 // buildRunSensor compiles the run-computational binary into the
 // fixture project so we can exec it with cmd.Dir = root (where the
 // runner's os.Getwd() must equal the projectRoot for ResolveByID to
-// find sensors/<id>.json). Returns the absolute path to the binary.
+// find .harness/sensors/<id>.json). Returns the absolute path to the binary.
 func buildRunSensor(t *testing.T, root string) string {
 	t.Helper()
 	bin := filepath.Join(root, "run-sensor")

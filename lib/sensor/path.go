@@ -13,10 +13,11 @@ import (
 var idRegex = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // Resolve returns the canonical absolute path for a sensor identified by
-// a bare id ("my-sensor"), a prefixed path ("@sensors/my.json"), or a
-// relative/absolute path. When idOrPath matches the id regex, it is resolved
-// as <baseDir>/sensors/<id>.json; otherwise it is treated as a path
-// (with @ removed, and relative paths resolved against baseDir).
+// a bare id ("my-sensor"), a prefixed path ("@.harness/sensors/my.json"),
+// or a relative/absolute path. When idOrPath matches the id regex, it is
+// resolved as <baseDir>/.harness/sensors/<id>.json; otherwise it is
+// treated as a path (with @ removed, and relative paths resolved against
+// baseDir).
 //
 // Returns descriptive errors for empty input, malformed id, path traversal,
 // and missing files.
@@ -30,12 +31,12 @@ func Resolve(idOrPath, baseDir string) (string, error) {
 	if !idRegex.MatchString(idOrPath) {
 		return "", fmt.Errorf("sensor id %q does not match ^[a-z][a-z0-9-]*$", idOrPath)
 	}
-	return resolveInDir(idOrPath, filepath.Join(baseDir, "sensors"))
+	return resolveInDir(idOrPath, filepath.Join(baseDir, ".harness", "sensors"))
 }
 
 // resolveInDir is the internal helper used by the orchestrator: assumes that
 // sensorRoot is already the directory containing <id>.json (does not append
-// "sensors/" automatically).
+// ".harness/sensors/" automatically).
 func resolveInDir(id, sensorRoot string) (string, error) {
 	if strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") {
 		return "", fmt.Errorf("invalid sensor id %q (no path separators)", id)
