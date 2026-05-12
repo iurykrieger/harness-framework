@@ -19,12 +19,14 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	os.Setenv("CLAUDE_PLUGIN_ROOT", os.TempDir()) // any non-empty path; SpawnFn is overridden
 	prev := watcher.SpawnFn
 	watcher.SpawnFn = func(opts watcher.SpawnOpts) (int, error) {
 		return 99999, nil
 	}
 	code := m.Run()
 	watcher.SpawnFn = prev
+	os.Unsetenv("CLAUDE_PLUGIN_ROOT")
 	os.Exit(code)
 }
 
@@ -643,6 +645,43 @@ func TestStart_AllowsStartWhenOnlyNonBlockingEntryExists(t *testing.T) {
 		if e.Blocking {
 			_ = syscall.Kill(-e.PGID, syscall.SIGKILL)
 		}
+	}
+}
+
+func TestStart_RejectsEmptyPluginRoot(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureSensor(t, root, "blocking-sensor", map[string]interface{}{
+		"version":     "1.0.0",
+		"name":        "Blocking fixture",
+		"description": "blocking",
+		"determinism": "high",
+		"kind":        "observation",
+		"type":        "computational",
+		"regulation":  "behaviour",
+		"output":      "single",
+		"cost":        map[string]interface{}{"compute": "small"},
+		"execution": map[string]interface{}{
+			"command":             "sleep 5",
+			"blocking":            true,
+			"graceful_timeout_ms": 1000,
+			"exit_code_map": []interface{}{
+				map[string]interface{}{"code": 0, "verdict": "pass", "severity": "info"},
+			},
+		},
+	})
+
+	t.Setenv("CLAUDE_PLUGIN_ROOT", "")
+
+	exit, sig := runStart(testResult(root), []string{"blocking-sensor"})
+	if exit == 0 {
+		t.Fatalf("expected non-zero exit when CLAUDE_PLUGIN_ROOT empty, sig = %#v", sig)
+	}
+	if sig["verdict"] != "error" {
+		t.Errorf("verdict = %v, want error", sig["verdict"])
+	}
+	meta, _ := sig["metadata"].(map[string]interface{})
+	if meta["cause"] != "plugin_root_missing" {
+		t.Errorf("metadata.cause = %v, want plugin_root_missing", meta["cause"])
 	}
 }
 

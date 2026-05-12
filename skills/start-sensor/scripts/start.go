@@ -68,6 +68,12 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 	}
 	id := args[0]
 
+	pluginRoot := os.Getenv("CLAUDE_PLUGIN_ROOT")
+	if pluginRoot == "" {
+		return 1, validateSignal(v, finalSignal(id, nil, "failed", "plugin_root_missing",
+			nil, "CLAUDE_PLUGIN_ROOT not set in environment", diagnose), id)
+	}
+
 	path, err := libsensor.ResolveByID(id, projectRoot)
 	if err != nil {
 		return 2, validateSignal(v, finalSignal(id, nil, "failed", "resolve_failed",
@@ -249,6 +255,7 @@ func runStart(res registry.Result, args []string) (int, map[string]interface{}) 
 
 		// Stage 5: spawn the watcher via lib/watcher.
 		watcherPID, err := watcher.Spawn(watcher.SpawnOpts{
+			PluginRoot:     pluginRoot,
 			ProjectRoot:    projectRoot,
 			SensorID:       id,
 			RunID:          runID,

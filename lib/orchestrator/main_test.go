@@ -12,11 +12,13 @@ func TestMain(m *testing.M) {
 	// Orchestrator tests never exercise watcher behavior — they only
 	// require that Spawn succeeds and returns a positive PID for the
 	// registry entry.
+	os.Setenv("CLAUDE_PLUGIN_ROOT", os.TempDir())
 	prev := watcher.SpawnFn
 	watcher.SpawnFn = func(opts watcher.SpawnOpts) (int, error) {
 		return 99999, nil
 	}
 	code := m.Run()
 	watcher.SpawnFn = prev
+	os.Unsetenv("CLAUDE_PLUGIN_ROOT")
 	os.Exit(code)
 }
