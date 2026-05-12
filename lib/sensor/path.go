@@ -34,7 +34,7 @@ func ResolveSensorPath(arg, baseDir string) (string, error) {
 var idRegex = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // ResolveByID resolves a bare sensor id to its on-disk path under
-// <baseDir>/sensors/<id>.json. The id MUST match the schema's id pattern
+// <baseDir>/.harness/sensors/<id>.json. The id MUST match the schema's id pattern
 // to prevent path traversal via "../foo" or absolute-path inputs.
 func ResolveByID(id, baseDir string) (string, error) {
 	if id == "" {
@@ -43,7 +43,7 @@ func ResolveByID(id, baseDir string) (string, error) {
 	if !idRegex.MatchString(id) {
 		return "", fmt.Errorf("sensor id %q does not match ^[a-z][a-z0-9-]*$", id)
 	}
-	path := filepath.Join(baseDir, "sensors", id+".json")
+	path := filepath.Join(baseDir, ".harness", "sensors", id+".json")
 	if _, err := os.Stat(path); err != nil {
 		return "", fmt.Errorf("sensor %q: %w", id, err)
 	}

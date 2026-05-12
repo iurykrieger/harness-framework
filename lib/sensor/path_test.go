@@ -48,7 +48,7 @@ func TestResolveSensorPath(t *testing.T) {
 
 func TestResolveByID(t *testing.T) {
 	dir := t.TempDir()
-	sensorsDir := filepath.Join(dir, "sensors")
+	sensorsDir := filepath.Join(dir, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
