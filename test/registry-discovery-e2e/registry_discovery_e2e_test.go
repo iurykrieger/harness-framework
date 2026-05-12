@@ -472,3 +472,70 @@ func TestSanitize_LegacyMinusOneViaListSensors(t *testing.T) {
 		t.Errorf("on-disk watcher_pid after migration: got %v, want 0", e0["watcher_pid"])
 	}
 }
+
+func TestPluginVsProjectGoMod(t *testing.T) {
+	pluginRoot := findPluginRoot(t)
+
+	// Build a user project with its own go.mod listing an unrelated module.
+	proj := t.TempDir()
+	if err := os.WriteFile(filepath.Join(proj, "go.mod"), []byte("module example.com/userapp\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("go", "run", "-C", pluginRoot, "-tags=list_sensors", "./skills/list-sensors/scripts")
+	cmd.Dir = proj
+	cmd.Env = append(os.Environ(),
+		"HARNESS_REGISTRY_ROOT="+proj,
+		"GOWORK=off",
+		"CLAUDE_PLUGIN_ROOT="+pluginRoot,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run failed: %v\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
+	}
+
+	// Expect a Signal with verdict=warn (no registry file) and metadata.registry_path under proj.
+	last := lastLine(stdout.String())
+	var sig map[string]interface{}
+	if err := json.Unmarshal([]byte(last), &sig); err != nil {
+		t.Fatalf("parse signal: %v\nlast line: %s", err, last)
+	}
+	if sig["verdict"] != "warn" {
+		t.Errorf("verdict = %v, want warn", sig["verdict"])
+	}
+	meta, _ := sig["metadata"].(map[string]interface{})
+	regPath, _ := meta["registry_path"].(string)
+	// EvalSymlinks only works on paths that exist; the registry file is absent by design.
+	// Resolve the project root (which does exist) and check that regPath starts with it.
+	wantPrefix, _ := filepath.EvalSymlinks(proj)
+	if !strings.HasPrefix(regPath, wantPrefix) {
+		t.Errorf("registry_path = %q, want prefix %q", regPath, wantPrefix)
+	}
+}
+
+// findPluginRoot walks up from CWD until .claude-plugin/plugin.json is found.
+func findPluginRoot(t *testing.T) string {
+	t.Helper()
+	dir, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".claude-plugin", "plugin.json")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("plugin root not found")
+		}
+		dir = parent
+	}
+}
+
+// lastLine returns the final newline-terminated line of s.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return lines[len(lines)-1]
+}
