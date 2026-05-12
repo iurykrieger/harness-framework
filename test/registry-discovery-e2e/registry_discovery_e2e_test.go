@@ -540,6 +540,65 @@ func lastLine(s string) string {
 	return lines[len(lines)-1]
 }
 
+func TestSensorCwd(t *testing.T) {
+	pluginRoot := findPluginRoot(t)
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Sentinel file in the project root only.
+	if err := os.WriteFile(filepath.Join(proj, "SENTINEL"), []byte("project-root-confirmed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sensor whose command echoes the sentinel content.
+	body := `{
+		"id": "cwd-probe", "version": "1.0.0", "name": "Probe",
+		"description": "probe cwd", "determinism": "high",
+		"kind": "observation", "type": "computational",
+		"regulation": "behaviour", "phase": "on-demand", "output": "single",
+		"cost": {
+			"class": "cheap",
+			"compute": {"cpu": "low", "memory_mb": 32},
+			"latency": {"p50_ms": 10, "p95_ms": 50, "timeout_ms": 5000}
+		},
+		"triggers": [{"on": "manual"}],
+		"execution": {
+			"command": "cat SENTINEL",
+			"exit_code_map": [{"exit_code": 0, "verdict": "pass", "severity": "info"}]
+		},
+		"verification": {
+			"golden_cases": [{"fixture": "sensors/fixtures/cwd-probe/pass.txt", "expected_verdict": "pass", "expected_severity": "info"}]
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(proj, "sensors", "cwd-probe.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("go", "run", "-C", pluginRoot, "-tags=run_computational", "./skills/run-sensor/scripts", "cwd-probe")
+	cmd.Dir = proj
+	cmd.Env = append(os.Environ(),
+		"HARNESS_REGISTRY_ROOT="+proj,
+		"GOWORK=off",
+		"CLAUDE_PLUGIN_ROOT="+pluginRoot,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go run failed: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+
+	last := lastLine(stdout.String())
+	var sig map[string]interface{}
+	if err := json.Unmarshal([]byte(last), &sig); err != nil {
+		t.Fatalf("parse signal: %v\nlast: %s", err, last)
+	}
+	if sig["verdict"] != "pass" {
+		t.Errorf("verdict = %v, want pass\nfull signal: %s", sig["verdict"], last)
+	}
+}
+
 func TestGoWorkPollution(t *testing.T) {
 	pluginRoot := findPluginRoot(t)
 	proj := t.TempDir()
