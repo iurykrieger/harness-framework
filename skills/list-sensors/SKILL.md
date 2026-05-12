@@ -16,7 +16,9 @@ Show all live blocking-sensor runs.
 ## Procedure
 
 ```bash
-go run -tags=list_sensors ./skills/list-sensors/scripts
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=list_sensors \
+  ./skills/list-sensors/scripts
 ```
 
 ## Output contract

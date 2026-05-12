@@ -452,3 +452,80 @@ func TestRunInferential_BlockingSensorRejected(t *testing.T) {
 		t.Fatalf("stderr should mention 'blocking': %s", stderr.String())
 	}
 }
+
+// TestRunInferential_UsesProjectRootAsSubprocessDir verifies that the inferential
+// runner sets Dir=projectRoot on the StreamConfig so that sensor commands that
+// reference relative paths (e.g. "cat README.md") run from the user's project
+// root, not from the plugin root.
+//
+// The test creates a SENTINEL file in the project root and writes a sensor whose
+// command is "cat SENTINEL". If Dir is not set the subprocess runs from the
+// test's cwd (the plugin root, which has no SENTINEL), and the command fails.
+func TestRunInferential_UsesProjectRootAsSubprocessDir(t *testing.T) {
+	schemasDir := repoSchemasDir(t)
+	proj := t.TempDir()
+
+	// Place SENTINEL only in the project root so the command fails if Dir is wrong.
+	if err := os.WriteFile(filepath.Join(proj, "SENTINEL"), []byte("project-root-confirmed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	id := writeInferentialSensor(t, proj, "infr-cwd-probe", "cat SENTINEL")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"--schemas-dir", schemasDir,
+		"--slot", "a=x",
+		"--slot", "b=y",
+		id,
+	}, proj, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s stdout=%s\n(Dir not set on StreamConfig: command ran from wrong dir)", code, stderr.String(), stdout.String())
+	}
+	lines := parseJSONL(t, stdout.String())
+	agg := lines[len(lines)-1]
+	if agg["verdict"] != "pass" {
+		t.Fatalf("aggregate verdict=%v, want pass\n(cat SENTINEL should succeed when Dir=projectRoot)", agg["verdict"])
+	}
+}
+
+// TestRunInferential_AcceptsAbsolutePath verifies that run-inferential accepts
+// an absolute file path in addition to a bare sensor id. This mirrors the
+// fix applied to run-computational in commit 7ebf962.
+//
+// Without the fix, sensor.ResolveByID rejects absolute paths via the regex
+// ^[a-z][a-z0-9-]*$, which broke /heal-sensor retries of inferential sensors
+// (retry-original.go passes an absolute path to the runner).
+func TestRunInferential_AcceptsAbsolutePath(t *testing.T) {
+	schemasDir := repoSchemasDir(t)
+	root := t.TempDir()
+	id := writeInferentialSensor(t, root, "infr-abspath", `printf 'PASS judgment\n'`)
+	absPath := filepath.Join(root, ".harness", "sensors", id+".json")
+
+	// Sanity-check that the path is absolute (test would be meaningless otherwise).
+	if !filepath.IsAbs(absPath) {
+		t.Fatalf("expected absolute path, got %q", absPath)
+	}
+
+	var stdout, stderr bytes.Buffer
+	// Pass the absolute path instead of the bare id. An empty projectRoot is
+	// intentional here: the runner must NOT use projectRoot for resolution when
+	// an absolute path is supplied; it derives the project root from the path itself.
+	code := run([]string{
+		"--schemas-dir", schemasDir,
+		"--slot", "a=foo",
+		"--slot", "b=bar",
+		absPath,
+	}, "" /* projectRoot ignored for abs paths */, &stdout, &stderr)
+
+	// A code=2 with "does not match ^[a-z]" in stderr is the sentinel for
+	// the pre-fix ResolveByID rejection. Any other outcome (0=ran fine,
+	// 1=schema/dep issue) means the path was accepted by the runner.
+	if code == 2 && strings.Contains(stderr.String(), "does not match") {
+		t.Fatalf("runner rejected absolute path via ResolveByID regex: stderr=%s", stderr.String())
+	}
+	// The sensor ran successfully with `printf 'PASS judgment\n'`.
+	if code != 0 {
+		t.Fatalf("expected exit 0 for absolute path, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+}

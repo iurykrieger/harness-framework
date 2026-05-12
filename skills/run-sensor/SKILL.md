@@ -65,17 +65,31 @@ Both fields are required by `schemas/sensor.json`. Use the Read tool. Branch on 
 ### 2a. `computational`
 
 ```bash
-go run -tags=run_computational ./skills/run-sensor/scripts <SENSOR_ID>
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_computational \
+  ./skills/run-sensor/scripts <SENSOR_ID>
 ```
 
 The script does everything: resolves the path (including `@` prefix), validates against `schemas/sensor.json`, spawns `sh -c <execution.command>` with the configured env capped by `cost.latency.timeout_ms`, scans stdout+stderr line-by-line, matches each line against `execution.output_parsing.patterns` (when declared), emits a Signal per match as JSONL, and ends with one aggregate Signal whose verdict is the worse of `exit_code_map[exitCode]` and the highest verdict observed in the stream. Pass its stdout through to step 3.
 
 Exit codes: `0` Signals printed; `1` schema/pattern compile failure; `2` usage or I/O error (sensor unreadable, malformed JSON, wrong type).
 
+### About the invocation contract
+
+Every script the framework ships runs through the same three knobs:
+
+- `-C "${CLAUDE_PLUGIN_ROOT}"` chdirs `go` itself to the plugin's checkout so the user's `go.mod` or `go.work` cannot interfere with module resolution.
+- `HARNESS_REGISTRY_ROOT="$(pwd)"` captures the agent's cwd as the project root before `-C` moves `go`. The runner uses this to resolve `sensors/<id>.json` and to set the subprocess's working directory.
+- `GOWORK=off` neutralizes any `go.work` in the user's tree.
+
+`${CLAUDE_PLUGIN_ROOT}` is exposed by Claude Code to plugin-originated commands; if it is empty the runner emits `verdict=error metadata.cause=plugin_root_missing`.
+
 ### 2b. `inferential`
 
 ```bash
-go run -tags=run_inferential ./skills/run-sensor/scripts \
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_inferential \
+  ./skills/run-sensor/scripts \
   [--slot key1=value1] [--slot key2=value2] ... \
   <SENSOR_ID>
 ```

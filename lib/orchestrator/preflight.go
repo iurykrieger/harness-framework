@@ -108,7 +108,7 @@ func RunDeps(
 			res.Signals[s.ID] = cascade
 			continue
 		}
-		sig, sigCode := RunOne(ctx, s, schemasDir, v, stdout, stderr)
+		sig, sigCode := RunOne(ctx, s, projectRoot, schemasDir, v, stdout, stderr)
 		if sigCode != 0 {
 			res.ExitCode = sigCode
 			return res
@@ -128,9 +128,12 @@ func RunDeps(
 // metadata.lifecycle.prepare) and a bool indicating whether the phase failed
 // (first non-pass step triggers fail-fast).
 //
+// projectRoot is forwarded to StepConfig.Dir so prepare steps run in the
+// user's project directory, not in the runner's own cwd.
+//
 // Delegates to lifecycle.go::runPreparePhase so callers that need only the
 // prepare phase (notably /start-sensor before its detached spawn) can run it
 // without paying for command + teardown.
-func RunPreparePhase(ctx context.Context, target Sensor, defaultTimeoutMS int) (results []interface{}, failed bool) {
-	return runPreparePhase(ctx, target.JSON, defaultTimeoutMS)
+func RunPreparePhase(ctx context.Context, target Sensor, projectRoot string, defaultTimeoutMS int) (results []interface{}, failed bool) {
+	return runPreparePhase(ctx, target.JSON, projectRoot, defaultTimeoutMS)
 }

@@ -236,3 +236,37 @@ func TestRun_BlockingSensorRejected(t *testing.T) {
 		t.Fatalf("stderr should mention 'blocking': %s", errBuf.String())
 	}
 }
+
+// TestRunComputational_AcceptsAbsolutePath verifies that run-computational
+// accepts an absolute file path in addition to a bare sensor id.
+//
+// /heal-sensor's retry-original.go passes absolute paths to the runner.
+// sensor.Resolve detects path-shaped inputs via looksLikePath and routes
+// through resolvePath instead of the bare-id regex, so this test guards
+// against regressions to id-only resolution.
+func TestRunComputational_AcceptsAbsolutePath(t *testing.T) {
+	schemasDir := testfixtures.RepoSchemasDir(t)
+	root := t.TempDir()
+	id := writeSensor(t, root, "abs-path-sensor", func(s map[string]interface{}) {
+		s["execution"].(map[string]interface{})["command"] = "true"
+	})
+	absPath := filepath.Join(root, ".harness", "sensors", id+".json")
+
+	if !filepath.IsAbs(absPath) {
+		t.Fatalf("expected absolute path, got %q", absPath)
+	}
+
+	var out, errBuf bytes.Buffer
+	// Pass the absolute path. The runner re-derives projectRoot from the
+	// sensor's canonical location (.../<projectRoot>/.harness/sensors/<id>.json),
+	// so projectRoot passed in here is overridden inside run().
+	code := run([]string{"--schemas-dir", schemasDir, absPath}, "" /* projectRoot overridden */, &out, &errBuf)
+
+	// Sentinel for a regression to id-only resolution: exit 2 + "does not match".
+	if code == 2 && strings.Contains(errBuf.String(), "does not match") {
+		t.Fatalf("runner rejected absolute path via id regex: stderr=%s", errBuf.String())
+	}
+	if code != 0 {
+		t.Fatalf("expected exit 0 for absolute path, got %d stderr=%s", code, errBuf.String())
+	}
+}

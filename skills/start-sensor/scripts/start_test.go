@@ -17,28 +17,19 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	watcher "github.com/iurykrieger/harness-framework/lib/watcher"
 )
 
 func TestMain(m *testing.M) {
-	// Install a stub watcher binary (copy of /usr/bin/true) in the test
-	// binary's directory so tests that reach the spawn-watcher step do not
-	// fail with "no such file". The watcher exits immediately (pass), which
-	// is fine because watcher behaviour is covered by start_watcher tests.
-	exe, err := os.Executable()
-	if err != nil {
-		panic("TestMain: os.Executable failed: " + err.Error())
+	os.Setenv("CLAUDE_PLUGIN_ROOT", os.TempDir()) // any non-empty path; SpawnFn is overridden
+	prev := watcher.SpawnFn
+	watcher.SpawnFn = func(opts watcher.SpawnOpts) (int, error) {
+		return 99999, nil
 	}
-	watcher := filepath.Join(filepath.Dir(exe), "watcher")
-	if _, serr := os.Stat(watcher); os.IsNotExist(serr) {
-		stub, rerr := os.ReadFile("/usr/bin/true")
-		if rerr != nil {
-			panic("TestMain: read /usr/bin/true: " + rerr.Error())
-		}
-		if werr := os.WriteFile(watcher, stub, 0o755); werr != nil {
-			panic("TestMain: write watcher stub: " + werr.Error())
-		}
-	}
-	os.Exit(m.Run())
+	code := m.Run()
+	watcher.SpawnFn = prev
+	os.Unsetenv("CLAUDE_PLUGIN_ROOT")
+	os.Exit(code)
 }
 
 // testResult builds a minimal registry.Result usable by bootstrapFor in
@@ -669,5 +660,91 @@ func TestStart_AllowsStartWhenOnlyNonBlockingEntryExists(t *testing.T) {
 		if e.Blocking {
 			_ = syscall.Kill(-e.PGID, syscall.SIGKILL)
 		}
+	}
+}
+
+func TestStart_RejectsEmptyPluginRoot(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureSensor(t, root, "blocking-sensor", map[string]interface{}{
+		"version":     "1.0.0",
+		"name":        "Blocking fixture",
+		"description": "blocking",
+		"determinism": "high",
+		"kind":        "observation",
+		"type":        "computational",
+		"regulation":  "behaviour",
+		"output":      "single",
+		"cost":        map[string]interface{}{"compute": "small"},
+		"execution": map[string]interface{}{
+			"command":             "sleep 5",
+			"blocking":            true,
+			"graceful_timeout_ms": 1000,
+			"exit_code_map": []interface{}{
+				map[string]interface{}{"code": 0, "verdict": "pass", "severity": "info"},
+			},
+		},
+	})
+
+	t.Setenv("CLAUDE_PLUGIN_ROOT", "")
+
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"blocking-sensor"})
+	if exit == 0 {
+		t.Fatalf("expected non-zero exit when CLAUDE_PLUGIN_ROOT empty, sig = %#v", sig)
+	}
+	if sig["verdict"] != "error" {
+		t.Errorf("verdict = %v, want error", sig["verdict"])
+	}
+	meta, _ := sig["metadata"].(map[string]interface{})
+	if meta["cause"] != "plugin_root_missing" {
+		t.Errorf("metadata.cause = %v, want plugin_root_missing", meta["cause"])
+	}
+}
+
+func TestStart_DelegatesToWatcherSpawn(t *testing.T) {
+	root := t.TempDir()
+	body := blockingFixtureBody()
+	// Override execution to use a long-running command so we can intercept
+	// the watcher.SpawnFn before it actually exits.
+	body["execution"] = map[string]interface{}{
+		"command":             "sleep 5",
+		"blocking":            true,
+		"graceful_timeout_ms": 1000,
+		"output_parsing": map[string]interface{}{
+			"patterns": []interface{}{
+				map[string]interface{}{"regex": "^TICK$", "verdict": "pass", "severity": "info"},
+			},
+		},
+		"exit_code_map": []interface{}{
+			map[string]interface{}{"exit_code": "*", "verdict": "pass", "severity": "info"},
+		},
+	}
+	writeFixtureSensor(t, root, "blocking-sensor", body)
+
+	var spawnedOpts watcher.SpawnOpts
+	prevSpawnFn := watcher.SpawnFn
+	watcher.SpawnFn = func(opts watcher.SpawnOpts) (int, error) {
+		spawnedOpts = opts
+		return 12345, nil
+	}
+	t.Cleanup(func() {
+		watcher.SpawnFn = prevSpawnFn
+	})
+
+	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"blocking-sensor"})
+	defer cleanupStartedTarget(t, root, "blocking-sensor")
+	if exit != 0 {
+		t.Fatalf("runStart exit = %d, signal = %#v", exit, sig)
+	}
+	if sig["verdict"] != "pass" {
+		t.Fatalf("verdict = %v, want pass", sig["verdict"])
+	}
+	if spawnedOpts.SensorID != "blocking-sensor" {
+		t.Errorf("spawnedOpts.SensorID = %q, want blocking-sensor", spawnedOpts.SensorID)
+	}
+	if spawnedOpts.RunID == "" {
+		t.Error("spawnedOpts.RunID is empty")
+	}
+	if spawnedOpts.ProjectRoot != root {
+		t.Errorf("spawnedOpts.ProjectRoot = %q, want %q", spawnedOpts.ProjectRoot, root)
 	}
 }

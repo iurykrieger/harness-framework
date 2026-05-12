@@ -13,6 +13,7 @@ type DetachConfig struct {
 	Command string            // raw shell, executed via sh -c
 	Env     map[string]string // additional env vars
 	LogFile string            // stdout+stderr redirected here (append, mode 0644)
+	Dir     string            // working directory for the subprocess (empty = inherit)
 }
 
 // DetachResult holds the spawned subprocess identity. The caller is
@@ -41,6 +42,9 @@ func SpawnDetached(cfg DetachConfig) (DetachResult, error) {
 	defer logF.Close() // child inherits the open fd; we close our own.
 
 	cmd := exec.Command("sh", "-c", cfg.Command)
+	if cfg.Dir != "" {
+		cmd.Dir = cfg.Dir
+	}
 	cmd.Stdout = logF
 	cmd.Stderr = logF
 	cmd.SysProcAttr = &syscall.SysProcAttr{
