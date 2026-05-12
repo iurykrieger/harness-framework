@@ -16,7 +16,9 @@ Bring a blocking sensor down and produce its aggregate.
 ## Procedure
 
 ```bash
-go run -tags=stop_sensor ./skills/stop-sensor/scripts <sensor.id> [--reap-dead-holders]
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=stop_sensor \
+  ./skills/stop-sensor/scripts <sensor.id> [--reap-dead-holders]
 ```
 
 ## When to use --reap-dead-holders

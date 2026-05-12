@@ -18,7 +18,9 @@ The argument must be the sensor's id (lowercase letters/digits/dashes, starting 
 ## Procedure
 
 ```bash
-go run -tags=start_sensor ./skills/start-sensor/scripts <sensor.id>
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=start_sensor \
+  ./skills/start-sensor/scripts <sensor.id>
 ```
 
 The script does everything: schema validation, dep graph resolution, prepare lifecycle, fork+exec the command detached, watcher spawn, registry write, started Signal emission. Pass its stdout through to the caller.
@@ -33,7 +35,8 @@ Stdout is JSONL. Multiple Signals can be emitted in order:
 4. **Exactly one** terminal Signal whose `metadata.kind` is one of:
    - `started` — subprocess and watcher are up; the sensor is now alive in the registry. `verdict=pass`. `metadata.next_cursor=0`. Carries `metadata.lifecycle.prepare`, `metadata.dep_chain`, `metadata.rebind_warnings` (omitted when empty).
    - `rejected` — already running (singleton check failed). `verdict=error`. `metadata.existing_pid` carries the live entry's pid.
-   - `failed` — anything else preventing a `started` signal. `verdict=error`. `metadata.cause` discriminates: `dep_cascade`, `prepare_failed`, `spawn_failed`, `watcher_spawn_failed`, `registry_write_failed`, `schema_invalid`, `resolve_failed`, `preflight_failed`, `not_blocking`, `bootstrap_failed`. The `dep_cascade` cause carries `failed_dep_id`/`failed_dep_run_id`/`failed_dep_verdict`/`failed_dep_severity` from the failed dep's signal.
+   - `failed` — anything else preventing a `started` signal. `verdict=error`. `metadata.cause` discriminates: `dep_cascade`, `prepare_failed`, `spawn_failed`, `watcher_spawn_failed`, `registry_write_failed`, `schema_invalid`, `resolve_failed`, `preflight_failed`, `not_blocking`, `bootstrap_failed`, `plugin_root_missing`. The `dep_cascade` cause carries `failed_dep_id`/`failed_dep_run_id`/`failed_dep_verdict`/`failed_dep_severity` from the failed dep's signal.
+     - `plugin_root_missing` — `CLAUDE_PLUGIN_ROOT` was empty when `/start-sensor` ran.
 
 ## Lifecycle integration
 
@@ -55,3 +58,4 @@ Use `/start-sensor` directly when:
 - A sensor may have at most one live entry at a time. Use `/list-sensors` to see what's running.
 - Logs are append-only; nothing is rotated. Long-running sessions should periodically `/stop-sensor`/`/start-sensor` to keep `.runtime/sensors/<id>/` from growing unboundedly.
 - `cost.latency.timeout_ms` is forbidden by the schema for blocking sensors. Use `execution.graceful_timeout_ms` (min 100ms, default 5000) to control the SIGTERM→SIGKILL window in `/stop-sensor`.
+- The watcher subprocess is compiled on demand via `go run`. First `/start-sensor` after a fresh checkout incurs ~300ms–1s for the compile; subsequent calls hit Go's build cache and cost ~50–200ms.

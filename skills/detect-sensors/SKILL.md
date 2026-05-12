@@ -242,7 +242,9 @@ Conventions that work:
 Write the draft JSON to a temp file, then run the validator-and-writer:
 
 ```bash
-go run ./skills/detect-sensors/scripts \
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" \
+  ./skills/detect-sensors/scripts \
   --out=<project>/sensors \
   /tmp/<draft-name>.json
 ```
@@ -279,7 +281,9 @@ Run order:
 
 ```bash
 # 1) Production happy-path: run the sensor against the real codebase.
-go run -tags=run_computational ./skills/run-sensor/scripts @sensors/<id>.json | tail -n 1 \
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_computational \
+  ./skills/run-sensor/scripts @sensors/<id>.json | tail -n 1 \
   | jq -c '{verdict, severity, counts: .metadata.counts, individuals: (.evidence|length)}'
 
 # 2) Replay each fail/warn fixture to prove the unhappy paths.
@@ -287,7 +291,9 @@ TMP=$(mktemp /tmp/replay-XXXX.json)
 jq --arg cmd "cat sensors/fixtures/<group>/<case>.txt" \
    '.execution.command = $cmd | .id = "replay-" + .id' \
    sensors/<id>.json > "$TMP"
-go run -tags=run_computational ./skills/run-sensor/scripts "$TMP" | tail -n 1 \
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_computational \
+  ./skills/run-sensor/scripts "$TMP" | tail -n 1 \
   | jq -c '{verdict, severity, individuals: (.evidence|length)}'
 rm "$TMP"
 ```
