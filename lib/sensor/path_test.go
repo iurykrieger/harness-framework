@@ -8,45 +8,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 )
 
-func TestResolveSensorPath(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "sensors", "x.json")
-	_ = os.MkdirAll(filepath.Dir(target), 0o755)
-	_ = os.WriteFile(target, []byte("{}"), 0o644)
-
-	cases := []struct {
-		name string
-		arg  string
-		want string
-	}{
-		{"@-prefix relative", "@sensors/x.json", target},
-		{"relative", "sensors/x.json", target},
-		{"absolute", target, target},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := sensor.ResolveSensorPath(tc.arg, dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tc.want {
-				t.Fatalf("got %s, want %s", got, tc.want)
-			}
-		})
-	}
-	t.Run("not found", func(t *testing.T) {
-		if _, err := sensor.ResolveSensorPath("@sensors/missing.json", dir); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("empty after trimming", func(t *testing.T) {
-		if _, err := sensor.ResolveSensorPath("@", dir); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-}
-
-func TestResolveByID(t *testing.T) {
+func TestResolve_ByID(t *testing.T) {
 	dir := t.TempDir()
 	sensorsDir := filepath.Join(dir, "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
@@ -57,7 +19,7 @@ func TestResolveByID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := sensor.ResolveByID("watch-logs", dir)
+	got, err := sensor.Resolve("watch-logs", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,21 +28,59 @@ func TestResolveByID(t *testing.T) {
 	}
 }
 
-func TestResolveByID_RejectsEmpty(t *testing.T) {
-	if _, err := sensor.ResolveByID("", "/tmp"); err == nil {
-		t.Fatal("expected error on empty id")
-	}
-}
-
-func TestResolveByID_RejectsBadShape(t *testing.T) {
-	if _, err := sensor.ResolveByID("../etc/passwd", "/tmp"); err == nil {
-		t.Fatal("expected error on path-like id")
-	}
-}
-
-func TestResolveByID_MissingFile(t *testing.T) {
+func TestResolve_ByPath(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := sensor.ResolveByID("nope", dir); err == nil {
+	sensorsDir := filepath.Join(dir, "sensors")
+	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(sensorsDir, "x.json")
+	if err := os.WriteFile(target, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		arg  string
+	}{
+		{"@-prefix relative", "@sensors/x.json"},
+		{"relative", "sensors/x.json"},
+		{"absolute", target},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := sensor.Resolve(tc.arg, dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != target {
+				t.Fatalf("got %s, want %s", got, target)
+			}
+		})
+	}
+}
+
+func TestResolve_Empty(t *testing.T) {
+	if _, err := sensor.Resolve("", "/tmp"); err == nil {
+		t.Fatal("expected error on empty")
+	}
+}
+
+func TestResolve_BadID(t *testing.T) {
+	if _, err := sensor.Resolve("Bad_ID", "/tmp"); err == nil {
+		t.Fatal("expected error on uppercase id")
+	}
+}
+
+func TestResolve_MissingFile(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := sensor.Resolve("nope", dir); err == nil {
 		t.Fatal("expected error when file missing")
+	}
+}
+
+func TestResolve_PathTraversal(t *testing.T) {
+	if _, err := sensor.Resolve("../etc/passwd", "/tmp"); err == nil {
+		t.Fatal("expected error on path-like id")
 	}
 }
