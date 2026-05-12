@@ -1,8 +1,9 @@
-// Package schema compiles the harness sensor and signal JSON Schemas
-// (Draft 2020-12) and exposes a Validator that checks instances against
-// either schema. Schemas are loaded from a directory containing
-// sensor.json and signal.json; cross-file $ref is resolved at compile
-// time so callers do not need to know about the underlying compiler.
+// Package schema compiles the harness sensor, signal, and stack JSON
+// Schemas (Draft 2020-12) and exposes a Validator that checks instances
+// against any of them. Schemas are loaded from a directory containing
+// sensor.json, signal.json, and stack.json; cross-file $ref is resolved
+// at compile time so callers do not need to know about the underlying
+// compiler.
 package schema
 
 import (
