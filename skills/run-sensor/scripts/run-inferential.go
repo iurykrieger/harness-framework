@@ -222,8 +222,9 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	if missing := sensor.CheckRequiredEnv(sensorJSON); len(missing) > 0 {
-		sig := sensor.BuildMissingEnvSignal(envelope, output, missing)
+	// Unified preflight: gate on requires[kind ∈ {env, tool, context}] so the
+	// inferential runner matches the computational path's coverage.
+	if sig, failed := orchestrator.PreflightGate(requested, envelope, output); failed {
 		if err := v.Validate(schema.TargetSignal, sig); err != nil {
 			schema.PrintValidationOrPlain(err, stderr)
 			return 1
