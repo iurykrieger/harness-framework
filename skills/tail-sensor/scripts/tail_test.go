@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/iurykrieger/harness-framework/lib/cli"
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
 func resultFor(t *testing.T, projectRoot string, exists bool) registry.Result {
@@ -26,6 +28,19 @@ func resultFor(t *testing.T, projectRoot string, exists bool) registry.Result {
 		Source:      registry.SourceWalkUp,
 		Exists:      exists,
 		State:       state,
+	}
+}
+
+// bootstrapFor wraps a registry.Result in a cli.BootstrapResult suitable for
+// passing to runTail in tests. The schema validator is loaded so that signal
+// validation runs; errors are written to errBuf.
+func bootstrapFor(t *testing.T, res registry.Result, errBuf *bytes.Buffer) cli.BootstrapResult {
+	t.Helper()
+	v, _ := schema.LoadValidator("", errBuf)
+	return cli.BootstrapResult{
+		Res:       res,
+		Validator: v,
+		Diagnose:  registry.DiagnoseMetadata(res),
 	}
 }
 
@@ -49,15 +64,14 @@ func setupRunning(t *testing.T, root, id string, signalsLines []string) {
 	_ = filepath.Join // keep import
 }
 
-// runTailBuf is a test helper that calls runTailWithWriter and returns a
-// combined buffer (streamed lines + final signal) plus the exit code.
+// runTailBuf is a test helper that calls runTail with a fresh
+// cli.BootstrapResult derived from res. It returns the combined buffer
+// (streamed lines + final signal emitted inside runTail) plus the exit code.
 func runTailBuf(t *testing.T, res registry.Result, args []string) (int, *bytes.Buffer) {
 	t.Helper()
-	var buf bytes.Buffer
-	exit, sig := runTailWithWriter(res, args, &buf, os.Stderr)
-	if err := json.NewEncoder(&buf).Encode(sig); err != nil {
-		t.Fatalf("encode final signal: %v", err)
-	}
+	var buf, errBuf bytes.Buffer
+	b := bootstrapFor(t, res, &errBuf)
+	exit := runTail(b, args, &buf, &errBuf)
 	return exit, &buf
 }
 
