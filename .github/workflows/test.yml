@@ -45,6 +45,24 @@ jobs:
       - name: Test inferential runner
         run: go test -race -count=1 -tags=run_inferential ./skills/...
 
+      - name: Vet (write_sensor build tag)
+        run: go vet -tags=write_sensor ./...
+
+      - name: Test write-sensor
+        run: go test -race -count=1 -tags=write_sensor ./skills/detect-sensors/scripts/...
+
+      - name: Vet (write_stack build tag)
+        run: go vet -tags=write_stack ./...
+
+      - name: Test write-stack
+        run: go test -race -count=1 -tags=write_stack ./skills/detect-sensors/scripts/...
+
+      - name: Vet (replay_fixture build tag)
+        run: go vet -tags=replay_fixture ./...
+
+      - name: Test replay-fixture
+        run: go test -race -count=1 -tags=replay_fixture ./skills/detect-sensors/scripts/...
+
       - name: Build computational runner
         run: go build -tags=run_computational -o /dev/null ./skills/run-sensor/scripts
 
