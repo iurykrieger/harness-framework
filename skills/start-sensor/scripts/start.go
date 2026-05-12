@@ -130,6 +130,17 @@ func runStart(b cli.BootstrapResult, args []string) (int, map[string]interface{}
 
 	target := pre.Order[len(pre.Order)-1]
 
+	// Phase 0: requires[] gate — mirrors RunOne's Phase 0 so /start-sensor
+	// refuses to spawn when env/tool/context preconditions are unmet. The
+	// failure carries the missing names in metadata so /heal-sensor can
+	// act on them (e.g. copy .env.example, install missing tool).
+	if gate := orchestrator.RunRequiresGate(target); gate.Failed() {
+		detachAll()
+		return 1, signal.ValidateOrEmergency(v, startSignal(id, sensorJSON, "failed", "preflight_failed",
+			requiresGateRationale(gate),
+			requiresGateAux(gate), b.Diagnose), id, os.Stderr)
+	}
+
 	// Run target's prepare[] fail-fast.
 	prepResults, prepFailed := orchestrator.RunPreparePhase(context.Background(), target, projectRoot, readTimeoutMS(target.JSON))
 	if prepFailed {
@@ -394,6 +405,73 @@ func readTimeoutMS(s map[string]interface{}) int {
 		return int(v)
 	}
 	return 0
+}
+
+// requiresGateAux projects a failed Gate into the aux metadata slot of the
+// terminal /start-sensor Signal. The shape parallels what /run-sensor emits
+// via sensor.BuildRequiresGateSignal but is flattened into metadata for the
+// kind=failed envelope: separate lists per kind (missing_envs / _tools /
+// _contexts) plus a heal_hint shaped after the FIRST failure so the heal
+// classifier can route immediately.
+func requiresGateAux(gate libsensor.Gate) map[string]interface{} {
+	aux := map[string]interface{}{}
+	var envs, tools, contexts []interface{}
+	for _, f := range gate.Failures {
+		switch f.Kind {
+		case "env":
+			envs = append(envs, f.Identifier)
+		case "tool":
+			tools = append(tools, f.Identifier)
+		case "context":
+			contexts = append(contexts, f.Identifier)
+		}
+	}
+	if len(envs) > 0 {
+		aux["missing_envs"] = envs
+	}
+	if len(tools) > 0 {
+		aux["missing_tools"] = tools
+	}
+	if len(contexts) > 0 {
+		aux["missing_contexts"] = contexts
+	}
+	if len(gate.Failures) > 0 {
+		first := gate.Failures[0]
+		aux["heal_hint"] = first.HealShape + ":" + first.Identifier
+	}
+	return aux
+}
+
+// requiresGateRationale builds a short human-readable summary for the
+// rationale field of the terminal signal. The detailed per-failure
+// rationales live in metadata, but this string is what surfaces in
+// transcripts and CLI output.
+func requiresGateRationale(gate libsensor.Gate) string {
+	parts := make([]string, 0, 3)
+	var envs, tools, contexts int
+	for _, f := range gate.Failures {
+		switch f.Kind {
+		case "env":
+			envs++
+		case "tool":
+			tools++
+		case "context":
+			contexts++
+		}
+	}
+	if envs > 0 {
+		parts = append(parts, fmt.Sprintf("%d env var(s)", envs))
+	}
+	if tools > 0 {
+		parts = append(parts, fmt.Sprintf("%d tool(s)", tools))
+	}
+	if contexts > 0 {
+		parts = append(parts, fmt.Sprintf("%d context path(s)", contexts))
+	}
+	if len(parts) == 0 {
+		return "required precondition(s) unmet"
+	}
+	return "required preconditions unmet: " + strings.Join(parts, ", ")
 }
 
 // startSignal builds the terminal signal of /start-sensor. The verdict is
