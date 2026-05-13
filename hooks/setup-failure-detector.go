@@ -2,32 +2,13 @@
 
 // hooks/setup-failure-detector.go
 //
-// Claude Code Stop hook that classifies the most-recent
-// /run-sensor, /start-sensor, or /stop-sensor aggregate Signal in the
-// conversation transcript. On setup-shaped failure, emits
-// additionalContext on stdout instructing the LLM to invoke
-// /heal-sensor. On no-match (passing run, sensor-design failure,
-// already-healed-this-turn), prints nothing.
-//
-// Input (JSON on stdin):
-//
-//	{ "transcript_path": "/abs/path/to/transcript.jsonl", ... }
-//
-// Output (JSON on stdout, when triggering):
-//
-//	{
-//	  "hookSpecificOutput": {
-//	    "hookEventName": "Stop",
-//	    "additionalContext": "..."
-//	  }
-//	}
-//
-// Exit codes: 0 always (per Claude Code hook protocol; signal nothing
-// to do via empty stdout) except 2 for usage errors.
+// Claude Code Stop hook that classifies the most-recent /run-sensor,
+// /start-sensor, or /stop-sensor aggregate Signal in the conversation
+// transcript. On setup-shaped failure, emits additionalContext on
+// stdout instructing the LLM to invoke /heal-sensor.
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -38,6 +19,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/heal"
 	"github.com/iurykrieger/harness-framework/lib/heal/rules"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
+	"github.com/iurykrieger/harness-framework/lib/transcript"
 )
 
 func main() {
@@ -49,16 +31,10 @@ type hookInput struct {
 	Cwd            string `json:"cwd"`
 }
 
-// sensorCommands lists the slash commands whose failures the hook
-// classifies for self-healing. /tail-sensor and /list-sensors are
-// excluded — they are read-only and never produce setup-shaped
-// failures.
-var sensorCommands = []string{"/run-sensor", "/start-sensor", "/stop-sensor"}
-
-type transcriptEntry struct {
-	Type    string          `json:"type"`
-	Content json.RawMessage `json:"content"`
-	Input   json.RawMessage `json:"input"`
+var sensorCommands = map[string]bool{
+	"/run-sensor":   true,
+	"/start-sensor": true,
+	"/stop-sensor":  true,
 }
 
 func run(stdin io.Reader, stdout, stderr io.Writer) int {
@@ -77,17 +53,22 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	scan, ok := scanTranscript(in.TranscriptPath, in.Cwd)
+	entries, err := transcript.Scan(in.TranscriptPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 0
+	}
+
+	scan, ok := findFailingInvocation(entries, in.Cwd)
 	if !ok {
 		return 0
 	}
-	if scan.AlreadyHealed {
+	if anyHealAfter(entries[scan.index+1:]) {
 		return 0
 	}
 
 	failed, err := loadFailedSensorView(scan.SensorPath)
 	if err != nil {
-		// Sensor file gone or unreadable — no-op rather than crash.
 		return 0
 	}
 
@@ -99,122 +80,70 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// scanResult bundles everything scanTranscript discovers about the most
-// recent sensor-command failure that warrants heal: the Signal to
-// classify on, the sensor file path to target, whether heal already
-// ran, the slash command that produced the failure, and (for cascades)
-// which originally-requested sensor caused the chain.
 type scanResult struct {
 	Signal              heal.Signal
-	SensorPath          string // path of the sensor whose Signal we classify
-	AlreadyHealed       bool
-	Command             string // "/run-sensor", "/start-sensor", or "/stop-sensor"
-	OriginalRequestedID string // requested sensor's id, when ≠ SensorPath's owner (cascade)
+	SensorPath          string
+	Command             string
+	OriginalRequestedID string
+	index               int // index into entries[] of the tool_result that produced this Signal
 }
 
-// scanTranscript walks the JSONL transcript backward, finds the most
-// recent /run-sensor, /start-sensor, or /stop-sensor aggregate Signal,
-// and reports whether a subsequent /heal-sensor invocation already
-// happened in this turn. cwd is the user's working directory (passed
-// by Claude Code in the hook input) and is used to resolve bare
-// sensor ids to their on-disk paths.
-func scanTranscript(path, cwd string) (scanResult, bool) {
-	f, err := os.Open(path)
-	if err != nil {
-		return scanResult{}, false
-	}
-	defer f.Close()
-
-	var entries []transcriptEntry
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 4*1024*1024)
-	for scanner.Scan() {
-		var e transcriptEntry
-		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil {
-			continue
-		}
-		entries = append(entries, e)
-	}
-
-	// Walk backward: find the most recent tool_result whose last JSONL
-	// line parses as an aggregate Signal AND whose preceding context
-	// shows a /run-sensor invocation.
+// findFailingInvocation walks entries backward and returns the most
+// recent sensor-command failure that warrants heal classification.
+func findFailingInvocation(entries []transcript.Entry, cwd string) (scanResult, bool) {
 	for i := len(entries) - 1; i >= 0; i-- {
-		e := entries[i]
-		if e.Type != "tool_result" {
-			continue
-		}
-		content := contentText(e.Content)
-		if content == "" {
-			continue
-		}
-		lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-		var sigMap map[string]interface{}
-		if err := json.Unmarshal([]byte(lines[len(lines)-1]), &sigMap); err != nil {
-			continue
-		}
-		md, _ := sigMap["metadata"].(map[string]interface{})
-		if md == nil {
-			continue
-		}
-		kind, _ := md["kind"].(string)
-
-		// Find the matching sensor-command invocation in earlier
-		// entries. We always need it to derive sensors_dir
-		// (filepath.Dir) and to label which command failed.
-		invocation := findSensorInvocation(entries[:i], cwd)
-		if invocation.SensorPath == "" {
-			continue
-		}
-		originalSensorPath := invocation.SensorPath
-
-		var sensorPath, originalRequestedID string
-		switch kind {
-		case "aggregate", "start_failed", "failed":
-			// /run-sensor produces metadata.kind=aggregate for runtime
-			// aggregates and metadata.kind=failed for preflight failures.
-			// /start-sensor uses metadata.kind=failed for every terminal
-			// envelope except "started" (and "rejected" for the singleton
-			// case). "start_failed" is preserved for backward compatibility
-			// with any pre-existing recorded transcripts. All are candidates
-			// for setup-shape healing.
-			sensorPath = originalSensorPath
-		case "cascade":
-			// Walk backward through earlier JSONL lines in the same
-			// tool_result content to find the dep's real aggregate
-			// matching metadata.failed_dep_id.
-			failedDepID, _ := md["failed_dep_id"].(string)
-			if failedDepID == "" {
+		for _, tr := range entries[i].ToolResults() {
+			lines := strings.Split(strings.TrimRight(tr.ResultText(), "\n"), "\n")
+			if len(lines) == 0 {
 				continue
 			}
-			depMap, found := findDepAggregate(lines, failedDepID)
-			if !found {
+			var sigMap map[string]interface{}
+			if err := json.Unmarshal([]byte(lines[len(lines)-1]), &sigMap); err != nil {
 				continue
 			}
-			originalRequestedID, _ = sigMap["sensor_id"].(string)
-			sigMap = depMap
-			sensorPath = filepath.Join(filepath.Dir(originalSensorPath), failedDepID+".json")
-		default:
-			continue
-		}
+			md, _ := sigMap["metadata"].(map[string]interface{})
+			if md == nil {
+				continue
+			}
+			kind, _ := md["kind"].(string)
 
-		return scanResult{
-			Signal:              signalFromMap(sigMap),
-			SensorPath:          sensorPath,
-			AlreadyHealed:       anyHealAfter(entries[i+1:]),
-			Command:             invocation.Command,
-			OriginalRequestedID: originalRequestedID,
-		}, true
+			inv := findSensorInvocation(entries[:i], cwd)
+			if inv.SensorPath == "" {
+				continue
+			}
+
+			var sensorPath, originalRequestedID string
+			switch kind {
+			case "aggregate", "start_failed", "failed":
+				sensorPath = inv.SensorPath
+			case "cascade":
+				failedDepID, _ := md["failed_dep_id"].(string)
+				if failedDepID == "" {
+					continue
+				}
+				depMap, found := findDepAggregate(lines, failedDepID)
+				if !found {
+					continue
+				}
+				originalRequestedID, _ = sigMap["sensor_id"].(string)
+				sigMap = depMap
+				sensorPath = filepath.Join(filepath.Dir(inv.SensorPath), failedDepID+".json")
+			default:
+				continue
+			}
+			return scanResult{
+				Signal:              signalFromMap(sigMap),
+				SensorPath:          sensorPath,
+				Command:             inv.Command,
+				OriginalRequestedID: originalRequestedID,
+				index:               i,
+			}, true
+		}
 	}
 	return scanResult{}, false
 }
 
-// findDepAggregate walks the JSONL stream of one tool_result content
-// (excluding the final cascade line) backward, returning the first
-// aggregate Signal whose sensor_id matches failedDepID and whose verdict
-// is error or fail.
 func findDepAggregate(lines []string, failedDepID string) (map[string]interface{}, bool) {
-	// Skip the last line (the cascade itself) and walk backward.
 	for i := len(lines) - 2; i >= 0; i-- {
 		var m map[string]interface{}
 		if err := json.Unmarshal([]byte(lines[i]), &m); err != nil {
@@ -237,43 +166,56 @@ func findDepAggregate(lines []string, failedDepID string) (map[string]interface{
 	return nil, false
 }
 
-
-// sensorInvocation captures the most recent slash-command invocation
-// that may have produced a failing aggregate Signal: which command
-// (/run-sensor, /start-sensor, /stop-sensor) and the resolved sensor
-// file path.
 type sensorInvocation struct {
 	Command    string
 	SensorPath string
 }
 
-// findSensorInvocation walks the transcript backward and returns the
-// most recent /run-sensor, /start-sensor, or /stop-sensor invocation,
-// resolving its first non-flag argument to a sensor file path.
-//
-// Path-style arguments (containing "/" or "\", or starting with "@",
-// or ending in ".json") are returned with the leading "@" stripped.
-// Bare-id arguments (e.g., "watch-logs") are resolved against
-// <cwd>/.harness/sensors/<id>.json.
-func findSensorInvocation(entries []transcriptEntry, cwd string) sensorInvocation {
+// findSensorInvocation walks entries backward for the most recent
+// sensor slash command (preferred) or, as a fallback, a Bash tool_use
+// whose command literally contains "/run-sensor " etc. The slash-command
+// path handles user-typed invocations; the fallback covers agent-driven
+// invocations from sub-agents.
+func findSensorInvocation(entries []transcript.Entry, cwd string) sensorInvocation {
 	for i := len(entries) - 1; i >= 0; i-- {
-		content := contentText(entries[i].Content)
-		for _, cmd := range sensorCommands {
-			if !strings.Contains(content, cmd+" ") {
+		// Preferred: slash-command form in a user entry.
+		name, args, ok := transcript.ParseSlashCommand(entries[i].Text())
+		if ok && sensorCommands[name] {
+			arg := firstPositionalArg(strings.Fields(args))
+			if arg == "" {
 				continue
 			}
-			parts := strings.Fields(content)
-			for j, p := range parts {
-				if p != cmd {
+			return sensorInvocation{
+				Command:    name,
+				SensorPath: resolveSensorTarget(arg, cwd),
+			}
+		}
+		// Fallback: literal "/run-sensor X" string inside any block.
+		for cmd := range sensorCommands {
+			needle := cmd + " "
+			text := entries[i].Text()
+			if idx := strings.Index(text, needle); idx >= 0 {
+				rest := strings.Fields(text[idx+len(needle):])
+				arg := firstPositionalArg(rest)
+				if arg == "" {
 					continue
 				}
-				arg := firstPositionalArg(parts[j+1:])
-				if arg == "" {
-					break
+				return sensorInvocation{Command: cmd, SensorPath: resolveSensorTarget(arg, cwd)}
+			}
+			// Also look inside assistant tool_use Bash commands.
+			for _, tu := range entries[i].ToolUses() {
+				if tu.Name != "Bash" {
+					continue
 				}
-				return sensorInvocation{
-					Command:    cmd,
-					SensorPath: resolveSensorTarget(arg, cwd),
+				var ti struct{ Command string }
+				_ = json.Unmarshal(tu.Input, &ti)
+				if strings.Contains(ti.Command, needle) {
+					idx := strings.Index(ti.Command, needle)
+					rest := strings.Fields(ti.Command[idx+len(needle):])
+					arg := firstPositionalArg(rest)
+					if arg != "" {
+						return sensorInvocation{Command: cmd, SensorPath: resolveSensorTarget(arg, cwd)}
+					}
 				}
 			}
 		}
@@ -281,8 +223,6 @@ func findSensorInvocation(entries []transcriptEntry, cwd string) sensorInvocatio
 	return sensorInvocation{}
 }
 
-// firstPositionalArg returns the first element of parts that doesn't
-// start with "-" (i.e., is not a flag). Returns "" if none.
 func firstPositionalArg(parts []string) string {
 	for _, p := range parts {
 		if strings.HasPrefix(p, "-") {
@@ -293,54 +233,27 @@ func firstPositionalArg(parts []string) string {
 	return ""
 }
 
-// resolveSensorTarget converts a slash-command argument into an on-disk
-// path. Path-shaped inputs (containing separators, ending in .json, or
-// "@"-prefixed) pass through; bare ids are resolved to
-// <cwd>/.harness/sensors/<id>.json.
 func resolveSensorTarget(arg, cwd string) string {
 	arg = strings.TrimPrefix(arg, "@")
 	if strings.ContainsAny(arg, "/\\") || strings.HasSuffix(arg, ".json") {
 		return arg
 	}
 	if cwd == "" {
-		return arg // best-effort fallback; loadFailedSensorView will fail and the hook silently no-ops.
+		return arg
 	}
 	return filepath.Join(cwd, ".harness", "sensors", arg+".json")
 }
 
-func anyHealAfter(entries []transcriptEntry) bool {
+func anyHealAfter(entries []transcript.Entry) bool {
 	for _, e := range entries {
-		if strings.Contains(contentText(e.Content), "/heal-sensor") {
+		if name, _, ok := transcript.ParseSlashCommand(e.Text()); ok && name == "/heal-sensor" {
+			return true
+		}
+		if strings.Contains(e.Text(), "/heal-sensor") {
 			return true
 		}
 	}
 	return false
-}
-
-// contentText extracts text from a Claude Code transcript entry's
-// content field, which may serialize as either a plain JSON string or
-// an array of {type, text, ...} content blocks.
-func contentText(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil && s != "" {
-		return s
-	}
-	var arr []map[string]interface{}
-	if err := json.Unmarshal(raw, &arr); err == nil {
-		var b strings.Builder
-		for _, item := range arr {
-			if item["type"] == "text" {
-				if t, ok := item["text"].(string); ok {
-					b.WriteString(t)
-				}
-			}
-		}
-		return b.String()
-	}
-	return ""
 }
 
 func signalFromMap(m map[string]interface{}) heal.Signal {
