@@ -129,7 +129,7 @@ Notes:
 
 **Args.**
 - positional 1: target relative path under `.harness/sensors/fixtures/`. The script rejects (`verdict=error`, `metadata.kind=fixture_path_escape`) any path that, after cleaning, does not have `<projectRoot>/.harness/sensors/fixtures/` as a prefix.
-- positional 2 (optional) `--from-file <src>`: read payload from a file; otherwise read from stdin.
+- `--from-file <src>` (optional flag): read payload from a file at `<src>`. When omitted, the script reads the payload from stdin.
 
 **Behavior.**
 - `os.MkdirAll` on parent directories with mode `0o755`.
@@ -146,12 +146,19 @@ Notes:
 - positional 1: path to the draft JSON file.
 
 **Behavior.**
-1. Read draft JSON. Decode into `lib/sensor.Sensor` (or equivalent strongly-typed shape).
-2. Schema-validate via `lib/schema.Validate(draft, "<schemas-dir>/sensor.json")`. On failure, emit `verdict=error, metadata.kind=schema_invalid` with the JSON-pointer of the violation in `evidence`. Exit 2.
-3. For each `verification.golden_cases[].fixture`, resolve relative to `<projectRoot>` and check the file exists. On any missing fixture, emit `verdict=error, metadata.kind=missing_fixture` listing the offending path. Exit 2.
-4. Compute the target path `<projectRoot>/.harness/sensors/<id>.json`. If it already exists, emit `verdict=error, metadata.kind=sensor_already_exists` referencing the existing path. **No `--force` flag.** Exit 2.
-5. Atomic write (tmp+rename) via `lib/sensor.ValidateAndPersist`.
-6. Emit `verdict=pass, metadata.{path, id, kind, type}`. Exit 0.
+
+The CLI wrapper performs only the checks that `lib/sensor.ValidateAndPersist` does not already cover; persistence and schema validation are delegated to the lib. The division is:
+
+| Step | Responsible | Notes |
+|---|---|---|
+| 1. Read draft JSON | wrapper | decode into the lib's typed shape |
+| 2. Pre-check: each `verification.golden_cases[].fixture` exists on disk | wrapper | resolved relative to `<projectRoot>`; failure → `verdict=error, kind=missing_fixture`; exit 2 |
+| 3. Pre-check: `<id>.json` does not exist at target | wrapper | failure → `verdict=error, kind=sensor_already_exists`; exit 2; **no `--force` flag** |
+| 4. Schema validation | `lib/sensor.ValidateAndPersist` | failure → wrapper emits `verdict=error, kind=schema_invalid` with the JSON-pointer of the violation in `evidence`; exit 2 |
+| 5. Atomic write (tmp+rename) | `lib/sensor.ValidateAndPersist` | wrapper does not duplicate this |
+| 6. Emit final Signal | wrapper | `verdict=pass, metadata.{path, id, kind, type}` on success; exit 0 |
+
+The pre-checks live in the wrapper because they are policy decisions specific to `/create-sensor` (the fixture-existence requirement and id-collision policy could legitimately differ between `/create-sensor` and `/detect-sensors`); schema validation and atomic persistence live in `lib/sensor` because they are universal contracts.
 
 **Why duplicated from `/detect-sensors`'s `write-sensor.go`.** Rule 4: "Scripts are skill-local; duplicate before coupling." The two scripts will inevitably diverge as each skill's idempotency policy and validation strictness evolve. The shared logic (schema validation, atomic write) lives in `lib/sensor`; the CLI wrappers are skill-local and short.
 
@@ -232,14 +239,14 @@ Each `golden_case` needs a fixture file. For each verdict the sensor declares (a
 1. If the user's requirement or clarification answers explicitly contained a sample output for that verdict, use that verbatim as the fixture content.
 2. Otherwise, LLM synthesizes a plausible fixture based on the requirement and the command. For example, for `curl -w '%{http_code}'`, the pass fixture is `200\n`; the fail fixture is `404\n` (or whatever failure mode the requirement implies).
 
-Fixture files land at `<projectRoot>/.harness/sensors/fixtures/<sensor-id>/<case-name>.txt`. The skill invokes `write-fixture.go` once per fixture:
+Fixture files land at `<projectRoot>/.harness/sensors/fixtures/<sensor-id>/<case-name>.txt`. The skill invokes `write-fixture.go` once per fixture, piping the payload through stdin (POSIX-safe, no process substitution):
 
 ```bash
-HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+printf '%s' "<payload>" | \
+  HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=write_fixture \
   ./skills/create-sensor/scripts \
-  ".harness/sensors/fixtures/<id>/pass.txt" \
-  --from-file <(printf '%s' "<payload>")
+  ".harness/sensors/fixtures/<id>/pass.txt"
 ```
 
 The draft's `verification.golden_cases[].fixture` paths reference these files.
@@ -294,10 +301,10 @@ Phase 4 draft v0:
   exit_code_map: [{0,pass,info},{*,fail,high}]
 
 Phase 5 clarification:
-  Q1: "USER_ID — id existente ou criado pelo teste?"
-  A1: "Existente. id=12345 num env de dev."
-  Q2: "Auth necessária?"
-  A2: "Sim, AUTH_TOKEN é um JWT."
+  Q1: "USER_ID — existing id, or one the test creates?"
+  A1: "Existing. id=12345 in the dev env."
+  Q2: "Does the check need auth?"
+  A2: "Yes, AUTH_TOKEN holds a JWT."
   (no more gaps)
 
 Phase 6 fixtures (synthesized):
