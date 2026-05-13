@@ -120,8 +120,9 @@ In:
 
 - `lib/orchestrator/preflight.go`: move the `FirstFailedDep` cascade check above
   the `if blocking` branch. ~10 lines moved.
-- `lib/orchestrator/preflight_test.go` (or a sibling `cascade_blocking_test.go`):
-  one new test asserting DoD items 1–4.
+- `lib/orchestrator/live_deps_test.go`: one new test asserting DoD items 1–4,
+  co-located with `TestRunWithDepsImpl_BlockingDep_CascadeAggregateLast` so all
+  cascade-with-blocking coverage lives in one file.
 
 Out:
 
@@ -154,11 +155,11 @@ Out:
   before `AttachLiveDep` so the placeholder is only written when the dep
   legitimately attached.
 - **Test fixture lives alongside `live_deps_test.go` helpers.** Reuse
-  `writeBlockingDep`, `writeNonBlockingFailingDep`, and add a new
-  `writeBlockingDepDependingOn(failingID)` helper if the existing
-  `writeBlockingDep` cannot express the chain. The new test uses the same
-  `RunWithDepsRoot` entry point as the existing `BlockingDep_CascadeAggregateLast`
-  test to keep coverage symmetric.
+  `writeBlockingDep` and `writeNonBlockingFailingDep`, and add a new
+  `writeBlockingDepWithDep(t, root, id, depID)` helper that emits a blocking
+  sensor declaring `requires[{kind:"sensor", id:depID}]`. The new test uses the
+  same `RunWithDepsRoot` entry point as the existing
+  `BlockingDep_CascadeAggregateLast` test to keep coverage symmetric.
 
 ## Verification plan
 
