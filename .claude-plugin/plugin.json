@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"${CLAUDE_PLUGIN_ROOT}\" && go run ./hooks"
+            "command": "GOWORK=off go run -C \"${CLAUDE_PLUGIN_ROOT}\" ./hooks"
           }
         ]
       }
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"${CLAUDE_PLUGIN_ROOT}\" && go run -tags=error_autofiler ./hooks"
+            "command": "GOWORK=off go run -C \"${CLAUDE_PLUGIN_ROOT}\" -tags=error_autofiler ./hooks"
           }
         ]
       }
