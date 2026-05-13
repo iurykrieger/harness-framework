@@ -858,3 +858,160 @@ func TestRunWithDepsImpl_BlockingDep_CascadeAggregateLast(t *testing.T) {
 		t.Errorf("last metadata.kind = %v, want cascade", md)
 	}
 }
+
+// writeBlockingDepWithDep writes a blocking sensor (output=stream, blocking=true)
+// that declares requires[{kind:"sensor", id:depID}]. Used to express chain
+// topologies like failing-setup → blocking-intermediate → consumer, where the
+// blocking intermediate has its own failing dep upstream.
+func writeBlockingDepWithDep(t *testing.T, root, id, depID string) {
+	t.Helper()
+	dir := filepath.Join(root, ".harness", "sensors")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{
+"id": "` + id + `",
+"version": "1.0.0",
+"name": "Blocking tick with dep",
+"description": "blocking tick depending on ` + depID + `",
+"determinism": "high",
+"kind": "setup",
+"type": "computational",
+"output": "stream",
+"regulation": "behaviour",
+"phase": "continuous",
+"triggers": [{"on": "manual"}],
+"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"requires": [{"kind":"sensor","id":"` + depID + `"}],
+"cost": {
+  "class": "cheap",
+  "compute": {"cpu":"low","memory_mb":32},
+  "latency": {"p50_ms":10,"p95_ms":50}
+},
+"execution": {
+  "command": "while true; do echo TICK; sleep 0.1; done",
+  "blocking": true,
+  "graceful_timeout_ms": 200,
+  "exit_code_map": [{"exit_code":"*","verdict":"pass","severity":"info"}],
+  "output_parsing": {"patterns":[{"regex":"^TICK$","verdict":"pass","severity":"info"}]}
+}
+}`)
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeConsumerWithDep writes an assertion sensor that declares exactly one
+// requires[kind=sensor] entry pointing at depID. Differs from writeConsumer
+// (which hard-codes "blocking-tick" as the dep) by parameterising the dep id.
+func writeConsumerWithDep(t *testing.T, root, id, depID string) {
+	t.Helper()
+	dir := filepath.Join(root, ".harness", "sensors")
+	body := []byte(`{
+"id": "` + id + `",
+"version": "1.0.0",
+"name": "Consumer with one dep",
+"description": "for cascade-through-blocking-dep test",
+"determinism": "high",
+"kind": "assertion",
+"type": "computational",
+"output": "single",
+"regulation": "behaviour",
+"phase": "on-demand",
+"triggers": [{"on": "manual"}],
+"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"requires": [{"kind":"sensor","id":"` + depID + `"}],
+"cost": {
+  "class": "cheap",
+  "compute": {"cpu":"low","memory_mb":32},
+  "latency": {"p50_ms":10,"p95_ms":50,"timeout_ms":2000}
+},
+"execution": {
+  "command": "echo never-runs",
+  "exit_code_map": [{"exit_code":0,"verdict":"pass","severity":"info"}]
+}
+}`)
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRunWithDepsImpl_CascadeThroughBlockingDep verifies that when a failing
+// non-blocking dep sits UPSTREAM of a blocking dep in the requires chain
+// (failing-setup → blocking-intermediate → consumer), the cascade Signal
+// propagates through the blocking dep. The blocking intermediate must NOT
+// be attached as a subprocess; the consumer must NOT run its command.
+//
+// This is the regression test for issue #20.
+func TestRunWithDepsImpl_CascadeThroughBlockingDep(t *testing.T) {
+	schemasDir := schematest.RepoSchemasDir(t)
+	root := t.TempDir()
+	writeNonBlockingFailingDep(t, root, "fails")
+	writeBlockingDepWithDep(t, root, "blocking-intermediate", "fails")
+	writeConsumerWithDep(t, root, "consumer", "blocking-intermediate")
+
+	var out, errBuf bytes.Buffer
+	exit := orchestrator.RunWithDepsRoot(context.Background(), "consumer", root, schemasDir, &out, &errBuf)
+	if exit != 1 {
+		t.Fatalf("exit=%d stderr=%s; want 1 (cascade)", exit, errBuf.String())
+	}
+
+	// The JSONL stream must contain exactly three Signals, in this order:
+	//   1. failing-setup aggregate (verdict=fail)
+	//   2. blocking-intermediate cascade (kind=cascade, failed_dep_id=fails)
+	//   3. consumer cascade           (kind=cascade, failed_dep_id=blocking-intermediate)
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), out.String())
+	}
+
+	type want struct {
+		sensorID    string
+		verdict     string
+		kind        string
+		failedDepID string // empty when not applicable
+	}
+	wants := []want{
+		{sensorID: "fails", verdict: "fail", kind: "aggregate"},
+		{sensorID: "blocking-intermediate", verdict: "error", kind: "cascade", failedDepID: "fails"},
+		{sensorID: "consumer", verdict: "error", kind: "cascade", failedDepID: "blocking-intermediate"},
+	}
+
+	for i, w := range wants {
+		var sig map[string]interface{}
+		if err := json.Unmarshal([]byte(lines[i]), &sig); err != nil {
+			t.Fatalf("line %d unmarshal: %v\nline=%q", i, err, lines[i])
+		}
+		if got := sig["sensor_id"]; got != w.sensorID {
+			t.Errorf("line %d sensor_id = %v, want %s", i, got, w.sensorID)
+		}
+		if got := sig["verdict"]; got != w.verdict {
+			t.Errorf("line %d verdict = %v, want %s", i, got, w.verdict)
+		}
+		md, _ := sig["metadata"].(map[string]interface{})
+		if got := md["kind"]; got != w.kind {
+			t.Errorf("line %d metadata.kind = %v, want %s", i, got, w.kind)
+		}
+		if w.failedDepID != "" {
+			if got := md["failed_dep_id"]; got != w.failedDepID {
+				t.Errorf("line %d metadata.failed_dep_id = %v, want %s", i, got, w.failedDepID)
+			}
+			// Cascade Signals must have zero cost — the dep never ran.
+			cost, _ := sig["cost_actual"].(map[string]interface{})
+			if got := cost["latency_ms"]; got != float64(0) {
+				t.Errorf("line %d cost_actual.latency_ms = %v, want 0", i, got)
+			}
+		}
+	}
+
+	// The blocking intermediate must NOT have spawned a subprocess: the
+	// registry must contain no entry for it.
+	r := registry.NewRoot(root)
+	rs, err := registry.Load(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.FindEntry("blocking-intermediate") != nil {
+		t.Error("blocking-intermediate must not have been attached; found a registry entry")
+	}
+}
