@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -149,13 +150,14 @@ func TestAttachLiveDep_PassesHolderPID(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	const customHolderPID = 99999
-	live, err := orchestrator.AttachLiveDep(
+	result, err := orchestrator.AttachLiveDep(
 		context.Background(), dep, root, "holder-id", customHolderPID,
 		v, &stdout, &stderr,
 	)
 	if err != nil {
 		t.Fatalf("AttachLiveDep: %v", err)
 	}
+	live := result.Live
 	if live.ID != "blocking-tick" {
 		t.Errorf("live.ID: got %q, want blocking-tick", live.ID)
 	}
@@ -200,13 +202,14 @@ func TestAttachLiveDep_ReapsStaleSameHolder(t *testing.T) {
 
 	// First attach with a "real" pid (current process) so the dep is alive.
 	livePID := os.Getpid()
-	firstLive, err := orchestrator.AttachLiveDep(
+	firstResult, err := orchestrator.AttachLiveDep(
 		context.Background(), dep, root, "holder-id", livePID,
 		v, &stdout, &stderr,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+	firstLive := firstResult.Live
 
 	// Manually inject a dead-pid holder of the same id, simulating a
 	// previous run that crashed.
@@ -258,13 +261,14 @@ func TestRebindDepHolderPID_Match(t *testing.T) {
 
 	const oldPID = 12345
 	const newPID = 67890
-	live, err := orchestrator.AttachLiveDep(
+	result, err := orchestrator.AttachLiveDep(
 		context.Background(), dep, root, "holder-id", oldPID,
 		v, &out, &errBuf,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+	live := result.Live
 
 	if err := orchestrator.RebindDepHolderPID("blocking-tick", root, "holder-id", oldPID, newPID); err != nil {
 		t.Fatal(err)
@@ -291,13 +295,14 @@ func TestRebindDepHolderPID_NoMatch_IsNoop(t *testing.T) {
 	var out, errBuf bytes.Buffer
 
 	const realPID = 12345
-	live, err := orchestrator.AttachLiveDep(
+	result, err := orchestrator.AttachLiveDep(
 		context.Background(), dep, root, "holder-id", realPID,
 		v, &out, &errBuf,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+	live := result.Live
 
 	// Rebind with non-matching oldPID — should silently succeed.
 	if err := orchestrator.RebindDepHolderPID("blocking-tick", root, "holder-id", 99999, 777); err != nil {
@@ -368,13 +373,14 @@ func TestAttachDetachLiveDep_CoexistsWithNonBlockingEntry(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	live, err := orchestrator.AttachLiveDep(
+	result, err := orchestrator.AttachLiveDep(
 		context.Background(), dep, root, "holder-id", os.Getpid(),
 		v, &stdout, &stderr,
 	)
 	if err != nil {
 		t.Fatalf("AttachLiveDep: %v", err)
 	}
+	live := result.Live
 	if live.RunID == "" {
 		t.Fatal("AttachLiveDep returned empty RunID")
 	}
@@ -509,5 +515,194 @@ func TestRunWithDepsRoot_AbsolutePathCascadeSensorID(t *testing.T) {
 				t.Errorf("sensor_id %q contains path separators (should be logical id only); raw=%s", id, line)
 			}
 		}
+	}
+}
+
+// writeBlockingDepWithRequiresEnv writes a blocking-tick-shaped fixture
+// that additionally declares a requires[kind=env] precondition. Used by
+// the spawn-fresh gate test: the env name is chosen so process env can
+// never satisfy it.
+func writeBlockingDepWithRequiresEnv(t *testing.T, root, id, envName string) {
+	t.Helper()
+	body := map[string]interface{}{
+		"version":     "1.0.0",
+		"name":        "Blocking with env requirement",
+		"description": "blocking fixture requiring " + envName,
+		"determinism": "high",
+		"kind":        "setup",
+		"type":        "computational",
+		"output":      "stream",
+		"regulation":  "behaviour",
+		"phase":       "continuous",
+		"triggers":    []interface{}{map[string]interface{}{"on": "manual"}},
+		"verification": map[string]interface{}{
+			"golden_cases": []interface{}{
+				map[string]interface{}{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"},
+			},
+		},
+		"cost": map[string]interface{}{
+			"class":   "cheap",
+			"compute": map[string]interface{}{"cpu": "low", "memory_mb": 32},
+			"latency": map[string]interface{}{"p50_ms": 10, "p95_ms": 50},
+		},
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env", "name": envName},
+		},
+		"execution": map[string]interface{}{
+			"command":             "while true; do echo TICK; sleep 0.1; done",
+			"blocking":            true,
+			"graceful_timeout_ms": 200,
+			"exit_code_map": []interface{}{
+				map[string]interface{}{"exit_code": "*", "verdict": "pass", "severity": "info"},
+			},
+			"output_parsing": map[string]interface{}{
+				"patterns": []interface{}{
+					map[string]interface{}{"regex": "^TICK$", "verdict": "pass", "severity": "info"},
+				},
+			},
+		},
+	}
+	writeSensorJSON(t, root, id, body)
+}
+
+// writeBlockingDepWithRequiresTool writes a blocking-tick-shaped fixture
+// that declares a requires[kind=tool] precondition. Used by the re-attach
+// gate-bypass test: the tool name is chosen so PATH cannot resolve it,
+// which would fail PreflightGate if it ran — proving re-attach skipped it.
+func writeBlockingDepWithRequiresTool(t *testing.T, root, id, toolName string) {
+	t.Helper()
+	body := map[string]interface{}{
+		"version":     "1.0.0",
+		"name":        "Blocking with tool requirement",
+		"description": "blocking fixture requiring tool " + toolName,
+		"determinism": "high",
+		"kind":        "setup",
+		"type":        "computational",
+		"output":      "stream",
+		"regulation":  "behaviour",
+		"phase":       "continuous",
+		"triggers":    []interface{}{map[string]interface{}{"on": "manual"}},
+		"verification": map[string]interface{}{
+			"golden_cases": []interface{}{
+				map[string]interface{}{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"},
+			},
+		},
+		"cost": map[string]interface{}{
+			"class":   "cheap",
+			"compute": map[string]interface{}{"cpu": "low", "memory_mb": 32},
+			"latency": map[string]interface{}{"p50_ms": 10, "p95_ms": 50},
+		},
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "tool", "name": toolName},
+		},
+		"execution": map[string]interface{}{
+			"command":             "while true; do echo TICK; sleep 0.1; done",
+			"blocking":            true,
+			"graceful_timeout_ms": 200,
+			"exit_code_map": []interface{}{
+				map[string]interface{}{"exit_code": "*", "verdict": "pass", "severity": "info"},
+			},
+			"output_parsing": map[string]interface{}{
+				"patterns": []interface{}{
+					map[string]interface{}{"regex": "^TICK$", "verdict": "pass", "severity": "info"},
+				},
+			},
+		},
+	}
+	writeSensorJSON(t, root, id, body)
+}
+
+// TestAttachLiveDep_SpawnFreshGateFails_ReturnsGateSignalNoSpawn verifies
+// the core #36 fix: when the spawn-fresh branch hits a dep whose
+// requires[kind=env] is unsatisfied, AttachLiveDep must NOT spawn the
+// subprocess, NOT create a registry entry, and must return the canonical
+// preflight-failed signal so the caller can cascade it.
+func TestAttachLiveDep_SpawnFreshGateFails_ReturnsGateSignalNoSpawn(t *testing.T) {
+	const envName = "__HARNESS_ATTACH_NEVER_SET__"
+	root := t.TempDir()
+	writeBlockingDepWithRequiresEnv(t, root, "needs-env-blocking", envName)
+
+	dep := loadDepSensor(t, root, "needs-env-blocking")
+	v, _ := schema.LoadValidator(schematest.RepoSchemasDir(t), io.Discard)
+
+	var out, errBuf bytes.Buffer
+	result, err := orchestrator.AttachLiveDep(
+		context.Background(),
+		dep,
+		root,
+		"holder-x",
+		os.Getpid(),
+		v,
+		&out,
+		&errBuf,
+	)
+	if err != nil {
+		t.Fatalf("err: got %v, want nil (gate-fail is not a hard error)", err)
+	}
+	if result.GateSignal == nil {
+		t.Fatal("GateSignal: got nil, want non-nil (env is unset)")
+	}
+	if result.Live.ID != "" || result.Live.RunID != "" {
+		t.Errorf("Live: got %+v, want zero-value (no spawn happened)", result.Live)
+	}
+	md := result.GateSignal["metadata"].(map[string]interface{})
+	if md["kind"] != "failed" || md["cause"] != "preflight_failed" {
+		t.Errorf("GateSignal metadata: kind=%v, cause=%v; want failed/preflight_failed", md["kind"], md["cause"])
+	}
+
+	rs, _ := registry.Load(registry.NewRoot(root))
+	if rs.FindEntry("needs-env-blocking") != nil {
+		t.Error("registry has an entry for needs-env-blocking; expected none (no spawn)")
+	}
+}
+
+// TestAttachLiveDep_ReattachToLiveDep_DoesNotGate seeds a live blocking
+// entry for a dep whose requires[kind=tool] would fail PreflightGate, then
+// calls AttachLiveDep. Re-attach must NOT run the gate — the dep is
+// already alive with whatever env/PATH it had at original spawn; the
+// holder's environment can legitimately differ.
+func TestAttachLiveDep_ReattachToLiveDep_DoesNotGate(t *testing.T) {
+	root := t.TempDir()
+	writeBlockingDepWithRequiresTool(t, root, "live-dep-with-missing-tool", "absolutely-not-on-path-XYZ")
+
+	r := registry.NewRoot(root)
+	rs := registry.RunningSensors{Entries: []registry.RunningSensorEntry{{
+		SensorID:   "live-dep-with-missing-tool",
+		RunID:      fmt.Sprintf("%d-fake", os.Getpid()),
+		Blocking:   true,
+		PID:        os.Getpid(),
+		PGID:       os.Getpid(),
+		WatcherPID: 0,
+		StartedAt:  "2026-05-12T00:00:00Z",
+		Command:    "stub",
+		LogDir:     r.RelativeRunDir("live-dep-with-missing-tool", fmt.Sprintf("%d-fake", os.Getpid())),
+		HeldBy:     []registry.HeldByEntry{},
+	}}}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatal(err)
+	}
+
+	dep := loadDepSensor(t, root, "live-dep-with-missing-tool")
+	v, _ := schema.LoadValidator(schematest.RepoSchemasDir(t), io.Discard)
+
+	var out, errBuf bytes.Buffer
+	result, err := orchestrator.AttachLiveDep(
+		context.Background(),
+		dep,
+		root,
+		"holder-x",
+		os.Getpid(),
+		v,
+		&out,
+		&errBuf,
+	)
+	if err != nil {
+		t.Fatalf("err: got %v, want nil", err)
+	}
+	if result.GateSignal != nil {
+		t.Errorf("GateSignal: got non-nil %v, want nil (re-attach must not gate)", result.GateSignal)
+	}
+	if result.Live.ID != "live-dep-with-missing-tool" {
+		t.Errorf("Live.ID: got %q, want live-dep-with-missing-tool", result.Live.ID)
 	}
 }
