@@ -119,17 +119,17 @@ Serialize the draft to a temp file (use `mktemp` or write to `/tmp/create-sensor
 HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=write_sensor \
   ./skills/create-sensor/scripts \
-  --out ".harness/sensors" \
+  --out "${HARNESS_REGISTRY_ROOT}/.harness/sensors" \
   --schemas-dir "${CLAUDE_PLUGIN_ROOT}/schemas" \
   /tmp/create-sensor-draft-<id>.json
 ```
 
 Outcomes:
 
-- **`verdict=pass`** — sensor persisted. Emit a final summary to the user:
+- **`verdict=pass`** — sensor persisted. The script emits two stdout lines: the JSON Signal envelope first, then the absolute path of the written sensor file on a separate line. Parse the first line as JSON; the second line is a plain string (useful for confirming the write location). Emit a final summary to the user:
 
   > Created sensor `<id>` at `.harness/sensors/<id>.json`.
-  > Dependencies wired: `<dep-id-1>`, `<dep-id-2>` (all via `requires[kind=sensor]`).
+  > Dependencies wired: `<dep-id-1>` (via `requires[kind=sensor]`, blocking), `<dep-id-2>` (via `requires[kind=sensor]`, one-shot).
   > Fixtures: `pass.txt`, `fail-404.txt`.
   > Next: run `/run-sensor <id>` to exercise the sensor.
 
