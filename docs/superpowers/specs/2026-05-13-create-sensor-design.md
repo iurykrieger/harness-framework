@@ -11,9 +11,9 @@ Today the harness offers two ways for a sensor JSON to land on disk:
 1. **`/detect-sensors`** — a project-wide sweep. The LLM reads the entire repo, classifies the project's archetypes, and drafts one sensor per inferred capability (lint, build, unit-test, run-project, …). Optimized for **bootstrapping a harness from zero**.
 2. **Hand-authored** — the user opens `.harness/sensors/` in an editor and writes the JSON themselves. Optimized for **anyone who knows the schema by heart**, which is no one.
 
-There is no path between those two extremes. Once the harness exists, the most common authoring request is the opposite of a sweep: *"I have a single acceptance criterion / functional requirement / use case; produce one targeted sensor that validates it deterministically, and have it reuse the sensors I already have."* That request currently means re-reading `schemas/sensor.json`, picking the right discriminators, choosing `depends_on` vs `requires[kind=sensor]` based on the dep's `execution.blocking` flag, writing patterns from memory, hand-authoring fixtures that match the schema's `verification.golden_cases` minItems-1 constraint, and finally piping it through `write-sensor.go`. It is the kind of work the plugin exists to automate — and it is the only common sensor-authoring shape with no skill behind it.
+There is no path between those two extremes. Once the harness exists, the most common authoring request is the opposite of a sweep: *"I have a single acceptance criterion / functional requirement / use case; produce one targeted sensor that validates it deterministically, and have it reuse the sensors I already have."* That request currently means re-reading `schemas/sensor.json`, picking the right discriminators, encoding each sensor dep in `requires[kind=sensor]`, writing patterns from memory, hand-authoring fixtures that match the schema's `verification.golden_cases` minItems-1 constraint, and finally piping it through `write-sensor.go`. It is the kind of work the plugin exists to automate — and it is the only common sensor-authoring shape with no skill behind it.
 
-The corollary failure: when developers need a new sensor for a single requirement, they reach for `/detect-sensors` (which re-scans the whole project and emits sensors orthogonal to what they wanted) or they skip the harness entirely (adding an ad-hoc shell command somewhere). Both outcomes waste the composability that `depends_on` / `requires[kind=sensor]` were designed to enable.
+The corollary failure: when developers need a new sensor for a single requirement, they reach for `/detect-sensors` (which re-scans the whole project and emits sensors orthogonal to what they wanted) or they skip the harness entirely (adding an ad-hoc shell command somewhere). Both outcomes waste the composability that `requires[kind=sensor]` was designed to enable.
 
 This spec adds a skill, `/create-sensor`, that takes a single requirement-shaped prompt as input and produces one targeted sensor, biased toward **composing existing sensors** rather than re-deriving primitives.
 
@@ -55,9 +55,10 @@ This spec adds a skill, `/create-sensor`, that takes a single requirement-shaped
               │  Phase 4 — Draft v0                │  (LLM judgment)
               │  • command, exit_code_map          │
               │  • requires[kind=env]              │
-              │  • deps: dep.blocking=true →       │
-              │      requires[kind=sensor];        │
-              │      else depends_on               │
+              │  • deps: all sensor deps go in     │
+              │      requires[kind=sensor]; the    │
+              │      orchestrator inspects the     │
+              │      dep's blocking flag at runtime│
               └────────────────┬───────────────────┘
                                ▼
               ┌────────────────────────────────────┐
@@ -210,8 +211,7 @@ LLM produces a first-pass JSON in memory (not yet on disk) containing:
 - `triggers: [{ on: "manual" }]` by default.
 - `requires[kind=env]` — one entry per env var the command references.
 - Deps (the composability heart of the skill):
-  - For each existing sensor in the catalog the LLM judges relevant: if its `blocking` field is `true`, the dep becomes `requires[kind=sensor]` (orchestrator holds it live); otherwise `depends_on` (orchestrator runs it once and chains the verdict).
-  - The mapping `blocking → requires` vs `one-shot → depends_on` is deterministic and stated in the skill body so the LLM applies it consistently.
+  - For each existing sensor in the catalog the LLM judges relevant, add `{"kind": "sensor", "id": "<dep-id>"}` to `requires[]`. All sensor deps use this single mechanism — the orchestrator inspects the dep's own `execution.blocking` field at runtime to decide whether to hold the dep live or run it once and chain the verdict.
 - `execution.command` — the shell invocation.
 - `execution.exit_code_map` — `[{exit_code: 0, verdict: pass, severity: info}, {exit_code: "*", verdict: fail, severity: high}]` by default.
 - `execution.output_parsing.patterns` — only when `output=stream`. One pattern per actionable verdict.
