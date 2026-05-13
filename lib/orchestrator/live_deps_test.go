@@ -706,3 +706,37 @@ func TestAttachLiveDep_ReattachToLiveDep_DoesNotGate(t *testing.T) {
 		t.Errorf("Live.ID: got %q, want live-dep-with-missing-tool", result.Live.ID)
 	}
 }
+
+// TestRunWithDepsImpl_BlockingDep_AggregateLast verifies the documented
+// contract that the requested sensor's aggregate Signal is the LAST
+// JSONL line on stdout, even when a blocking dep's teardown emits its
+// own aggregate during detach (issue #19).
+func TestRunWithDepsImpl_BlockingDep_AggregateLast(t *testing.T) {
+	schemasDir := schematest.RepoSchemasDir(t)
+	root := t.TempDir()
+	writeBlockingDep(t, root, "blocking-tick")
+	writeConsumer(t, root, "uses-tick")
+
+	var out, errBuf bytes.Buffer
+	exit := orchestrator.RunWithDepsRoot(context.Background(), "uses-tick", root, schemasDir, &out, &errBuf)
+	if exit != 0 {
+		t.Fatalf("exit=%d stderr=%s", exit, errBuf.String())
+	}
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 JSONL Signals, got %d:\n%s", len(lines), out.String())
+	}
+
+	var last map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+		t.Fatalf("decode last line: %v\nline=%q", err, lines[len(lines)-1])
+	}
+	if last["sensor_id"] != "uses-tick" {
+		t.Errorf("last line sensor_id = %v, want uses-tick (entire stream:\n%s)", last["sensor_id"], out.String())
+	}
+	md, _ := last["metadata"].(map[string]interface{})
+	if md == nil || md["kind"] != "aggregate" {
+		t.Errorf("last line metadata.kind = %v, want aggregate", md)
+	}
+}

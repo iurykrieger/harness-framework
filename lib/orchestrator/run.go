@@ -102,13 +102,21 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 		}
 	}
 
-	defer func() {
+	// detachAll consumes the live-stack: iterate in reverse (LIFO)
+	// calling DetachLiveDep, then clear the slice so the deferred
+	// safety-net invocation below becomes a no-op. The deferred call
+	// remains as a backstop for panic / mid-function early-return
+	// paths where the explicit call did not happen.
+	detachAll := func() {
 		for i := len(pre.LiveStack) - 1; i >= 0; i-- {
 			DetachLiveDep(pre.LiveStack[i], projectRoot, rootID, v, stdout, stderr)
 		}
-	}()
+		pre.LiveStack = nil
+	}
+	defer detachAll()
 
 	if pre.ExitCode != 0 {
+		detachAll()
 		return pre.ExitCode
 	}
 	if pre.CascadeSig != nil {
@@ -116,12 +124,17 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 			schema.PrintValidationOrPlain(err, stderr)
 			return 1
 		}
+		detachAll()
 		_ = json.NewEncoder(stdout).Encode(pre.CascadeSig)
 		return 1
 	}
 
 	target := pre.Order[len(pre.Order)-1]
-	_, code = RunOneWithRoot(ctx, target, projectRoot, schemasDir, v, root, stdout, stderr)
+	sig, code := RunOneWithRootCapture(ctx, target, projectRoot, schemasDir, v, root, stdout, stderr)
+	detachAll()
+	if sig != nil {
+		_ = json.NewEncoder(stdout).Encode(sig)
+	}
 	return code
 }
 
