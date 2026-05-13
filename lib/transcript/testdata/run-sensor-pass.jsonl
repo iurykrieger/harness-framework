@@ -1,0 +1,3 @@
+{"type":"user","message":{"role":"user","content":"<command-message>run-sensor</command-message>\n<command-name>/run-sensor</command-name>\n<command-args>lint-gofmt</command-args>"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"u_002","name":"Bash","input":{"command":"GOWORK=off go run -C /plugin -tags=run_computational ./skills/run-sensor/scripts lint-gofmt"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u_002","content":"{\"sensor_id\":\"lint-gofmt\",\"verdict\":\"pass\",\"severity\":\"info\",\"metadata\":{\"kind\":\"aggregate\"}}"}]}}

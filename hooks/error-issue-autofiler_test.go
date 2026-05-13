@@ -89,41 +89,40 @@ func TestCommandTouchesFramework(t *testing.T) {
 		cmd  string
 		want bool
 	}{
-		// Positive: go run from skills
+		// Positive: canonical go run -C form from skills
+		{`go run -C "/plugin" -tags=run_computational ./skills/run-sensor/scripts foo`, true},
+		{`go run -C /plugin -tags=run_inferential ./skills/run-sensor/scripts foo --slot k=v`, true},
+		{`go run -C /plugin -tags=start_sensor ./skills/start-sensor/scripts run-api-local`, true},
+		{`go run -C /plugin -tags=stop_sensor ./skills/stop-sensor/scripts run-api-local`, true},
+		{`go run -C /plugin -tags=tail_sensor ./skills/tail-sensor/scripts run-api-local 0`, true},
+		{`go run -C /plugin -tags=list_sensors ./skills/list-sensors/scripts`, true},
+		{`go run -C /plugin -tags=heal_retry_original ./skills/heal-sensor/scripts foo`, true},
+		{`go run -C /plugin -tags=write_stack ./skills/detect-sensors/scripts`, true},
+
+		// Positive: -C absent (test invocations occasionally lack it)
 		{"go run ./skills/run-sensor/scripts foo", true},
 		{"go run -tags=run_computational ./skills/run-sensor/scripts foo", true},
-		{"go run -tags=run_inferential ./skills/run-sensor/scripts foo --slot k=v", true},
-		{"go run ./skills/start-sensor/scripts run-api-local", true},
-		{"go run ./skills/stop-sensor/scripts run-api-local", true},
-		{"go run ./skills/tail-sensor/scripts run-api-local 0", true},
-		{"go run ./skills/list-sensors/scripts", true},
-		{"go run ./skills/heal-sensor/scripts foo", true},
-		{"go run ./skills/detect-sensors/scripts", true},
 
-		// Positive: go run hooks
+		// Positive: canonical env-var-prefixed invocation contract
+		{`GOWORK=off go run -C "${CLAUDE_PLUGIN_ROOT}" ./hooks`, true},
+		{`GOWORK=off go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=error_autofiler ./hooks`, true},
+		{`HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_computational ./skills/run-sensor/scripts foo`, true},
+
+		// Positive: hooks
+		{`go run -C /plugin ./hooks`, true},
+		{`go run -C /plugin -tags=error_autofiler ./hooks`, true},
 		{"go run ./hooks", true},
-		{"go run -tags=error_autofiler ./hooks", true},
-
-		// Positive: installed binaries
-		{"harness-run-sensor foo", true},
-		{"harness-watcher", true},
-		{"/usr/local/bin/harness-stop-sensor run-api-local", true},
 
 		// Positive: go test/vet/build of framework packages
-		{"go test ./lib/...", true},
-		{"go vet -tags=run_computational ./skills/...", true},
-		{"go build ./hooks", true},
+		{`go test ./lib/...`, true},
+		{`go vet -C /plugin -tags=run_computational ./skills/...`, true},
+		{`go build -C /plugin ./hooks`, true},
 
 		// Negative
 		{"ls -la", false},
 		{"npm test", false},
 		{"git push", false},
 		{"go run ./cmd/other", false},
-		{"cd skills/run-sensor && echo hi", false},
-		// matcher is permissive on "go run" anywhere; we don't list
-		// `echo go run ./skills/...` as a negative case because the
-		// classifier needs real error output for false positives to
-		// matter.
 		{"", false},
 	}
 	for _, tc := range cases {
@@ -141,26 +140,19 @@ func TestExtractSkill(t *testing.T) {
 		cmd  string
 		want string
 	}{
-		// Scripts-path form
-		{"go run ./skills/run-sensor/scripts foo", "run-sensor"},
-		{"go run -tags=start_sensor ./skills/start-sensor/scripts foo", "start-sensor"},
-		{"go run ./skills/stop-sensor/scripts run-api-local", "stop-sensor"},
-		{"go run ./skills/tail-sensor/scripts run-api-local 0", "tail-sensor"},
-		{"go run ./skills/list-sensors/scripts", "list-sensors"},
-		{"go run ./skills/heal-sensor/scripts foo", "heal-sensor"},
-		{"go run ./skills/detect-sensors/scripts", "detect-sensors"},
-
-		// Installed-binary form
-		{"harness-run-sensor foo", "run-sensor"},
-		{"/usr/local/bin/harness-start-sensor foo", "start-sensor"},
-		{"harness-detect-sensors", "detect-sensors"},
+		{`go run -C /plugin -tags=run_computational ./skills/run-sensor/scripts foo`, "run-sensor"},
+		{`go run -C /plugin -tags=start_sensor ./skills/start-sensor/scripts foo`, "start-sensor"},
+		{`go run -C /plugin -tags=stop_sensor ./skills/stop-sensor/scripts run-api-local`, "stop-sensor"},
+		{`go run -C /plugin -tags=tail_sensor ./skills/tail-sensor/scripts run-api-local 0`, "tail-sensor"},
+		{`go run -C /plugin -tags=list_sensors ./skills/list-sensors/scripts`, "list-sensors"},
+		{`go run -C /plugin -tags=heal_retry_original ./skills/heal-sensor/scripts foo`, "heal-sensor"},
+		{`go run -C /plugin -tags=write_stack ./skills/detect-sensors/scripts`, "detect-sensors"},
 
 		// Fallbacks
-		{"go run ./hooks", "hook"},
-		{"go run -tags=error_autofiler ./hooks", "hook"},
-		{"go test ./lib/registry", "test"},
-		{"go vet ./skills/...", "test"},
-		{"harness-watcher", "watcher"},
+		{`go run -C /plugin ./hooks`, "hook"},
+		{`go run -C /plugin -tags=error_autofiler ./hooks`, "hook"},
+		{`go test ./lib/registry`, "test"},
+		{`go vet ./skills/...`, "test"},
 		{"completely unrelated", "unknown"},
 		{"", "unknown"},
 	}
@@ -975,28 +967,23 @@ func TestCommandTouchesFramework_GoRunWithC(t *testing.T) {
 		want bool
 	}{
 		{
-			name: "go -C run -tags scripts",
-			cmd:  `go -C /Users/x/.claude/plugins/harness-framework run -tags=start_sensor ./skills/start-sensor/scripts foo`,
+			name: "go run -C scripts",
+			cmd:  `go run -C /Users/x/.claude/plugins/harness-framework -tags=start_sensor ./skills/start-sensor/scripts foo`,
 			want: true,
 		},
 		{
-			name: "go -C run hooks",
-			cmd:  `go -C ${CLAUDE_PLUGIN_ROOT} run -tags=error_autofiler ./hooks`,
+			name: "go run -C hooks",
+			cmd:  `go run -C ${CLAUDE_PLUGIN_ROOT} -tags=error_autofiler ./hooks`,
 			want: true,
 		},
 		{
-			name: "go -C test",
-			cmd:  `go -C /plugin/root test -tags=start_sensor ./skills/start-sensor/...`,
+			name: "go test -C lib",
+			cmd:  `go test -C /plugin/root -tags=start_sensor ./skills/start-sensor/...`,
 			want: true,
 		},
 		{
-			name: "legacy go run still matches",
+			name: "go run without -C still matches",
 			cmd:  `go run -tags=run_computational ./skills/run-sensor/scripts foo`,
-			want: true,
-		},
-		{
-			name: "legacy harness-watcher still matches",
-			cmd:  `harness-watcher`,
 			want: true,
 		},
 		{
