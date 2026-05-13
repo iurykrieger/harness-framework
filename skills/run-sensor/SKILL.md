@@ -21,12 +21,13 @@ When a sensor declares `requires[kind=sensor]` entries (e.g. `[{"kind":"sensor",
 The JSONL stream on stdout for `/run-sensor X` (where X has deps D1, D2) looks like:
 
 ```
-{aggregate Signal of D1}
-{aggregate Signal of D2}
-{individual Signal 1 of X}    ← only when X has output: stream
+{aggregate Signal of D1}                      ← non-blocking dep aggregate
+{dep_started Signal of D2}                    ← only when D2 has execution.blocking: true
+{individual Signal 1 of X}                    ← only when X has output: stream
 {individual Signal 2 of X}
 ...
-{aggregate Signal of X}        ← LAST line, contract preserved
+{dep_detached or aggregate Signal of D2}      ← blocking dep teardown (LAST holder releases → stop-aggregate; otherwise dep_detached)
+{aggregate Signal of X}                       ← LAST line, contract preserved
 ```
 
 Callers using `tail -n 1 | jq` continue to see exactly the requested sensor's aggregate. Callers persisting all lines see deps' Signals interleaved.
