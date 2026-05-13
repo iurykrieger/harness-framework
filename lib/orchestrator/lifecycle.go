@@ -50,6 +50,10 @@ func RunOne(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *sc
 	return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, true)
 }
 
+// runOneImpl is the shared body of RunOne. When emitAggregate is false the
+// final aggregate Signal (and any preflight-failed Signal) is returned to
+// the caller but not written to stdout — the caller is responsible for
+// emitting it at the moment that preserves its ordering constraints.
 func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator, stdout, stderr io.Writer, emitAggregate bool) (map[string]interface{}, int) {
 	envelope, err := sensor.BuildEnvelope(s.JSON)
 	if err != nil {
@@ -228,6 +232,28 @@ func RunOneWithRoot(
 		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, true)
 	}
 	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, true)
+}
+
+// RunOneWithRootCapture is RunOneWithRoot with the final aggregate
+// emission to stdout suppressed. The aggregate Signal is built,
+// validated, and persisted (to signals.log when root != nil) exactly
+// as in RunOneWithRoot, but it is NOT written to stdout — the caller
+// is responsible for emitting it at the moment that satisfies its
+// ordering constraints. Individual Signals during stream-mode command
+// execution still flow to stdout in real time via the embedded
+// StreamConfig.Stdout, unchanged.
+//
+// Intended for callers that orchestrate blocking-dep teardown after
+// the command finishes and need the requested sensor's aggregate to
+// remain the LAST JSONL line on stdout (see runWithDepsImpl).
+func RunOneWithRootCapture(
+	ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator,
+	root *registry.Root, stdout, stderr io.Writer,
+) (map[string]interface{}, int) {
+	if root == nil {
+		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, false)
+	}
+	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, false)
 }
 
 // runOneWithPersistenceImpl mirrors runOneImpl but persists a <run-id>/
