@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"time"
@@ -47,7 +48,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Resolve sensorsDir via registry discovery if not explicit.
-	projectRoot := ""
 	if sensorsDir == "" {
 		cwd, _ := os.Getwd()
 		res, err := registry.Lookup(cwd)
@@ -56,11 +56,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			emitJSON(stdout, registry.DiscoveryErrorSignal(err, "catalog-sensors"))
 			return 0
 		}
-		projectRoot = res.ProjectRoot
-		sensorsDir = filepath.Join(projectRoot, ".harness", "sensors")
-	} else {
-		// When the dir is explicit, derive projectRoot from it for the "path" field.
-		projectRoot = deriveProjectRoot(sensorsDir)
+		sensorsDir = filepath.Join(res.ProjectRoot, ".harness", "sensors")
 	}
 
 	entries, err := os.ReadDir(sensorsDir)
@@ -94,30 +90,30 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	for _, name := range names {
-		path := filepath.Join(sensorsDir, name)
-		body, err := os.ReadFile(path)
+		fpath := filepath.Join(sensorsDir, name)
+		body, err := os.ReadFile(fpath)
 		if err != nil {
-			emitJSON(stdout, warnSignal(name, fmt.Sprintf("read %s: %v", path, err)))
+			emitJSON(stdout, warnSignal(name, fmt.Sprintf("read %s: %v", fpath, err)))
 			continue
 		}
 		var m map[string]interface{}
 		if err := json.Unmarshal(body, &m); err != nil {
-			emitJSON(stdout, warnSignal(name, fmt.Sprintf("parse %s: %v", path, err)))
+			emitJSON(stdout, warnSignal(name, fmt.Sprintf("parse %s: %v", fpath, err)))
 			continue
 		}
 		if validator != nil {
 			if err := validator.Validate(schema.TargetSensor, m); err != nil {
-				emitJSON(stdout, warnSignal(name, fmt.Sprintf("schema-invalid %s: %v", path, err)))
+				emitJSON(stdout, warnSignal(name, fmt.Sprintf("schema-invalid %s: %v", fpath, err)))
 				continue
 			}
 		}
-		emitJSON(stdout, digest(m, projectRoot))
+		emitJSON(stdout, digest(m))
 	}
 	return 0
 }
 
 // digest projects the fields /create-sensor consumes from the sensor JSON.
-func digest(m map[string]interface{}, projectRoot string) map[string]interface{} {
+func digest(m map[string]interface{}) map[string]interface{} {
 	id, _ := m["id"].(string)
 	blocking := false
 	if exec, ok := m["execution"].(map[string]interface{}); ok {
@@ -125,7 +121,7 @@ func digest(m map[string]interface{}, projectRoot string) map[string]interface{}
 			blocking = b
 		}
 	}
-	relPath := filepath.Join(".harness", "sensors", id+".json")
+	relPath := path.Join(".harness", "sensors", id+".json")
 	out := map[string]interface{}{
 		"id":          id,
 		"kind":        m["kind"],
@@ -160,18 +156,3 @@ func emitJSON(w io.Writer, m map[string]interface{}) {
 	fmt.Fprintln(w, string(body))
 }
 
-// deriveProjectRoot strips trailing .harness/sensors/ from an explicit
-// sensorsDir to recover the project root used in digest path fields.
-// When the input does not match that suffix, the function returns "".
-func deriveProjectRoot(sensorsDir string) string {
-	abs, err := filepath.Abs(sensorsDir)
-	if err != nil {
-		return ""
-	}
-	clean := filepath.Clean(abs)
-	parent := filepath.Dir(clean)
-	if filepath.Base(parent) == ".harness" {
-		return filepath.Dir(parent)
-	}
-	return ""
-}

@@ -84,6 +84,9 @@ func TestRun_OneSensor(t *testing.T) {
 	if !strings.Contains(lines[0], `"blocking":false`) {
 		t.Fatalf("line missing blocking=false: %q", lines[0])
 	}
+	if !strings.Contains(lines[0], `"path":".harness/sensors/alpha.json"`) {
+		t.Fatalf("line missing expected path: %q", lines[0])
+	}
 }
 
 func TestRun_MultipleSensors_SortedByID(t *testing.T) {
