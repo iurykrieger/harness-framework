@@ -47,7 +47,7 @@ If `<projectRoot>/.harness/stack.json` exists, read it as additional context. Th
 Decide the three discriminators:
 
 - **`kind`** — always `assertion`. If the user's requirement is shaped like an observation (*"watch the logs while X runs"*) or a setup (*"install dependencies before Y"*), explain the boundary and recommend `/detect-sensors` instead. Do not proceed.
-- **`type`** — `computational` by default. Escalate to `inferential` only when no deterministic shell command can verify the requirement (examples: *"the API response should be semantically equivalent to the spec example"*, *"the log line should not contain personally identifiable information"*). Inferential adds a top-level `calibration` block (`confidence_threshold: 0.8`, `calibration_set: ""`, `calibration_size: 0`, `calibration_date: <today>`) plus a `blind_spots[]` entry noting the calibration set is empty pending real samples.
+- **`type`** — `computational` by default. Escalate to `inferential` only when no deterministic shell command can verify the requirement (examples: *"the API response should be semantically equivalent to the spec example"*, *"the log line should not contain personally identifiable information"*). Inferential sensors require a populated `calibration` block (`confidence_threshold`, `calibration_set` path, `calibration_size ≥ 1`, `calibration_date`). If the user has not provided calibration data, **stop and ask for it** before drafting — do not fabricate placeholder values, since the schema rejects `calibration_size: 0` and empty `calibration_set` paths are not actionable. Also add a `blind_spots[]` entry naming the calibration set's source and freshness.
 - **`output`** — `stream` when the underlying tool naturally emits one independently-actionable observation per line (multi-record verification, batch tests). `single` otherwise.
 
 ### Phase 4: Draft v0
@@ -66,10 +66,7 @@ Produce a first-pass JSON in memory containing:
 - `triggers: [{"on": "manual"}]` by default.
 - `requires[kind=env]` — one entry per env var the command references (auth tokens, base URLs, target ids). Each entry must have a `name` and a `description`.
 - **Deps from the catalog** (the composability heart of this skill):
-  - For each sensor in the catalog the LLM judges relevant to the requirement:
-    - If its `blocking` field is `true`, encode it as `requires[kind=sensor]` (the orchestrator brings it up live and holds it during this sensor's run).
-    - Otherwise, encode it as `depends_on` (the orchestrator runs it to completion before this sensor and propagates failures).
-  - This mapping is mechanical: `blocking → requires[kind=sensor]`, `not-blocking → depends_on`. Always apply it consistently.
+  - For each sensor in the catalog the LLM judges relevant to the requirement, add an entry to `requires[]` of the form `{"kind": "sensor", "id": "<dep-id>"}`. All sensor deps use this single mechanism regardless of whether the dep is blocking; the orchestrator inspects the dep's own `execution.blocking` field at runtime to decide whether to hold it live or run it one-shot before this sensor's command.
 - `execution.command` — the shell invocation. Prefer commands available in most environments (`curl`, `jq`, `test`, `grep`).
 - `execution.exit_code_map` — `[{"exit_code": 0, "verdict": "pass", "severity": "info"}, {"exit_code": "*", "verdict": "fail", "severity": "high"}]` by default. Adjust when the requirement implies severity tiers.
 - `execution.output_parsing.patterns` — only when `output: "stream"`. One pattern per actionable verdict; anchor each regex to the kind of line the command emits.
@@ -132,7 +129,7 @@ Outcomes:
 - **`verdict=pass`** — sensor persisted. Emit a final summary to the user:
 
   > Created sensor `<id>` at `.harness/sensors/<id>.json`.
-  > Dependencies wired: `<dep-id-1>` (via `requires[kind=sensor]`, blocking), `<dep-id-2>` (via `depends_on`).
+  > Dependencies wired: `<dep-id-1>`, `<dep-id-2>` (all via `requires[kind=sensor]`).
   > Fixtures: `pass.txt`, `fail-404.txt`.
   > Next: run `/run-sensor <id>` to exercise the sensor.
 
@@ -141,6 +138,10 @@ Outcomes:
 - **`verdict=error, metadata.kind=sensor_already_exists`** — the user already has a sensor with this id. Ask the user whether to pick a new id (and re-run Phase 7) or to abort and resolve the collision manually. Do not delete the existing file.
 
 - **`verdict=error, metadata.kind=missing_fixture`** — one of the fixture files Phase 6 was supposed to write is absent. Re-run Phase 6 for the missing file before retrying.
+
+- **`verdict=error, metadata.kind=read_draft`** — the draft temp file was unreadable or contained invalid JSON. Re-serialize the in-memory draft to a fresh temp file and retry Phase 7. If the problem persists, surface the error message to the user.
+
+- **`verdict=error, metadata.kind=persist_failed`** — `ValidateAndPersist` failed for a non-schema reason (disk full, missing parent directory, permission denied on `.harness/sensors/`). Surface the rationale to the user verbatim — this is an environment issue the user must resolve; the skill cannot recover automatically.
 
 ## What this skill does NOT do
 
