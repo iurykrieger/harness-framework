@@ -47,6 +47,10 @@ const healHintExcerptCap = 120
 // Returns (signal, exitCode). exitCode is 0 unless schema validation
 // fails (1) or input is malformed (2).
 func RunOne(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator, stdout, stderr io.Writer) (map[string]interface{}, int) {
+	return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, true)
+}
+
+func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator, stdout, stderr io.Writer, emitAggregate bool) (map[string]interface{}, int) {
 	envelope, err := sensor.BuildEnvelope(s.JSON)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: envelope:", err)
@@ -60,7 +64,7 @@ func RunOne(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *sc
 	// verdict=error Signal carrying one evidence per failure and
 	// metadata.heal_hint shaped to drive /heal-sensor.
 	if sig, failed := PreflightGate(s, envelope, output); failed {
-		return emitPreflightSignal(sig, v, stdout, stderr)
+		return emitPreflightSignal(sig, v, stdout, stderr, emitAggregate)
 	}
 
 	timeoutMS := readTimeoutMS(s.JSON)
@@ -198,7 +202,9 @@ func RunOne(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *sc
 			return nil, 1
 		}
 	}
-	_ = json.NewEncoder(stdout).Encode(sig)
+	if emitAggregate {
+		_ = json.NewEncoder(stdout).Encode(sig)
+	}
 	return sig, 0
 }
 
@@ -219,19 +225,20 @@ func RunOneWithRoot(
 	root *registry.Root, stdout, stderr io.Writer,
 ) (map[string]interface{}, int) {
 	if root == nil {
-		return RunOne(ctx, s, projectRoot, schemasDir, v, stdout, stderr)
+		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, true)
 	}
-	return runOneWithPersistence(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr)
+	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, true)
 }
 
-// runOneWithPersistence mirrors RunOne but persists a <run-id>/ directory
-// and a running_sensors.json entry around the streaming subprocess. The
-// entry is best-effort removed on every exit path (mkdir failure,
-// registry insert failure, normal exit). Aggregate Signals are written
-// to both stdout and <run-id>/signals.log.
-func runOneWithPersistence(
+// runOneWithPersistenceImpl mirrors runOneImpl but persists a <run-id>/
+// directory and a running_sensors.json entry around the streaming
+// subprocess. The entry is best-effort removed on every exit path
+// (mkdir failure, registry insert failure, normal exit). Aggregate
+// Signals are written to <run-id>/signals.log unconditionally and to
+// stdout when emitAggregate is true.
+func runOneWithPersistenceImpl(
 	ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator,
-	root registry.Root, stdout, stderr io.Writer,
+	root registry.Root, stdout, stderr io.Writer, emitAggregate bool,
 ) (map[string]interface{}, int) {
 	envelope, err := sensor.BuildEnvelope(s.JSON)
 	if err != nil {
@@ -244,7 +251,7 @@ func runOneWithPersistence(
 	// Phase 0: requires[] gate (tool/context/env). Same fast-path as RunOne
 	// — no subprocess to manage, so no persistence required.
 	if sig, failed := PreflightGate(s, envelope, output); failed {
-		return emitPreflightSignal(sig, v, stdout, stderr)
+		return emitPreflightSignal(sig, v, stdout, stderr, emitAggregate)
 	}
 
 	timeoutMS := readTimeoutMS(s.JSON)
@@ -462,7 +469,9 @@ func runOneWithPersistence(
 			return nil, 1
 		}
 	}
-	_ = json.NewEncoder(stdout).Encode(sig)
+	if emitAggregate {
+		_ = json.NewEncoder(stdout).Encode(sig)
+	}
 
 	// Persist aggregate to signals.log only when a run dir was successfully
 	// created and the registry insert succeeded (runDir != ""). Both mkdir
@@ -689,13 +698,15 @@ func asNumber(v interface{}) float64 {
 // Signal produced by PreflightGate. Returns (signal, 0) on success or
 // (nil, 1) when schema validation rejects the signal — both paths leave
 // stderr informative.
-func emitPreflightSignal(sig map[string]interface{}, v *schema.Validator, stdout, stderr io.Writer) (map[string]interface{}, int) {
+func emitPreflightSignal(sig map[string]interface{}, v *schema.Validator, stdout, stderr io.Writer, emitAggregate bool) (map[string]interface{}, int) {
 	if v != nil {
 		if err := v.Validate(schema.TargetSignal, sig); err != nil {
 			schema.PrintValidationOrPlain(err, stderr)
 			return nil, 1
 		}
 	}
-	_ = json.NewEncoder(stdout).Encode(sig)
+	if emitAggregate {
+		_ = json.NewEncoder(stdout).Encode(sig)
+	}
 	return sig, 0
 }
