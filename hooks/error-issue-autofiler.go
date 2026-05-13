@@ -62,19 +62,17 @@ var frameworkCommandPatterns = buildFrameworkCommandPatterns()
 
 func buildFrameworkCommandPatterns() []*regexp.Regexp {
 	skills := strings.Join(sensorSkills, "|")
-	// optional `-C <path>` AFTER the verb (run/test/vet/build), per the
-	// canonical invocation contract in CLAUDE.md. Anchored at the start
-	// of the command so `cd … && go run ./hooks` (the legacy plugin.json
-	// form) does NOT match.
+	// `-C <path>` appears AFTER the verb (run/test/vet/build), per the
+	// canonical invocation contract in CLAUDE.md.
 	chDir := `(?:-C\s+\S+\s+)?`
 	tagsAny := `(?:-tags=\S+\s+)*`
 	return []*regexp.Regexp{
 		// go run [-C <path>] [-tags=…]* ./skills/<skill>-sensors?/scripts
-		regexp.MustCompile(`^go\s+run\s+` + chDir + tagsAny + `\./skills/(?:` + skills + `)-sensors?/scripts\b`),
+		regexp.MustCompile(`go\s+run\s+` + chDir + tagsAny + `\./skills/(?:` + skills + `)-sensors?/scripts\b`),
 		// go run [-C <path>] [-tags=…]* ./hooks
-		regexp.MustCompile(`^go\s+run\s+` + chDir + tagsAny + `\./hooks\b`),
+		regexp.MustCompile(`go\s+run\s+` + chDir + tagsAny + `\./hooks\b`),
 		// go (test|vet|build) [-C <path>] [-tags=…]* ./{skills,lib,hooks}
-		regexp.MustCompile(`^go\s+(?:test|vet|build)\s+` + chDir + tagsAny + `\./(?:skills|lib|hooks)\b`),
+		regexp.MustCompile(`go\s+(?:test|vet|build)\s+` + chDir + tagsAny + `\./(?:skills|lib|hooks)\b`),
 	}
 }
 

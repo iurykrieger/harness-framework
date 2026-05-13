@@ -103,6 +103,11 @@ func TestCommandTouchesFramework(t *testing.T) {
 		{"go run ./skills/run-sensor/scripts foo", true},
 		{"go run -tags=run_computational ./skills/run-sensor/scripts foo", true},
 
+		// Positive: canonical env-var-prefixed invocation contract
+		{`GOWORK=off go run -C "${CLAUDE_PLUGIN_ROOT}" ./hooks`, true},
+		{`GOWORK=off go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=error_autofiler ./hooks`, true},
+		{`HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_computational ./skills/run-sensor/scripts foo`, true},
+
 		// Positive: hooks
 		{`go run -C /plugin ./hooks`, true},
 		{`go run -C /plugin -tags=error_autofiler ./hooks`, true},
@@ -118,7 +123,6 @@ func TestCommandTouchesFramework(t *testing.T) {
 		{"npm test", false},
 		{"git push", false},
 		{"go run ./cmd/other", false},
-		{`cd "/plugin" && go run ./hooks`, false}, // legacy plugin.json form: NOT recognized
 		{"", false},
 	}
 	for _, tc := range cases {
