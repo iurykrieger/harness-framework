@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+// LookupEnvFn is the package-level hook that CheckRequiresGate consults when
+// GateOpts.LookupEnv is nil. Tests override it to inject a synthetic
+// environment without mutating the process.
+var LookupEnvFn = os.LookupEnv
+
 // Failure describes a single unmet precondition detected by CheckRequiresGate.
 type Failure struct {
 	Kind       string
@@ -149,28 +154,51 @@ func checkEnv(sensorJSON map[string]interface{}, opts GateOpts) []Failure {
 	return out
 }
 
-// BuildRequiresGateSignal constructs the verdict=error aggregate Signal
-// emitted when CheckRequiresGate returns a non-empty Gate.
+// BuildRequiresGateSignal constructs the canonical verdict=error Signal emitted
+// when CheckRequiresGate returns a non-empty Gate. Shape is identical across
+// every caller (RunOne, RunOneWithRoot, /start-sensor, RunDeps blocking branch,
+// run-inferential.go) — see docs/superpowers/specs/2026-05-12-unified-preflight-gate-design.md.
 //
-// The Signal contains one evidence entry per Failure, metadata.heal_hint
-// shaped from the FIRST failure (to drive /heal-sensor routing), and a
-// remediation listing all failures.
+// The Signal carries one evidence entry per Failure, a metadata.heal_hint
+// shaped from the FIRST failure (drives /heal-sensor routing), per-kind
+// machine-readable lists in metadata.missing_envs / .missing_tools /
+// .missing_contexts (each omitted when its list is empty), and an aggregate
+// remediation.instructions string listing every failure.
 func BuildRequiresGateSignal(env Envelope, outputMode string, gate Gate) map[string]interface{} {
 	finished := NowFn().Format("2006-01-02T15:04:05Z")
 	evidence := make([]interface{}, 0, len(gate.Failures))
+	var envs, tools, contexts []interface{}
 	for _, f := range gate.Failures {
-		evidence = append(evidence, map[string]interface{}{
-			"rationale": f.Rationale,
-		})
+		evidence = append(evidence, map[string]interface{}{"rationale": f.Rationale})
+		switch f.Kind {
+		case "env":
+			envs = append(envs, f.Identifier)
+		case "tool":
+			tools = append(tools, f.Identifier)
+		case "context":
+			contexts = append(contexts, f.Identifier)
+		}
 	}
+
 	md := map[string]interface{}{
-		"kind":        "aggregate",
+		"kind":        "failed",
+		"cause":       "preflight_failed",
 		"output_mode": outputMode,
 	}
 	if len(gate.Failures) > 0 {
 		first := gate.Failures[0]
 		md["heal_hint"] = first.HealShape + ":" + first.Identifier
 	}
+	if len(envs) > 0 {
+		md["missing_envs"] = envs
+	}
+	if len(tools) > 0 {
+		md["missing_tools"] = tools
+	}
+	if len(contexts) > 0 {
+		md["missing_contexts"] = contexts
+	}
+
 	sig := map[string]interface{}{
 		"sensor_id":   env.SensorID,
 		"version":     env.Version,

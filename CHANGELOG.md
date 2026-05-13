@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `metadata.kind` for preflight failures from `/run-sensor` changes from `"aggregate"` to `"failed"`. Consumers should read `metadata.cause == "preflight_failed"` to detect preflight rejection (more precise across runners). Heal classifier and the `setup-failure-detector` hook are updated in the same change. Closes #36.
+
+### Added
+
+- `metadata.cause`, `metadata.missing_envs`, `metadata.missing_tools`, `metadata.missing_contexts` on the canonical preflight signal across every spawn entry point. Inferential sensors with `requires[kind=tool]` are now gated for the first time.
+
 ## 1.1.0 — 2026-05-12
 
 ### Breaking: `.harness/` layout

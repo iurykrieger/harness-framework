@@ -9,10 +9,14 @@ import (
 	"time"
 )
 
+// stableNow is a frozen clock used by tests that assert on signal timestamps.
 func stableNow() time.Time {
 	return time.Date(2026, 5, 8, 0, 0, 0, 0, time.UTC)
 }
 
+// withFakeEnv replaces LookupEnvFn with a map-backed lookup for the duration
+// of the test, restoring the previous hook on cleanup. Tests rely on this to
+// drive checkEnv without mutating the process environment.
 func withFakeEnv(t *testing.T, env map[string]string) {
 	t.Helper()
 	prev := LookupEnvFn
@@ -269,6 +273,39 @@ func TestCheckEnv_MissingWithoutDescription(t *testing.T) {
 	}
 }
 
+func TestCheckEnv_OptionalMissingIsSkipped(t *testing.T) {
+	withFakeEnv(t, map[string]string{})
+	sensor := map[string]interface{}{
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env", "name": "DEBUG", "optional": true},
+			map[string]interface{}{"kind": "env", "name": "REGION"},
+		},
+	}
+	g := CheckRequiresGate(sensor, GateOpts{})
+	if len(g.Failures) != 1 {
+		t.Fatalf("expected only REGION to fail, got %d: %+v", len(g.Failures), g.Failures)
+	}
+	if g.Failures[0].Identifier != "REGION" {
+		t.Errorf("Identifier = %q, want %q", g.Failures[0].Identifier, "REGION")
+	}
+}
+
+func TestCheckEnv_MalformedEntriesIgnored(t *testing.T) {
+	withFakeEnv(t, map[string]string{})
+	sensor := map[string]interface{}{
+		"requires": []interface{}{
+			map[string]interface{}{"kind": "env"},                          // no name
+			map[string]interface{}{"kind": "env", "name": ""},              // empty name
+			map[string]interface{}{"kind": "env", "name": "REAL_ONE"},      // counted
+			map[string]interface{}{"kind": "env", "description": "orphan"}, // missing name
+		},
+	}
+	g := CheckRequiresGate(sensor, GateOpts{})
+	if len(g.Failures) != 1 || g.Failures[0].Identifier != "REAL_ONE" {
+		t.Fatalf("expected only REAL_ONE to fail, got %+v", g.Failures)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 2.5 – Cross-kind ordering, ignored kinds, edge cases
 // ---------------------------------------------------------------------------
@@ -340,19 +377,17 @@ func TestCheckRequiresGate_EmptyRequiresArray(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildRequiresGateSignal_Shape(t *testing.T) {
-	prev := NowFn
-	defer func() { NowFn = prev }()
-	NowFn = stableNow
-
-	env := Envelope{SensorID: "s1", Version: "1.0.0", RunID: "r1", StartedAt: "2026-05-08T00:00:00Z"}
+	env := Envelope{SensorID: "demo", Version: "1.2.3", RunID: "r-1", StartedAt: "2026-05-12T00:00:00Z"}
 	gate := Gate{Failures: []Failure{
-		{Kind: "tool", Identifier: "docker", Rationale: `Required tool "docker" is not on PATH`, HealShape: "binary-not-found"},
-		{Kind: "context", Identifier: "/data/input", Rationale: `Required context path "/data/input" does not exist`, HealShape: "missing-context"},
-		{Kind: "env", Identifier: "GH_TOKEN", Rationale: "Required environment variable GH_TOKEN is not set", HealShape: "missing-env"},
+		{Kind: "env", Identifier: "FOO", Rationale: "Required environment variable FOO is not set", HealShape: "missing-env"},
+		{Kind: "tool", Identifier: "redis-cli", Rationale: `Required tool "redis-cli" is not on PATH`, HealShape: "binary-not-found"},
 	}}
 
 	sig := BuildRequiresGateSignal(env, "stream", gate)
 
+	if sig["sensor_id"] != "demo" {
+		t.Errorf("sensor_id = %v, want demo", sig["sensor_id"])
+	}
 	if sig["verdict"] != "error" {
 		t.Errorf("verdict = %v, want error", sig["verdict"])
 	}
@@ -360,38 +395,38 @@ func TestBuildRequiresGateSignal_Shape(t *testing.T) {
 		t.Errorf("severity = %v, want high", sig["severity"])
 	}
 
-	ev, ok := sig["evidence"].([]interface{})
-	if !ok {
-		t.Fatalf("evidence missing or wrong type: %T", sig["evidence"])
-	}
-	if len(ev) != 3 {
-		t.Fatalf("evidence length = %d, want 3", len(ev))
-	}
-
 	md, ok := sig["metadata"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("metadata missing")
+		t.Fatalf("metadata is not a map: %T", sig["metadata"])
 	}
-	if md["kind"] != "aggregate" {
-		t.Errorf("metadata.kind = %v, want aggregate", md["kind"])
+	if md["kind"] != "failed" {
+		t.Errorf("metadata.kind = %v, want failed", md["kind"])
+	}
+	if md["cause"] != "preflight_failed" {
+		t.Errorf("metadata.cause = %v, want preflight_failed", md["cause"])
 	}
 	if md["output_mode"] != "stream" {
 		t.Errorf("metadata.output_mode = %v, want stream", md["output_mode"])
 	}
-	if md["heal_hint"] != "binary-not-found:docker" {
-		t.Errorf("metadata.heal_hint = %v, want binary-not-found:docker", md["heal_hint"])
+	if md["heal_hint"] != "missing-env:FOO" {
+		t.Errorf("metadata.heal_hint = %v, want missing-env:FOO", md["heal_hint"])
 	}
 
-	rem, ok := sig["remediation"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("remediation missing")
+	envs, ok := md["missing_envs"].([]interface{})
+	if !ok || len(envs) != 1 || envs[0] != "FOO" {
+		t.Errorf("metadata.missing_envs = %v, want [FOO]", md["missing_envs"])
 	}
-	instr, _ := rem["instructions"].(string)
-	if !strings.Contains(instr, "docker") {
-		t.Errorf("remediation should mention docker, got %q", instr)
+	tools, ok := md["missing_tools"].([]interface{})
+	if !ok || len(tools) != 1 || tools[0] != "redis-cli" {
+		t.Errorf("metadata.missing_tools = %v, want [redis-cli]", md["missing_tools"])
 	}
-	if !strings.Contains(instr, "GH_TOKEN") {
-		t.Errorf("remediation should mention GH_TOKEN, got %q", instr)
+	if _, present := md["missing_contexts"]; present {
+		t.Errorf("metadata.missing_contexts should be omitted when empty, got %v", md["missing_contexts"])
+	}
+
+	ev, ok := sig["evidence"].([]interface{})
+	if !ok || len(ev) != 2 {
+		t.Fatalf("evidence: got %v (%T), want length 2", sig["evidence"], sig["evidence"])
 	}
 }
 
@@ -409,8 +444,23 @@ func TestBuildRequiresGateSignal_EmptyGate(t *testing.T) {
 		t.Errorf("verdict = %v, want error", sig["verdict"])
 	}
 	md := sig["metadata"].(map[string]interface{})
+	if md["kind"] != "failed" {
+		t.Errorf("metadata.kind = %v, want failed", md["kind"])
+	}
+	if md["cause"] != "preflight_failed" {
+		t.Errorf("metadata.cause = %v, want preflight_failed", md["cause"])
+	}
 	if _, hasHint := md["heal_hint"]; hasHint {
 		t.Errorf("heal_hint should not be present for empty gate")
+	}
+	if _, present := md["missing_envs"]; present {
+		t.Errorf("metadata.missing_envs should be absent for empty gate, got %v", md["missing_envs"])
+	}
+	if _, present := md["missing_tools"]; present {
+		t.Errorf("metadata.missing_tools should be absent for empty gate, got %v", md["missing_tools"])
+	}
+	if _, present := md["missing_contexts"]; present {
+		t.Errorf("metadata.missing_contexts should be absent for empty gate, got %v", md["missing_contexts"])
 	}
 	if _, hasRem := sig["remediation"]; hasRem {
 		t.Errorf("remediation should be absent for empty gate")
@@ -434,5 +484,47 @@ func TestBuildRequiresGateSignal_UnknownKindsProduceNoRemediation(t *testing.T) 
 	md := sig["metadata"].(map[string]interface{})
 	if md["heal_hint"] != "n/a:Bash(rm)" {
 		t.Errorf("heal_hint = %v", md["heal_hint"])
+	}
+}
+
+func TestBuildRequiresGateSignal_EnvOnly_OmitsToolAndContextLists(t *testing.T) {
+	env := Envelope{SensorID: "demo", Version: "1.0.0", RunID: "r-1", StartedAt: "2026-05-12T00:00:00Z"}
+	gate := Gate{Failures: []Failure{
+		{Kind: "env", Identifier: "ONLY_ENV", Rationale: "Required environment variable ONLY_ENV is not set", HealShape: "missing-env"},
+	}}
+
+	sig := BuildRequiresGateSignal(env, "single", gate)
+	md := sig["metadata"].(map[string]interface{})
+
+	if _, present := md["missing_tools"]; present {
+		t.Errorf("metadata.missing_tools should be omitted when empty, got %v", md["missing_tools"])
+	}
+	if _, present := md["missing_contexts"]; present {
+		t.Errorf("metadata.missing_contexts should be omitted when empty, got %v", md["missing_contexts"])
+	}
+	if envs := md["missing_envs"].([]interface{}); len(envs) != 1 {
+		t.Errorf("metadata.missing_envs = %v, want [ONLY_ENV]", envs)
+	}
+}
+
+func TestBuildRequiresGateSignal_AllKinds_PopulatesAllMissingLists(t *testing.T) {
+	env := Envelope{SensorID: "demo", Version: "1.0.0", RunID: "r-1", StartedAt: "2026-05-12T00:00:00Z"}
+	gate := Gate{Failures: []Failure{
+		{Kind: "env", Identifier: "E1", Rationale: "Required environment variable E1 is not set", HealShape: "missing-env"},
+		{Kind: "tool", Identifier: "T1", Rationale: `Required tool "T1" is not on PATH`, HealShape: "binary-not-found"},
+		{Kind: "context", Identifier: "/missing/path", Rationale: `Required context path "/missing/path" does not exist`, HealShape: "missing-context"},
+	}}
+
+	sig := BuildRequiresGateSignal(env, "stream", gate)
+	md := sig["metadata"].(map[string]interface{})
+
+	if envs := md["missing_envs"].([]interface{}); len(envs) != 1 || envs[0] != "E1" {
+		t.Errorf("metadata.missing_envs = %v, want [E1]", envs)
+	}
+	if tools := md["missing_tools"].([]interface{}); len(tools) != 1 || tools[0] != "T1" {
+		t.Errorf("metadata.missing_tools = %v, want [T1]", tools)
+	}
+	if ctxs := md["missing_contexts"].([]interface{}); len(ctxs) != 1 || ctxs[0] != "/missing/path" {
+		t.Errorf("metadata.missing_contexts = %v, want [/missing/path]", ctxs)
 	}
 }

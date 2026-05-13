@@ -27,6 +27,21 @@ type LiveDep struct {
 	RunID string
 }
 
+// AttachResult is the structured return of AttachLiveDep. Exactly one of
+// Live or GateSignal is populated on err==nil:
+//
+//	Live.ID != ""       → attach succeeded (fresh spawn or re-attach).
+//	                      Caller pushes Live onto its LiveStack for later
+//	                      detach.
+//	GateSignal != nil   → spawn-fresh path detected an unmet precondition.
+//	                      No subprocess was spawned and no registry entry
+//	                      was created. Caller emits the signal and records
+//	                      it for downstream cascade machinery.
+type AttachResult struct {
+	Live       LiveDep
+	GateSignal map[string]interface{}
+}
+
 // RunWithDepsRoot is the id-resolving variant of RunWithDeps. The
 // requested sensor is identified by id (resolved to <root>/.harness/sensors/<id>.json),
 // schemasDir is resolved by the schema package's discovery if empty.
@@ -60,13 +75,21 @@ func RunWithDepsRoot(ctx context.Context, id, projectRoot, schemasDir string, st
 // prevents accumulation of dead holders across re-runs of the same
 // holder identity (e.g., /start-sensor target re-runs after start.go
 // crashes between AttachLiveDep and RebindDepHolderPID).
-func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string, holderPID int, v *schema.Validator, stdout, stderr io.Writer) (LiveDep, error) {
+func AttachLiveDep(
+	ctx context.Context,
+	dep Sensor,
+	projectRoot, holderID string,
+	holderPID int,
+	v *schema.Validator,
+	stdout, stderr io.Writer,
+) (AttachResult, error) {
 	r := registry.NewRoot(projectRoot)
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	holder := registry.HeldByEntry{Kind: "sensor", ID: holderID, PID: holderPID, AttachedAt: now}
 
 	startedFresh := false
 	var runID string
+	var gateSig map[string]interface{}
 	if err := registry.WithFileLock(r.LockFile(), func() error {
 		rs, err := registry.Load(r)
 		if err != nil {
@@ -81,7 +104,20 @@ func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string
 			runID = existing.RunID
 			return registry.Save(r, rs)
 		}
-		// Not live: start it.
+		// Spawn-fresh branch — gate the dep's requires[] BEFORE startBlockingDep.
+		// Re-attach (above) explicitly does NOT gate: the dep is already alive
+		// with whatever env/PATH it spawned with; gating with the current
+		// holder's environment would falsely abort legitimate attaches when
+		// the holder's PATH/env differs from the dep's spawn-time environment.
+		env, eerr := sensor.BuildEnvelope(dep.JSON)
+		if eerr != nil {
+			return fmt.Errorf("build envelope for gate: %w", eerr)
+		}
+		output, _ := dep.JSON["output"].(string)
+		if sig, failed := PreflightGate(dep, env, output); failed {
+			gateSig = sig
+			return nil
+		}
 		startedFresh = true
 		newID, startErr := startBlockingDep(&rs, r, dep, holder, projectRoot)
 		if startErr != nil {
@@ -90,7 +126,13 @@ func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string
 		runID = newID
 		return nil
 	}); err != nil {
-		return LiveDep{}, err
+		return AttachResult{}, err
+	}
+
+	if gateSig != nil {
+		gateSig = validateOrFallback(v, gateSig, dep.ID, stderr)
+		_ = json.NewEncoder(stdout).Encode(gateSig)
+		return AttachResult{GateSignal: gateSig}, nil
 	}
 
 	kind := "dep_attached"
@@ -100,7 +142,7 @@ func AttachLiveDep(ctx context.Context, dep Sensor, projectRoot, holderID string
 	sig := buildSimpleSignal(dep.ID, "pass", "info", kind, fmt.Sprintf("blocking dep %q held by %q", dep.ID, holderID))
 	sig = validateOrFallback(v, sig, dep.ID, stderr)
 	_ = json.NewEncoder(stdout).Encode(sig)
-	return LiveDep{ID: dep.ID, RunID: runID}, nil
+	return AttachResult{Live: LiveDep{ID: dep.ID, RunID: runID}}, nil
 }
 
 // reapDeadSameIDHolders drops every (kind="sensor", id=holderID, pid=DEAD)

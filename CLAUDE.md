@@ -36,6 +36,7 @@ Durable conventions. Apply them to every change.
     - `.harness/sensors/fixtures/` — sensor-domain fixture data referenced by `verification.golden_cases[].fixture` in sensor JSON. NOT a Go test fixture. Lives in the user project tree (under `.harness/`) and is consumed at sensor runtime.
 
     A single shared "fixtures" or "testhelpers" package across the whole `lib/` tree is explicitly disallowed.
+12. **Sensor spawn is gated, no exceptions.** Every call to `subprocess.StreamSubprocess`, `subprocess.Start`, or `subprocess.SpawnDetached` that executes a sensor's `execution.command` MUST be preceded by `orchestrator.PreflightGate` in the same file. On gate failure, the caller emits the canonical signal returned (`metadata.kind="failed", cause="preflight_failed"`) and aborts the spawn. Legitimate exceptions — because they do not execute the sensor's own command — are allowlisted in `lib/orchestrator/gate_invariant_test.go`: `lib/watcher/` (spawns the watcher binary), `lib/subprocess/step.go` (prepare/teardown step commands), and the files of `lib/subprocess/` itself. The single helper is `orchestrator.PreflightGate(s Sensor, env sensor.Envelope, outputMode string) → (sig, failed)`. Do not call `sensor.CheckRequiresGate` or `sensor.BuildRequiresGateSignal` directly — they are implementation details encapsulated by the helper.
 
 ## Architecture
 
@@ -86,6 +87,8 @@ Lifecycle phases live under `execution`:
 Per-step lifecycle results fold into the aggregate Signal under `metadata.lifecycle.{prepare,teardown}` (free-form per signal.json). The aggregate Signal of the requested sensor remains the LAST JSONL line on stdout — deps' aggregates appear earlier in the stream.
 
 The orchestrator lives in `lib/orchestrator/` (DAG resolution + lifecycle execution + cascade construction) and is reused by both `run-computational` and `run-inferential` runner scripts.
+
+The `requires[kind ∈ {tool,context,env}]` gate is evaluated by `orchestrator.PreflightGate` before **any** spawn of a sensor's command — `RunOne`/`RunOneWithRoot` Phase 0, `/start-sensor` before the detach, `AttachLiveDep` in the spawn-fresh branch under the lock (not on re-attach), and `run-inferential.go` before the LLM spawn. Gate failure emits a canonical signal (`metadata.kind="failed", cause="preflight_failed"`) attributed to the sensor whose gate failed; dependents cascade via `FirstFailedDep` + `BuildCascadeSignal` as with any other failure.
 
 ### Registry root discovery
 
