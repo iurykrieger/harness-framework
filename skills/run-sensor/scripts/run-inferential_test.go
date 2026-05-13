@@ -523,3 +523,82 @@ func TestRunInferential_AcceptsAbsolutePath(t *testing.T) {
 		t.Fatalf("expected exit 0 for absolute path, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 }
+
+// TestRunInferential_BlockingDep_AggregateLast verifies the same
+// last-line invariant for the inferential runner's ad-hoc deps loop
+// (issue #19). When the requested inferential sensor depends on a
+// blocking computational dep, the blocking dep is started, the
+// inferential command runs, and the blocking dep is torn down. The
+// requested sensor's aggregate must remain the LAST JSONL line.
+func TestRunInferential_BlockingDep_AggregateLast(t *testing.T) {
+	schemasDir := schematest.RepoSchemasDir(t)
+	root := t.TempDir()
+	sensorsDir := filepath.Join(root, ".harness", "sensors")
+	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Blocking dep — same shape as lib/orchestrator/live_deps_test.go's
+	// writeBlockingDep, inlined here to avoid cross-package coupling.
+	_ = os.WriteFile(filepath.Join(sensorsDir, "blocking-tick.json"), []byte(`{
+"id": "blocking-tick", "version": "1.0.0",
+"name": "Blocking tick", "description": "blocking tick",
+"determinism": "high", "kind": "setup", "type": "computational",
+"output": "stream", "regulation": "behaviour", "phase": "continuous",
+"triggers": [{"on": "manual"}],
+"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"cost": {"class":"cheap","compute":{"cpu":"low","memory_mb":32},"latency":{"p50_ms":10,"p95_ms":50}},
+"execution": {
+  "command": "while true; do echo TICK; sleep 0.1; done",
+  "blocking": true, "graceful_timeout_ms": 200,
+  "exit_code_map": [{"exit_code":"*","verdict":"pass","severity":"info"}],
+  "output_parsing": {"patterns":[{"regex":"^TICK$","verdict":"pass","severity":"info"}]}
+}
+}`), 0o644)
+
+	// Inferential consumer that depends on the blocking dep. Use the
+	// same JSONL-emitting stub command pattern as TestRunInferential_Pass:
+	// printf a single line whose first token matches a `^PASS` pattern,
+	// then exit 0.
+	id := writeInferentialSensor(t, root, "infr-with-blocking", `printf 'PASS judgment-1\n'`)
+	// Adjust the sensor JSON to add the requires entry. writeInferentialSensor
+	// doesn't take deps, so re-read, mutate, re-write.
+	path := filepath.Join(sensorsDir, id+".json")
+	b, _ := os.ReadFile(path)
+	var m map[string]interface{}
+	_ = json.Unmarshal(b, &m)
+	m["requires"] = []interface{}{
+		map[string]interface{}{"kind": "sensor", "id": "blocking-tick"},
+	}
+	updated, _ := json.Marshal(m)
+	_ = os.WriteFile(path, updated, 0o644)
+
+	var out, errBuf bytes.Buffer
+	// The default writeInferentialSensor template is "Compare {{a}} to {{b}}.",
+	// so slot bindings must be provided for the rendered prompt to validate.
+	if code := run([]string{
+		"--schemas-dir", schemasDir,
+		"--slot", "a=foo()",
+		"--slot", "b=bar()",
+		id,
+	}, root, &out, &errBuf); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
+	}
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 lines, got %d:\n%s", len(lines), out.String())
+	}
+
+	var last map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+		t.Fatalf("decode last line: %v\nline=%q", err, lines[len(lines)-1])
+	}
+	if last["sensor_id"] != id {
+		t.Errorf("last sensor_id = %v, want %s (full stream:\n%s)", last["sensor_id"], id, out.String())
+	}
+	md, _ := last["metadata"].(map[string]interface{})
+	if md == nil || md["kind"] != "aggregate" {
+		t.Errorf("last metadata.kind = %v, want aggregate", md)
+	}
+}

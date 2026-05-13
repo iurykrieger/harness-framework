@@ -706,3 +706,155 @@ func TestAttachLiveDep_ReattachToLiveDep_DoesNotGate(t *testing.T) {
 		t.Errorf("Live.ID: got %q, want live-dep-with-missing-tool", result.Live.ID)
 	}
 }
+
+// TestRunWithDepsImpl_BlockingDep_AggregateLast verifies the documented
+// contract that the requested sensor's aggregate Signal is the LAST
+// JSONL line on stdout, even when a blocking dep's teardown emits its
+// own aggregate during detach (issue #19).
+func TestRunWithDepsImpl_BlockingDep_AggregateLast(t *testing.T) {
+	schemasDir := schematest.RepoSchemasDir(t)
+	root := t.TempDir()
+	writeBlockingDep(t, root, "blocking-tick")
+	writeConsumer(t, root, "uses-tick")
+
+	var out, errBuf bytes.Buffer
+	exit := orchestrator.RunWithDepsRoot(context.Background(), "uses-tick", root, schemasDir, &out, &errBuf)
+	if exit != 0 {
+		t.Fatalf("exit=%d stderr=%s", exit, errBuf.String())
+	}
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 JSONL Signals, got %d:\n%s", len(lines), out.String())
+	}
+
+	var last map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+		t.Fatalf("decode last line: %v\nline=%q", err, lines[len(lines)-1])
+	}
+	if last["sensor_id"] != "uses-tick" {
+		t.Errorf("last line sensor_id = %v, want uses-tick (entire stream:\n%s)", last["sensor_id"], out.String())
+	}
+	md, _ := last["metadata"].(map[string]interface{})
+	if md == nil || md["kind"] != "aggregate" {
+		t.Errorf("last line metadata.kind = %v, want aggregate", md)
+	}
+}
+
+// writeNonBlockingFailingDep writes a non-blocking setup sensor whose
+// command returns exit 1, producing verdict=fail. Used to seed a
+// cascade scenario.
+func writeNonBlockingFailingDep(t *testing.T, root, id string) {
+	t.Helper()
+	dir := filepath.Join(root, ".harness", "sensors")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{
+"id": "` + id + `",
+"version": "1.0.0",
+"name": "Failing dep",
+"description": "exits non-zero",
+"determinism": "high",
+"kind": "setup",
+"type": "computational",
+"output": "single",
+"regulation": "behaviour",
+"phase": "on-demand",
+"triggers": [{"on": "manual"}],
+"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "fail", "expected_severity": "high"}]},
+"cost": {
+  "class": "cheap",
+  "compute": {"cpu":"low","memory_mb":32},
+  "latency": {"p50_ms":10,"p95_ms":50,"timeout_ms":2000}
+},
+"execution": {
+  "command": "exit 1",
+  "exit_code_map": [{"exit_code":0,"verdict":"pass","severity":"info"},{"exit_code":"*","verdict":"fail","severity":"high"}]
+}
+}`)
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeConsumerWithTwoDeps writes a consumer that depends on both
+// `firstDep` and `secondDep` (in that order). The first listed dep
+// is the failing-non-blocking one (so FirstFailedDep selects it).
+// The second listed dep is the blocking one (which RunDeps will
+// still attempt to attach because deps are processed in declaration
+// order, and a failed non-blocking sibling does not stop processing
+// of other deps unless they declare the failed one as their own dep).
+//
+// NOTE: This fixture deliberately makes the blocking dep NOT depend
+// on the failing one, so the blocking dep attaches successfully and
+// is on the LiveStack when the cascade signal for the consumer is
+// built. That is the exact topology described in the spec's
+// "Cascade with blocking deps already attached" section.
+func writeConsumerWithTwoDeps(t *testing.T, root, id, firstDep, secondDep string) {
+	t.Helper()
+	dir := filepath.Join(root, ".harness", "sensors")
+	body := []byte(`{
+"id": "` + id + `",
+"version": "1.0.0",
+"name": "Consumer with two deps",
+"description": "for cascade-with-blocking-dep test",
+"determinism": "high",
+"kind": "assertion",
+"type": "computational",
+"output": "single",
+"regulation": "behaviour",
+"phase": "on-demand",
+"triggers": [{"on": "manual"}],
+"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"requires": [{"kind":"sensor","id":"` + firstDep + `"},{"kind":"sensor","id":"` + secondDep + `"}],
+"cost": {
+  "class": "cheap",
+  "compute": {"cpu":"low","memory_mb":32},
+  "latency": {"p50_ms":10,"p95_ms":50,"timeout_ms":2000}
+},
+"execution": {
+  "command": "echo never-runs",
+  "exit_code_map": [{"exit_code":0,"verdict":"pass","severity":"info"}]
+}
+}`)
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRunWithDepsImpl_BlockingDep_CascadeAggregateLast verifies that
+// when a target cascades because one of its non-blocking deps failed,
+// AND a sibling blocking dep was already attached, the cascade Signal
+// for the requested sensor is the LAST JSONL line on stdout (the
+// blocking dep's teardown signals appear before it).
+func TestRunWithDepsImpl_BlockingDep_CascadeAggregateLast(t *testing.T) {
+	schemasDir := schematest.RepoSchemasDir(t)
+	root := t.TempDir()
+	writeNonBlockingFailingDep(t, root, "fails")
+	writeBlockingDep(t, root, "blocking-tick")
+	writeConsumerWithTwoDeps(t, root, "cascaded", "fails", "blocking-tick")
+
+	var out, errBuf bytes.Buffer
+	exit := orchestrator.RunWithDepsRoot(context.Background(), "cascaded", root, schemasDir, &out, &errBuf)
+	if exit != 1 {
+		t.Fatalf("exit=%d stderr=%s; want 1 (cascade)", exit, errBuf.String())
+	}
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 lines, got %d:\n%s", len(lines), out.String())
+	}
+
+	var last map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+		t.Fatalf("decode last line: %v\nline=%q", err, lines[len(lines)-1])
+	}
+	if last["sensor_id"] != "cascaded" {
+		t.Errorf("last sensor_id = %v, want cascaded (full stream:\n%s)", last["sensor_id"], out.String())
+	}
+	md, _ := last["metadata"].(map[string]interface{})
+	if md == nil || md["kind"] != "cascade" {
+		t.Errorf("last metadata.kind = %v, want cascade", md)
+	}
+}
