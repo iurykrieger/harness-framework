@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
@@ -64,3 +65,10 @@ func Bootstrap(skillName string, stdout, stderr io.Writer) BootstrapResult {
 		ExitCode:  0,
 	}
 }
+
+// MultiFlag implements flag.Value for repeatable string flags
+// (--slot k=v --slot k2=v2).
+type MultiFlag []string
+
+func (m *MultiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *MultiFlag) Set(s string) error { *m = append(*m, s); return nil }

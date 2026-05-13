@@ -12,7 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 // uniqueSensorID returns a schema-valid id ([a-z][a-z0-9-]*) that no
@@ -28,7 +29,7 @@ func uniqueSensorID(prefix string) string {
 // <root>/.harness/runtime/<id>/<run-id>/ when invoked against this path.
 func writeProjectSensor(t *testing.T, root, id string) string {
 	t.Helper()
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["id"] = id
 	body, err := json.Marshal(s)
 	if err != nil {
@@ -75,7 +76,7 @@ func TestReplayFixture_PersistsRunUnderCanonicalRuntime(t *testing.T) {
 	code := run([]string{
 		"--sensor", sensorPath,
 		"--fixture", fixturePath,
-		"--schemas-dir", testfixtures.RepoSchemasDir(t),
+		"--schemas-dir", schematest.RepoSchemasDir(t),
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())

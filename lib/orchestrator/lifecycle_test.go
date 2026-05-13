@@ -11,8 +11,9 @@ import (
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 // roundTripJSON normalises a sensor fixture so that numeric literals
@@ -45,9 +46,9 @@ func makeSensorPath(t *testing.T, id string) string {
 }
 
 func TestRunOne_SimpleNoLifecycle(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	v, _ := schema.NewValidator(schemasDir)
-	s := Sensor{ID: "smoke-comp", Path: makeSensorPath(t, "smoke-comp"), JSON: roundTripJSON(t, testfixtures.ValidSensorComputational())}
+	s := Sensor{ID: "smoke-comp", Path: makeSensorPath(t, "smoke-comp"), JSON: roundTripJSON(t, sensortest.LoadComputational(t).AsMap())}
 
 	var out, errBuf bytes.Buffer
 	sig, code := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), schemasDir, v, &out, &errBuf)
@@ -64,9 +65,9 @@ func TestRunOne_SimpleNoLifecycle(t *testing.T) {
 }
 
 func TestRunOne_PrepareFailFast(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	v, _ := schema.NewValidator(schemasDir)
-	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	js := roundTripJSON(t, sensortest.LoadComputational(t).AsMap())
 	exec := js["execution"].(map[string]interface{})
 	exec["command"] = "echo should-not-run-either"
 	js["requires"] = []interface{}{
@@ -99,9 +100,9 @@ func TestRunOne_PrepareFailFast(t *testing.T) {
 }
 
 func TestRunOne_TeardownBestEffort(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	v, _ := schema.NewValidator(schemasDir)
-	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	js := roundTripJSON(t, sensortest.LoadComputational(t).AsMap())
 	exec := js["execution"].(map[string]interface{})
 	exec["command"] = "true"
 	exec["teardown"] = []interface{}{
@@ -136,9 +137,9 @@ func TestRunOne_TeardownBestEffort(t *testing.T) {
 }
 
 func TestRunOne_TeardownRunsAfterCommandFail(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	v, _ := schema.NewValidator(schemasDir)
-	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	js := roundTripJSON(t, sensortest.LoadComputational(t).AsMap())
 	exec := js["execution"].(map[string]interface{})
 	exec["command"] = "false"
 	exec["teardown"] = []interface{}{
@@ -163,9 +164,9 @@ func TestRunOne_TeardownRunsAfterCommandFail(t *testing.T) {
 }
 
 func TestRunOne_HealHintEmittedOnStderrPattern(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	v, _ := schema.NewValidator(schemasDir)
-	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	js := roundTripJSON(t, sensortest.LoadComputational(t).AsMap())
 	exec := js["execution"].(map[string]interface{})
 	// Single-mode failure whose stderr matches the env-file-absent
 	// curated heal pattern. The orchestrator must surface
@@ -196,9 +197,9 @@ func TestRunOne_HealHintEmittedOnStderrPattern(t *testing.T) {
 }
 
 func TestRunOne_HealHintAbsentOnBenignFailure(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	v, _ := schema.NewValidator(schemasDir)
-	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	js := roundTripJSON(t, sensortest.LoadComputational(t).AsMap())
 	exec := js["execution"].(map[string]interface{})
 	// Single-mode failure with stderr that does NOT match any curated
 	// heal pattern. metadata.heal_hint MUST be absent — emitting it on
@@ -221,9 +222,9 @@ func TestRunOne_HealHintAbsentOnBenignFailure(t *testing.T) {
 }
 
 func TestRunOne_HealHintAbsentOnPassingCommand(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	v, _ := schema.NewValidator(schemasDir)
-	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	js := roundTripJSON(t, sensortest.LoadComputational(t).AsMap())
 	exec := js["execution"].(map[string]interface{})
 	// Even when stderr would match a heal pattern, a passing command
 	// must NOT emit heal_hint — there is nothing to heal.
@@ -251,9 +252,9 @@ func TestRunOne_HealHintAbsentOnPassingCommand(t *testing.T) {
 // matches the per-var format from rule_missing_env, and never spawns
 // the subprocess.
 func TestRunOne_AbortsOnMissingRequiresEnv(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	v, _ := schema.NewValidator(schemasDir)
-	js := roundTripJSON(t, testfixtures.ValidSensorComputational())
+	js := roundTripJSON(t, sensortest.LoadComputational(t).AsMap())
 	js["requires"] = []interface{}{
 		map[string]interface{}{
 			"kind":        "env",
@@ -583,9 +584,9 @@ func loadSensorForTest(path string) (Sensor, error) {
 
 // The aggregate Signal emitted on stdout is valid JSON and the LAST line.
 func TestRunOne_OutputIsValidJSON(t *testing.T) {
-	schemasDir := testfixtures.RepoSchemasDir(t)
+	schemasDir := schematest.RepoSchemasDir(t)
 	v, _ := schema.NewValidator(schemasDir)
-	s := Sensor{ID: "smoke-comp", Path: makeSensorPath(t, "smoke-comp"), JSON: roundTripJSON(t, testfixtures.ValidSensorComputational())}
+	s := Sensor{ID: "smoke-comp", Path: makeSensorPath(t, "smoke-comp"), JSON: roundTripJSON(t, sensortest.LoadComputational(t).AsMap())}
 
 	var out, errBuf bytes.Buffer
 	if _, code := RunOne(context.Background(), s, filepath.Dir(filepath.Dir(s.Path)), schemasDir, v, &out, &errBuf); code != 0 {

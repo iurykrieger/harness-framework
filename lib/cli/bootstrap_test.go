@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/cli"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 )
 
 func TestBootstrap_HappyPathInProjectRoot(t *testing.T) {
@@ -21,7 +21,7 @@ func TestBootstrap_HappyPathInProjectRoot(t *testing.T) {
 
 	// For the schemas to be discoverable, we need to chdir to somewhere
 	// that can walk up to find the repo's schemas/. We'll use the repo root.
-	repoRoot := testfixtures.RepoSchemasDir(t)
+	repoRoot := schematest.RepoSchemasDir(t)
 	repoRoot = filepath.Dir(repoRoot) // go up from schemas/ to repo root
 	chdir(t, repoRoot)
 

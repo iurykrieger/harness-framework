@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 // moduleRoot returns the absolute path of the Go module root by walking
@@ -50,7 +50,7 @@ func TestRetryOriginal_PicksTypeAndShellsOut(t *testing.T) {
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["execution"] = map[string]interface{}{
 		"command": "true",
 		"exit_code_map": []interface{}{

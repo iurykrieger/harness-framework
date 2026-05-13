@@ -1,0 +1,56 @@
+{
+  "calibration": {
+    "calibration_date": "2026-04-15",
+    "calibration_set": "tests/cal.jsonl",
+    "calibration_size": 120,
+    "confidence_threshold": 0.7
+  },
+  "cost": {
+    "class": "expensive",
+    "latency": {
+      "p50_ms": 6000,
+      "p95_ms": 15000,
+      "timeout_ms": 60000
+    },
+    "tokens": {
+      "input_avg": 4000,
+      "max_output": 1024,
+      "model": "anthropic/claude-sonnet-4-6",
+      "output_avg": 400
+    }
+  },
+  "description": "fixture",
+  "determinism": "low",
+  "execution": {
+    "command": "claude -p {{prompt}}",
+    "decoding": {
+      "max_tokens": 1024,
+      "temperature": 0
+    },
+    "model": "anthropic/claude-sonnet-4-6",
+    "system_prompt": "You are a similarity judge. Output JSON only.",
+    "user_prompt_template": "Compare {{a}} to {{b}}."
+  },
+  "id": "smoke-inf",
+  "kind": "assertion",
+  "name": "smoke inf",
+  "output": "single",
+  "phase": "post-integration",
+  "regulation": "maintainability",
+  "triggers": [
+    {
+      "on": "pull-request"
+    }
+  ],
+  "type": "inferential",
+  "verification": {
+    "golden_cases": [
+      {
+        "expected_severity": "medium",
+        "expected_verdict": "warn",
+        "fixture": "f"
+      }
+    ]
+  },
+  "version": "0.1.0"
+}

@@ -1,5 +1,4 @@
-// test/heal-e2e/heal_e2e_test.go
-package healE2E_test
+package heal_test
 
 import (
 	"bytes"
@@ -12,7 +11,7 @@ import (
 
 	"github.com/iurykrieger/harness-framework/lib/heal"
 	"github.com/iurykrieger/harness-framework/lib/heal/rules"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 // TestHealE2E_MissingEnvFile_HealAndRetry simulates the full loop:
@@ -89,7 +88,7 @@ func setupFixtureProject(t *testing.T) string {
 
 	// Sensor that fails when .env is missing.
 	os.MkdirAll(filepath.Join(root, ".harness", "sensors"), 0o755)
-	s := testfixtures.ValidSensorComputational()
+	s := sensortest.LoadComputational(t).AsMap()
 	s["id"] = "run-needs-env"
 	s["execution"] = map[string]interface{}{
 		"command": "test -f " + filepath.Join(root, ".env") + " || (echo 'open .env: ENOENT no such file' >&2; exit 1)",

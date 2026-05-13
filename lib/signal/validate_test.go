@@ -2,21 +2,17 @@ package signal_test
 
 import (
 	"bytes"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/signal"
 )
 
 func loadTestValidator(t *testing.T) *schema.Validator {
 	t.Helper()
-	_, here, _, _ := runtime.Caller(0)
-	// lib/signal/validate_test.go → walk up to repo root, then schemas/
-	root := filepath.Dir(filepath.Dir(filepath.Dir(here)))
-	v, err := schema.NewValidator(filepath.Join(root, "schemas"))
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {
 		t.Fatalf("validator: %v", err)
 	}

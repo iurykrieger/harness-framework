@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 )
 
 func TestFindSchemasDir(t *testing.T) {
-	expected := testfixtures.RepoSchemasDir(t)
+	expected := schematest.RepoSchemasDir(t)
 	_, thisFile, _, _ := runtime.Caller(0)
 	got, err := schema.FindSchemasDir(filepath.Dir(thisFile))
 	if err != nil {

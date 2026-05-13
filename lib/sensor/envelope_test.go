@@ -2,14 +2,15 @@ package sensor_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/iurykrieger/harness-framework/lib/sensor"
-	"github.com/iurykrieger/harness-framework/lib/testfixtures"
+	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 func TestBuildEnvelope(t *testing.T) {
-	defer testfixtures.FreezeClock(t)()
-	env, err := sensor.BuildEnvelope(testfixtures.ValidSensorComputational())
+	defer freezeClock(t)()
+	env, err := sensor.BuildEnvelope(sensortest.LoadComputational(t).AsMap())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,11 +28,38 @@ func TestBuildEnvelope(t *testing.T) {
 func TestBuildEnvelope_MissingFields(t *testing.T) {
 	for _, missing := range []string{"id", "version", "type"} {
 		t.Run(missing, func(t *testing.T) {
-			s := testfixtures.ValidSensorComputational()
+			s := sensortest.LoadComputational(t).AsMap()
 			delete(s, missing)
 			if _, err := sensor.BuildEnvelope(s); err == nil {
 				t.Fatalf("expected error when %q missing", missing)
 			}
 		})
 	}
+}
+
+func TestBuildEnvelopeTyped(t *testing.T) {
+	prev := sensor.NowFn
+	defer func() { sensor.NowFn = prev }()
+	sensor.NowFn = func() time.Time {
+		return time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+	}
+	s := &sensor.Sensor{ID: "demo", Version: "0.1.0", Type: sensor.TypeComputational}
+	env := sensor.BuildEnvelopeTyped(s)
+	if env.SensorID != "demo" || env.Version != "0.1.0" || env.SensorType != "computational" {
+		t.Fatalf("envelope mismatch: %+v", env)
+	}
+	if env.RunID == "" {
+		t.Fatalf("run id was empty")
+	}
+}
+
+// freezeClock pins sensor.NowFn and sensor.NewRunIDFn for deterministic
+// Signal output. Returns a restore function; defer it.
+func freezeClock(t *testing.T) func() {
+	t.Helper()
+	origNow, origID := sensor.NowFn, sensor.NewRunIDFn
+	frozen := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	sensor.NowFn = func() time.Time { return frozen }
+	sensor.NewRunIDFn = func() string { return "00000000-0000-4000-8000-000000000000" }
+	return func() { sensor.NowFn = origNow; sensor.NewRunIDFn = origID }
 }
