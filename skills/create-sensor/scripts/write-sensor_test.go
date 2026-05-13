@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -15,12 +14,6 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
-
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	_, thisFile, _, _ := runtime.Caller(0)
-	return filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", ".."))
-}
 
 // withProjectRoot creates a fresh project root with a .harness/ marker,
 // .harness/sensors/, and .harness/sensors/fixtures/. Returns absolute root.
@@ -96,6 +89,20 @@ func TestRun_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"verdict":"pass"`) {
 		t.Fatalf("missing pass signal: %s", stdout.String())
+	}
+	// Verify the absolute path is emitted on a second stdout line for backward compat with detect-sensors.
+	expectedPath := filepath.Join(outDir, "alpha.json")
+	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 stdout lines (signal + path), got %d: %q", len(lines), stdout.String())
+	}
+	if !strings.Contains(lines[len(lines)-1], "alpha.json") {
+		t.Fatalf("last stdout line should be the sensor path; got %q", lines[len(lines)-1])
+	}
+	// And cross-reference: the path on the second line must point to the file that was written.
+	abs, _ := filepath.Abs(expectedPath)
+	if lines[len(lines)-1] != abs {
+		t.Fatalf("path mismatch: stdout=%q want %q", lines[len(lines)-1], abs)
 	}
 }
 

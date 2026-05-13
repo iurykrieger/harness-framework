@@ -166,7 +166,7 @@ func sensorAlreadyExistsSignal(target string) map[string]interface{} {
 		"verdict":     "error",
 		"severity":    "high",
 		"confidence":  1.0,
-		"evidence":    []interface{}{map[string]interface{}{"rationale": "sensor file already exists; refusing to overwrite", "path": target}},
+		"evidence":    []interface{}{map[string]interface{}{"rationale": "sensor file already exists; refusing to overwrite"}},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
 		"metadata":    map[string]interface{}{"kind": "sensor_already_exists", "path": target},
 	}
