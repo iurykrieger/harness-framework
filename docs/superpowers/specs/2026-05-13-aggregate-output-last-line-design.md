@@ -50,10 +50,11 @@ The fix described in this spec preserves the public contract by moving the aggre
    - On the pre-target `pre.ExitCode != 0` path: explicit `detachAll()` then return; deps have already emitted whatever they emit during `RunDeps`.
    - The `defer detachAll()` is **kept** as an idempotent safety net for panic / mid-function early-return paths. After the explicit call, the deferred call is a no-op because `LiveStack` is drained inside `detachAll()` (the function consumes the stack rather than just iterating it), and `DetachLiveDep` is already idempotent against missing registry entries.
 
-3. **`skills/run-sensor/scripts/run-inferential.go::run()` rewritten with the same pattern** (`run-inferential.go:165-326`). The current `defer { for ... DetachLiveDep }` at line 171 is replaced by a `detachAll` closure called explicitly at each exit point that needs to emit a final Signal:
-   - Normal target path: build the aggregate `sig` as today (existing inline logic from `run-inferential.go:243-322`), then call `detachAll()`, then `json.NewEncoder(stdout).Encode(sig)`, then `return 0`. Schema validation of `sig` happens before `detachAll()` so a validation failure returns 1 without writing anything.
-   - Cascade path at `run-inferential.go:217-223` (non-blocking dep cascade) and `run-inferential.go:301-309` (requested-sensor cascade after deps loop): capture the cascade Signal in a local, call `detachAll()`, then emit, then return.
-   - Gate-failure path at `run-inferential.go:235-241`: capture the gate Signal, call `detachAll()`, then emit, then return.
+3. **`skills/run-sensor/scripts/run-inferential.go::run()` rewritten with the same pattern**. The current `defer { for ... DetachLiveDep }` at line 171 is replaced by a `detachAll` closure called explicitly at each exit point that needs to emit a final Signal:
+   - Normal target path: build the aggregate `sig` as today (existing inline logic ending around line 322), then call `detachAll()`, then `json.NewEncoder(stdout).Encode(sig)`, then `return 0`. Schema validation of `sig` happens before `detachAll()` so a validation failure returns 1 without writing anything.
+   - Non-blocking-dep cascade path inside the deps loop (around line 204): capture the cascade Signal in a local, call `detachAll()`, then emit, then return.
+   - Requested-sensor cascade path after the deps loop (around line 223): capture the cascade Signal in a local, call `detachAll()`, then emit, then return.
+   - Gate-failure path for the requested sensor (around line 235-241): capture the gate Signal, call `detachAll()`, then emit, then return.
    - The `defer detachAll()` is **kept** as a safety net (same rationale as runWithDepsImpl).
 
 4. **`detachAll` is consuming, not idempotent-by-iteration.** Both `runWithDepsImpl` and `run-inferential.go::run` define `detachAll` as a closure that:
