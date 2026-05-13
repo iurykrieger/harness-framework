@@ -168,11 +168,17 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	depSignals := map[string]map[string]interface{}{}
 	var liveStack []orchestrator.LiveDep
 
-	defer func() {
+	// detachAll is the consuming detach closure: iterate in reverse,
+	// then clear the slice so the deferred safety-net call is a no-op
+	// after an explicit invocation. The defer remains as a backstop
+	// for panic / mid-function early-return paths.
+	detachAll := func() {
 		for i := len(liveStack) - 1; i >= 0; i-- {
 			orchestrator.DetachLiveDep(liveStack[i], projectRoot, rootID, v, stdout, stderr)
 		}
-	}()
+		liveStack = nil
+	}
+	defer detachAll()
 
 	for _, dep := range order[:len(order)-1] {
 		depExecMap, _ := dep.JSON["execution"].(map[string]interface{})
@@ -220,6 +226,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 			schema.PrintValidationOrPlain(err, stderr)
 			return 1
 		}
+		detachAll()
 		_ = json.NewEncoder(stdout).Encode(cascade)
 		return 1
 	}
@@ -237,6 +244,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 			schema.PrintValidationOrPlain(err, stderr)
 			return 1
 		}
+		detachAll()
 		_ = json.NewEncoder(stdout).Encode(sig)
 		return 0
 	}
@@ -321,6 +329,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		schema.PrintValidationOrPlain(err, stderr)
 		return 1
 	}
+	detachAll()
 	_ = json.NewEncoder(stdout).Encode(sig)
 	return 0
 }
