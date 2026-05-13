@@ -62,17 +62,19 @@ var frameworkCommandPatterns = buildFrameworkCommandPatterns()
 
 func buildFrameworkCommandPatterns() []*regexp.Regexp {
 	skills := strings.Join(sensorSkills, "|")
-	// optional `-C <path>` between `go` and the verb
+	// optional `-C <path>` AFTER the verb (run/test/vet/build), per the
+	// canonical invocation contract in CLAUDE.md. Anchored at the start
+	// of the command so `cd … && go run ./hooks` (the legacy plugin.json
+	// form) does NOT match.
 	chDir := `(?:-C\s+\S+\s+)?`
+	tagsAny := `(?:-tags=\S+\s+)*`
 	return []*regexp.Regexp{
-		// go [-C <path>] run direct from the scripts directory
-		regexp.MustCompile(`go\s+` + chDir + `run\s+(?:-tags=\S+\s+)?\./skills/(?:` + skills + `)-sensors?/scripts\b`),
-		// go [-C <path>] run from hooks
-		regexp.MustCompile(`go\s+` + chDir + `run\s+(?:-tags=\S+\s+)?\./hooks\b`),
-		// installed binaries on PATH
-		regexp.MustCompile(`\bharness-(?:(?:` + skills + `)-sensors?|watcher)\b`),
-		// go [-C <path>] test/vet/build of the framework's own packages
-		regexp.MustCompile(`go\s+` + chDir + `(?:test|vet|build)\s+(?:-tags=\S+\s+)?\./(?:skills|lib|hooks)\b`),
+		// go run [-C <path>] [-tags=…]* ./skills/<skill>-sensors?/scripts
+		regexp.MustCompile(`^go\s+run\s+` + chDir + tagsAny + `\./skills/(?:` + skills + `)-sensors?/scripts\b`),
+		// go run [-C <path>] [-tags=…]* ./hooks
+		regexp.MustCompile(`^go\s+run\s+` + chDir + tagsAny + `\./hooks\b`),
+		// go (test|vet|build) [-C <path>] [-tags=…]* ./{skills,lib,hooks}
+		regexp.MustCompile(`^go\s+(?:test|vet|build)\s+` + chDir + tagsAny + `\./(?:skills|lib|hooks)\b`),
 	}
 }
 
@@ -88,27 +90,22 @@ func commandTouchesFramework(cmd string) bool {
 	return false
 }
 
-// skillExtractRe captures the sensor skill name from either scripts
-// path or installed binary form. Built from sensorSkills.
+// skillExtractRe captures the sensor skill name from the canonical
+// `./skills/<name>-sensors?/scripts` invocation path. Built from
+// sensorSkills.
 var skillExtractRe = func() *regexp.Regexp {
 	skills := strings.Join(sensorSkills, "|")
-	return regexp.MustCompile(`(?:skills/|harness-)((?:` + skills + `)-sensors?)`)
+	return regexp.MustCompile(`skills/((?:` + skills + `)-sensors?)\b`)
 }()
 
 func extractSkill(cmd string) string {
 	if m := skillExtractRe.FindStringSubmatch(cmd); m != nil {
 		return m[1]
 	}
-	// Fallback: harness-watcher binary
-	if regexp.MustCompile(`\bharness-watcher\b`).MatchString(cmd) {
-		return "watcher"
-	}
-	// Fallback: hooks
-	if regexp.MustCompile(`go\s+(?:-C\s+\S+\s+)?run\s+(?:-tags=\S+\s+)?\./hooks\b`).MatchString(cmd) {
+	if regexp.MustCompile(`go\s+run\s+(?:-C\s+\S+\s+)?(?:-tags=\S+\s+)*\./hooks\b`).MatchString(cmd) {
 		return "hook"
 	}
-	// Fallback: go test/vet/build
-	if regexp.MustCompile(`go\s+(?:-C\s+\S+\s+)?(?:test|vet|build)\b`).MatchString(cmd) {
+	if regexp.MustCompile(`go\s+(?:test|vet|build)\b`).MatchString(cmd) {
 		return "test"
 	}
 	return "unknown"
