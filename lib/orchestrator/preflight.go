@@ -42,10 +42,11 @@ type RunDepsResult struct {
 // on stdout during the loop. The root is NOT processed; caller handles
 // it.
 //
-// Intermediate cascade: a non-blocking dep whose own dep failed gets a
-// cascade signal emitted in stdout (metadata.kind=cascade), recorded in
-// Signals, and processing continues. The cascade chain propagates: any
-// dependent of the cascade-marked dep also cascades.
+// Intermediate cascade: any dep (blocking or non-blocking) whose own dep
+// failed gets a cascade signal emitted in stdout (metadata.kind=cascade),
+// recorded in Signals, and processing continues. The cascade chain
+// propagates: any dependent of the cascade-marked dep also cascades. A
+// blocking dep that cascades is never attached as a live subprocess.
 //
 // Root cascade: when iteration finishes, if FirstFailedDep returns
 // non-nil for the root sensor, BuildCascadeSignal is built but NOT
