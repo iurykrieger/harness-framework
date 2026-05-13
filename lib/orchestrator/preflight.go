@@ -83,6 +83,21 @@ func RunDeps(
 		if s.ID == targetID {
 			continue
 		}
+		// Cascade gate applies to both blocking and non-blocking deps. A
+		// dep whose own (transitive) dep failed must not run its command
+		// nor be attached as a blocking subprocess: emit a cascade Signal
+		// and record it so downstream FirstFailedDep calls propagate.
+		if blocker := FirstFailedDep(s, res.Signals); blocker != nil {
+			cascade := BuildCascadeSignal(s, blocker)
+			if err := v.Validate(schema.TargetSignal, cascade); err != nil {
+				schema.PrintValidationOrPlain(err, stderr)
+				res.ExitCode = 1
+				return res
+			}
+			_ = json.NewEncoder(stdout).Encode(cascade)
+			res.Signals[s.ID] = cascade
+			continue
+		}
 		execMap, _ := s.JSON["execution"].(map[string]interface{})
 		blocking, _ := execMap["blocking"].(bool)
 		if blocking {
@@ -102,17 +117,6 @@ func RunDeps(
 			}
 			res.LiveStack = append(res.LiveStack, result.Live)
 			res.Signals[s.ID] = map[string]interface{}{"verdict": "pass"}
-			continue
-		}
-		if blocker := FirstFailedDep(s, res.Signals); blocker != nil {
-			cascade := BuildCascadeSignal(s, blocker)
-			if err := v.Validate(schema.TargetSignal, cascade); err != nil {
-				schema.PrintValidationOrPlain(err, stderr)
-				res.ExitCode = 1
-				return res
-			}
-			_ = json.NewEncoder(stdout).Encode(cascade)
-			res.Signals[s.ID] = cascade
 			continue
 		}
 		sig, sigCode := RunOne(ctx, s, projectRoot, schemasDir, v, stdout, stderr)
