@@ -1587,6 +1587,122 @@ func TestStopBlockingDep_MissingExitCode_FallsBackToPass(t *testing.T) {
 	}
 }
 
+// TestRunWithDeps_BlockingDepDiesPostAttach_CascadesAndSkipsTarget
+// verifies the end-to-end path: a dep that exits 1 immediately after
+// attach produces (1) its honest aggregate, (2) a cascade Signal for
+// the target, and the target's command is NEVER run.
+//
+// Stream contract: aggregate of dep first, cascade of target second,
+// no aggregate for target.
+func TestRunWithDeps_BlockingDepDiesPostAttach_CascadesAndSkipsTarget(t *testing.T) {
+	schemasDir := schematest.RepoSchemasDir(t)
+	root := t.TempDir()
+	writeFailingBlockingDep(t, root, "dies-with-1", 1)
+	writeConsumerOfFailing(t, root, "needs-dies-with-1", "dies-with-1")
+
+	var stdout, stderr bytes.Buffer
+	exit := orchestrator.RunWithDepsRoot(
+		context.Background(), "needs-dies-with-1", root, schemasDir,
+		&stdout, &stderr,
+	)
+	if exit != 1 {
+		t.Fatalf("exit = %d, want 1 (cascade-skipped root)", exit)
+	}
+
+	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+
+	// Build the canonical list of JSONL Signal objects emitted on stdout.
+	var signals []map[string]interface{}
+	for _, line := range lines {
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			continue
+		}
+		signals = append(signals, m)
+	}
+
+	// Filter for top-level final Signals (kind in {aggregate, cascade}).
+	// Earlier attach/dep_started Signals are also present; drop them.
+	var final []map[string]interface{}
+	for _, s := range signals {
+		md, _ := s["metadata"].(map[string]interface{})
+		kind, _ := md["kind"].(string)
+		if kind == "aggregate" || kind == "cascade" {
+			final = append(final, s)
+		}
+	}
+
+	if len(final) != 2 {
+		t.Fatalf("expected exactly 2 final Signals (dep aggregate + cascade); got %d:\n%s", len(final), stdout.String())
+	}
+
+	depAggregate := final[0]
+	targetCascade := final[1]
+
+	if sid, _ := depAggregate["sensor_id"].(string); sid != "dies-with-1" {
+		t.Errorf("first final Signal sensor_id = %q, want %q", sid, "dies-with-1")
+	}
+	if md, _ := depAggregate["metadata"].(map[string]interface{}); md != nil {
+		if kind, _ := md["kind"].(string); kind != "aggregate" {
+			t.Errorf("first final Signal kind = %q, want aggregate", kind)
+		}
+	}
+	if v, _ := depAggregate["verdict"].(string); v != "fail" {
+		t.Errorf("dep verdict = %q, want fail", v)
+	}
+
+	if sid, _ := targetCascade["sensor_id"].(string); sid != "needs-dies-with-1" {
+		t.Errorf("second final Signal sensor_id = %q, want %q", sid, "needs-dies-with-1")
+	}
+	if md, _ := targetCascade["metadata"].(map[string]interface{}); md != nil {
+		if kind, _ := md["kind"].(string); kind != "cascade" {
+			t.Errorf("second final Signal kind = %q, want cascade", kind)
+		}
+		if id, _ := md["failed_dep_id"].(string); id != "dies-with-1" {
+			t.Errorf("cascade.failed_dep_id = %q, want %q", id, "dies-with-1")
+		}
+	}
+}
+
+// writeConsumerOfFailing writes a non-blocking single-output sensor
+// declaring requires[{kind:sensor, id:depID}]. Its command is a long
+// sleep so if the consumer runs (it shouldn't), the test hangs —
+// strongest "skipped" assertion.
+func writeConsumerOfFailing(t *testing.T, root, id, depID string) {
+	t.Helper()
+	dir := filepath.Join(root, ".harness", "sensors")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(fmt.Sprintf(`{
+"id": "%s",
+"version": "1.0.0",
+"name": "Needs %s",
+"description": "Long-running consumer; should be cascade-skipped if dep dies.",
+"determinism": "high",
+"kind": "assertion",
+"type": "computational",
+"output": "single",
+"regulation": "behaviour",
+"phase": "on-demand",
+"triggers": [{"on": "manual"}],
+"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"requires": [{"kind":"sensor","id":"%s"}],
+"cost": {
+  "class": "cheap",
+  "compute": {"cpu":"low","memory_mb":32},
+  "latency": {"p50_ms":10,"p95_ms":50,"timeout_ms":60000}
+},
+"execution": {
+  "command": "sleep 30; echo OK",
+  "exit_code_map": [{"exit_code":0,"verdict":"pass","severity":"info"},{"exit_code":"*","verdict":"fail","severity":"high"}]
+}
+}`, id, depID, depID))
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestStartBlockingDep_WritesExitCodeFile verifies the wrapper captures the
 // subprocess's real exit status into <sensorDir>/exit_code. The wrapper must
 // not swallow the exit code or replace it with its own.

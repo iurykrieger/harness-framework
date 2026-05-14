@@ -130,6 +130,21 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 	}
 
 	target := pre.Order[len(pre.Order)-1]
+
+	// Post-attach liveness gate: if any blocking dep died between
+	// AttachLiveDep and now, emit its honest aggregate, build a
+	// cascade Signal for the target, skip RunOne, and exit 1.
+	// detachAll runs as a deferred safety net.
+	if _, depAgg, _ := AwaitDepLiveness(pre.LiveStack, projectRoot); depAgg != nil {
+		depID, _ := depAgg["sensor_id"].(string)
+		depAgg = validateOrFallback(v, depAgg, depID, stderr)
+		_ = json.NewEncoder(stdout).Encode(depAgg)
+		cascade := BuildCascadeSignal(target, depAgg)
+		cascade = validateOrFallback(v, cascade, target.ID, stderr)
+		_ = json.NewEncoder(stdout).Encode(cascade)
+		return 1
+	}
+
 	sig, code := RunOneWithRootCapture(ctx, target, projectRoot, schemasDir, v, root, stdout, stderr)
 	detachAll()
 	if sig != nil {

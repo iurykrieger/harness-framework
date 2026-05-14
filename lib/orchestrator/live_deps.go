@@ -188,6 +188,134 @@ func hasLiveSameIDHolder(entry *registry.RunningSensorEntry, holderID string) bo
 	return false
 }
 
+// depExitFileSettleTimeout is the maximum time AwaitDepLiveness waits for
+// the exit_code sidecar to appear. A healthy long-running dep never writes
+// this file, so this timeout is the full overhead for such deps. Dying deps
+// typically write the file within a few milliseconds of spawn — the loop
+// exits early as soon as the file appears.
+const depExitFileSettleTimeout = 250 * time.Millisecond
+
+// depExitFilePollInterval is the sleep between exit_code file checks inside
+// AwaitDepLiveness's settle loop.
+const depExitFilePollInterval = 10 * time.Millisecond
+
+// AwaitDepLiveness checks every LiveDep in the passed slice for premature
+// failure. For each dep, it briefly polls the exit_code sidecar file (up to
+// depExitFileSettleTimeout) and exits the loop as soon as the file appears.
+//
+// Two signals tell us the dep is no longer healthy:
+//   - exit_code sidecar exists with content → wrapper finished, command exited
+//     (regardless of whether the shell PID lingers as an orphan — a macOS quirk).
+//   - PID is dead AND no exit_code → dep was killed abnormally before the
+//     wrapper could write the file.
+//
+// If a dep's exit_code file has content (non-zero) when the settle window
+// closes, that dep has died prematurely: its honest aggregate is constructed
+// and a (deadDepID, depAggregate, runID) triple is returned. The registry
+// entry is removed before returning so DetachLiveDep (via defer detachAll)
+// sees no entry and emits nothing — preventing a duplicate aggregate.
+//
+// When no dep has died within the settle window, returns ("", nil, "").
+// Deps that die later are caught by stopBlockingDep at detach time.
+//
+// The returned depAggregate is NOT yet validated; callers send it
+// through validateOrFallback before emitting.
+func AwaitDepLiveness(deps []LiveDep, projectRoot string) (deadDepID string, depAggregate map[string]interface{}, depRunID string) {
+	r := registry.NewRoot(projectRoot)
+	for _, d := range deps {
+		rs, err := registry.Load(r)
+		if err != nil {
+			continue
+		}
+		entry := rs.FindEntryByRunID(d.RunID)
+		if entry == nil {
+			continue
+		}
+
+		// Poll the exit_code sidecar file for up to depExitFileSettleTimeout.
+		// A healthy long-running dep never writes this file, so the poll runs
+		// its full duration and then moves on. A dep that exits quickly writes
+		// the file within milliseconds; we break as soon as it appears.
+		// The PID check provides an additional signal: if the PID is already
+		// dead with no file written, the dep was killed abnormally (no cascade).
+		exitFile := filepath.Join(r.SensorDir(d.ID), "exit_code")
+		fileBody, fileErr := os.ReadFile(exitFile)
+		fileHasContent := fileErr == nil && len(bytes.TrimSpace(fileBody)) > 0
+
+		if !fileHasContent {
+			// File not written yet. Poll briefly to catch deps that exit fast.
+			// Exit early if PID is dead and no file (killed before write —
+			// treat as pass). Continue polling if PID is still alive.
+			deadline := time.Now().Add(depExitFileSettleTimeout)
+			for !fileHasContent && time.Now().Before(deadline) {
+				b, rerr := os.ReadFile(exitFile)
+				if rerr == nil && len(bytes.TrimSpace(b)) > 0 {
+					fileHasContent = true
+					fileBody = b
+					break
+				}
+				// If PID is dead and file still not written, dep was killed
+				// abnormally (SIGKILL before wrapper could write). No cascade.
+				if !registry.IsPIDAlive(entry.PID) {
+					break
+				}
+				time.Sleep(depExitFilePollInterval)
+			}
+		}
+
+		// Dep is finished. readDepExitState computes the verdict + evidence.
+		verdict, severity, exitCode, evidenceItems, healHint := readDepExitState(r, d.ID, d.RunID)
+		if verdict == "pass" {
+			// Finished cleanly (exit 0 or exit_code absent after kill);
+			// no cascade.
+			continue
+		}
+
+		now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		md := map[string]interface{}{
+			"kind":        "aggregate",
+			"command":     entry.Command,
+			"output_mode": "stream",
+			"counts":      map[string]int{"pass": 0, "warn": 0, "fail": 0, "error": 0},
+		}
+		if exitCode != nil {
+			md["exit_code"] = *exitCode
+		}
+		if healHint != "" {
+			md["heal_hint"] = healHint
+		}
+		agg := map[string]interface{}{
+			"sensor_id":   d.ID,
+			"version":     "0.0.0",
+			"run_id":      uuid.NewString(),
+			"started_at":  entry.StartedAt,
+			"finished_at": now,
+			"verdict":     verdict,
+			"severity":    severity,
+			"confidence":  1.0,
+			"evidence":    evidenceItems,
+			"cost_actual": map[string]interface{}{"latency_ms": 0},
+			"metadata":    md,
+		}
+
+		// BEFORE returning: remove the dead dep's registry entry so
+		// DetachLiveDep called later (via defer detachAll) sees no entry
+		// and emits nothing. Without this step, detachAll emits a second
+		// aggregate for the same dep.
+		_ = registry.WithFileLock(r.LockFile(), func() error {
+			rs2, lerr := registry.Load(r)
+			if lerr != nil {
+				return lerr
+			}
+			rs2.RemoveEntryByRunID(d.RunID)
+			return registry.Save(r, rs2)
+		})
+
+		return d.ID, agg, d.RunID
+	}
+	return "", nil, ""
+}
+
 // DetachLiveDep removes the holder from dep's HeldBy. If HeldBy becomes
 // empty, the dep is stopped (SIGTERM/SIGKILL, registry cleanup) and an
 // aggregate Signal is emitted on stdout. Otherwise emits dep_detached.
@@ -298,6 +426,15 @@ func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, 
 	if len(shortUUID) >= 8 {
 		shortUUID = shortUUID[:8]
 	}
+
+	// Read graceful_timeout_ms from the sensor's execution config so
+	// stopBlockingDep can use the sensor-declared grace period instead of
+	// a hardcoded default. Zero means "use stopBlockingDep's default".
+	gracefulMS := 0
+	if gv, ok := execMap["graceful_timeout_ms"].(float64); ok && gv > 0 {
+		gracefulMS = int(gv)
+	}
+
 	runID := fmt.Sprintf("%d-%s", det.PID, shortUUID)
 	runDir := r.RunDir(dep.ID, runID)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
@@ -371,16 +508,17 @@ func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, 
 
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	rs.Entries = append(rs.Entries, registry.RunningSensorEntry{
-		SensorID:   dep.ID,
-		RunID:      runID,
-		Blocking:   true,
-		PID:        det.PID,
-		PGID:       det.PGID,
-		WatcherPID: watcherPID,
-		StartedAt:  now,
-		Command:    command,
-		LogDir:     r.RelativeRunDir(dep.ID, runID),
-		HeldBy:     []registry.HeldByEntry{holder},
+		SensorID:          dep.ID,
+		RunID:             runID,
+		Blocking:          true,
+		PID:               det.PID,
+		PGID:              det.PGID,
+		WatcherPID:        watcherPID,
+		StartedAt:         now,
+		Command:           command,
+		LogDir:            r.RelativeRunDir(dep.ID, runID),
+		GracefulTimeoutMS: gracefulMS,
+		HeldBy:            []registry.HeldByEntry{holder},
 	})
 	if err := registry.Save(r, *rs); err != nil {
 		if det.PGID > 0 {
@@ -422,19 +560,23 @@ func stringFieldFromJSON(m map[string]interface{}, key string) string {
 // it, or the file is absent for any other reason), the verdict=pass
 // aggregate is preserved.
 func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, v *schema.Validator, stdout, stderr io.Writer) {
-	gracefulMS := 5000
+	// gracefulMS is the SIGTERM grace period before SIGKILL. Prefer the
+	// sensor-declared value stored in the registry entry; fall back to
+	// 500ms when GracefulTimeoutMS is unset (zero value).
+	gracefulMS := 500
+	if entry.GracefulTimeoutMS > 0 {
+		gracefulMS = entry.GracefulTimeoutMS
+	}
 	if entry.PGID > 0 {
 		_ = syscall.Kill(-entry.PGID, syscall.SIGTERM)
-		deadline := time.Now().Add(time.Duration(gracefulMS) * time.Millisecond)
-		for time.Now().Before(deadline) {
-			if !registry.IsPIDAlive(entry.PID) {
-				break
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-		if registry.IsPIDAlive(entry.PID) {
-			_ = syscall.Kill(-entry.PGID, syscall.SIGKILL)
-		}
+		// Wait the grace period, then SIGKILL regardless. We do NOT poll
+		// IsPIDAlive here: detached processes (Setsid:true, Release()'d)
+		// become zombies after exiting — kill(pid,0) returns success for
+		// zombies, so polling would always wait the full grace period. A
+		// time-bounded wait followed by SIGKILL is simpler and correct
+		// (SIGKILL on an already-dead process is a harmless no-op).
+		time.Sleep(time.Duration(gracefulMS) * time.Millisecond)
+		_ = syscall.Kill(-entry.PGID, syscall.SIGKILL)
 	}
 	// Kill the watcher subprocess if one was registered. Mirrors the
 	// stopWatcher helper in skills/stop-sensor/scripts/stop.go.
@@ -460,7 +602,7 @@ func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, v *sch
 		return registry.Save(r, rs)
 	})
 
-	verdict, severity, exitCode, evidenceItems, healHint := readDepExitState(r, entry.SensorID)
+	verdict, severity, exitCode, evidenceItems, healHint := readDepExitState(r, entry.SensorID, entry.RunID)
 
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	md := map[string]interface{}{
@@ -507,7 +649,7 @@ const depRawLogTailLines = 20
 //     depRawLogTailLines non-empty lines of raw.log as excerpt entries.
 //   - healHint: "<shape>:<line>" when any tail line matches a curated
 //     heal pattern, empty otherwise.
-func readDepExitState(r registry.Root, depID string) (verdict, severity string, exitCode *int, evidenceItems []interface{}, healHint string) {
+func readDepExitState(r registry.Root, depID, runID string) (verdict, severity string, exitCode *int, evidenceItems []interface{}, healHint string) {
 	exitFile := filepath.Join(r.SensorDir(depID), "exit_code")
 	body, err := os.ReadFile(exitFile)
 	if err != nil || len(bytes.TrimSpace(body)) == 0 {
@@ -537,7 +679,7 @@ func readDepExitState(r registry.Root, depID string) (verdict, severity string, 
 			""
 	}
 
-	tail := tailRawLog(r.RawLog(depID), depRawLogTailLines)
+	tail := tailRawLog(r.RawLogRun(depID, runID), depRawLogTailLines)
 	ev := make([]interface{}, 0, len(tail))
 	for _, line := range tail {
 		ev = append(ev, map[string]interface{}{
