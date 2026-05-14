@@ -1,0 +1,11 @@
+{
+  "id": "x",
+  "version": "v1",
+  "name": "x",
+  "description": "x",
+  "journey_id": "y",
+  "trigger":          { "summary": "x", "shape": "x", "fixture": {} },
+  "behavior":         { "summary": "x" },
+  "expected_outcome": { "summary": "x", "shape": "x", "fixture": {} },
+  "evidence": [{ "file": "x.go", "rationale": "x" }]
+}
