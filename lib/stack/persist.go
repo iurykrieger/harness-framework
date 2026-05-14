@@ -38,6 +38,18 @@ func ValidateAndPersist(stackJSON []byte, projectRoot string, schemasDir string)
 		return "", err
 	}
 
+	body, _ := json.Marshal(m)
+	var typed Stack
+	if err := json.Unmarshal(body, &typed); err != nil {
+		return "", fmt.Errorf("decode after schema validation: %w", err)
+	}
+	if err := CheckProducedBy(&typed); err != nil {
+		return "", err
+	}
+	if err := CheckJourneyArchetypes(&typed); err != nil {
+		return "", err
+	}
+
 	outDir := filepath.Join(projectRoot, ".harness")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)

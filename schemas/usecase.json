@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness-framework/schemas/usecase.json",
+  "title": "UseCase",
+  "description": "An observable journey variation of the project: one concrete input shape, one expected behavior, one expected outcome. Produced by /detect-usecases; consumed by /create-sensor to synthesize deterministic regression sensors.",
+
+  "$defs": {
+    "Evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "rationale"],
+      "properties": {
+        "file":       { "type": "string" },
+        "line_start": { "type": ["integer", "null"], "minimum": 1 },
+        "line_end":   { "type": ["integer", "null"], "minimum": 1 },
+        "rationale":  { "type": "string" }
+      }
+    },
+    "Trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "shape", "fixture"],
+      "properties": {
+        "summary":       { "type": "string" },
+        "shape":         { "type": "string" },
+        "fixture":       { "description": "Concrete example input. Free shape; depends on the trigger kind." },
+        "preconditions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Behavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary"],
+      "properties": {
+        "summary":        { "type": "string" },
+        "business_rules": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ExpectedOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "shape", "fixture"],
+      "properties": {
+        "summary":      { "type": "string" },
+        "shape":        { "type": "string" },
+        "fixture":      { "description": "Concrete example output." },
+        "invariants":   { "type": "array", "items": { "type": "string" } },
+        "side_effects": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "version", "name", "description",
+    "journey_id",
+    "trigger", "behavior", "expected_outcome",
+    "evidence"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[A-Za-z0-9.-]+)?(\\+[A-Za-z0-9.-]+)?$"
+    },
+    "name":        { "type": "string" },
+    "description": { "type": "string" },
+    "journey_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "trigger":          { "$ref": "#/$defs/Trigger" },
+    "behavior":         { "$ref": "#/$defs/Behavior" },
+    "expected_outcome": { "$ref": "#/$defs/ExpectedOutcome" },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Evidence" }
+    },
+    "regression_priority": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low"]
+    },
+    "blind_spots": { "type": "array", "items": { "type": "string" } },
+    "tags":        { "type": "array", "items": { "type": "string" } },
+    "references":  { "type": "array", "items": { "type": "string" } }
+  }
+}
