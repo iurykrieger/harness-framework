@@ -14,6 +14,7 @@ func TestLoadStackFile(t *testing.T) {
 		wantSubstr string // expected fragment in stderr when wantCode != 0
 	}{
 		{name: "golden", fixture: "golden-stack.json", wantCode: 0},
+		{name: "with journeys", fixture: "golden-stack-with-journeys.json", wantCode: 0},
 		{name: "missing required", fixture: "invalid-missing-required.json", wantCode: 1, wantSubstr: "version"},
 		{name: "bad enum", fixture: "invalid-enum.json", wantCode: 1, wantSubstr: "format"},
 	}

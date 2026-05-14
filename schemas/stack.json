@@ -141,6 +141,64 @@
           "description": "One real example line of this shape, exactly as it would appear on stdout. Used as a golden reference: regex patterns drafted for this shape MUST match the sample. For format=stack-trace, may contain embedded newlines."
         }
       }
+    },
+    "Archetype": {
+      "type": "string",
+      "enum": [
+        "http-api",
+        "http-spa",
+        "http-ssr",
+        "queue-consumer",
+        "queue-producer",
+        "cli-tool",
+        "library",
+        "iac",
+        "data-pipeline",
+        "scheduler",
+        "event-driven-service",
+        "db-bound-service"
+      ]
+    },
+    "EntryPointKind": {
+      "type": "string",
+      "enum": [
+        "http-route",
+        "queue-subscription",
+        "cli-command",
+        "scheduled-job",
+        "event-handler",
+        "grpc-method"
+      ]
+    },
+    "EntryPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "evidence"],
+      "properties": {
+        "kind":     { "$ref": "#/$defs/EntryPointKind" },
+        "method":   { "type": "string" },
+        "path":     { "type": "string" },
+        "topic":    { "type": "string" },
+        "command":  { "type": "string" },
+        "schedule": { "type": "string" },
+        "evidence": { "$ref": "#/$defs/Evidence" }
+      }
+    },
+    "Journey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "summary", "archetype", "entry_points"],
+      "properties": {
+        "id":        { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "name":      { "type": "string" },
+        "summary":   { "type": "string" },
+        "archetype": { "$ref": "#/$defs/Archetype" },
+        "entry_points": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/EntryPoint" }
+        }
+      }
     }
   },
 
@@ -198,6 +256,20 @@
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/LogShape" }
+    },
+    "purpose": {
+      "type": "string",
+      "description": "One-sentence declarative description of what the application does in the world."
+    },
+    "archetypes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Archetype" },
+      "description": "Closed-enum archetype labels. Multiple values valid for hybrid apps."
+    },
+    "journeys": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Journey" },
+      "description": "Aggregation layer that UseCases reference via journey_id."
     }
   }
 }
