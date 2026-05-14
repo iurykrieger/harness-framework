@@ -307,6 +307,38 @@ func TestValidator_UseCaseTarget(t *testing.T) {
 	}
 }
 
+func TestValidator_UseCaseTarget_AcceptsValidInstance(t *testing.T) {
+	schemasDir := schematest.RepoSchemasDir(t)
+	v, err := schema.NewValidator(schemasDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := map[string]interface{}{
+		"id":          "create-user",
+		"version":     "0.1.0",
+		"name":        "Create user",
+		"description": "POST /users creates an account.",
+		"journey_id":  "user-registration",
+		"trigger": map[string]interface{}{
+			"summary": "POST /users",
+			"shape":   "HTTP request",
+			"fixture": map[string]interface{}{"method": "POST", "path": "/users"},
+		},
+		"behavior": map[string]interface{}{"summary": "validates and persists"},
+		"expected_outcome": map[string]interface{}{
+			"summary": "201 created",
+			"shape":   "HTTP response",
+			"fixture": map[string]interface{}{"status": 201},
+		},
+		"evidence": []interface{}{
+			map[string]interface{}{"file": "src/users/controller.ts", "rationale": "handler"},
+		},
+	}
+	if err := v.Validate(schema.TargetUseCase, valid); err != nil {
+		t.Fatalf("expected valid usecase to pass, got: %v", err)
+	}
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // helpers
 // ──────────────────────────────────────────────────────────────────────
