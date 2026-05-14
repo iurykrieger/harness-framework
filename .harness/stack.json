@@ -1,0 +1,140 @@
+{
+  "components": [
+    {
+      "config_summary": "Go standard testing package. Tests are invoked via `go test -race -count=1 ./lib/...` and `go test -race -count=1 -tags=\u003ctag\u003e ./skills/...` in CI; sensors that observe these runs add `-v` so each test result becomes an individually-actionable `--- PASS:`, `--- FAIL:`, or `--- SKIP:` line on stdout. Table-driven tests are the project default.",
+      "evidence": [
+        {
+          "file": ".github/workflows/test.yml",
+          "line_start": 40,
+          "rationale": "CI runs `go test -race -count=1 ./lib/...` and `-tags=run_computational/run_inferential ./skills/...`."
+        },
+        {
+          "file": "lib/sensor/envelope_test.go",
+          "rationale": "Representative table-driven test using the standard testing package."
+        }
+      ],
+      "name": "testing",
+      "role": "test-runner",
+      "version": "1.25.3"
+    },
+    {
+      "config_summary": "Go toolchain compiler and vet. Invoked via `go build -o /dev/null ./skills/...` and `go vet -tags=\u003ctag\u003e ./...`; emits diagnostic lines in the form `\u003cfile\u003e:\u003cline\u003e:\u003ccol\u003e: \u003cmessage\u003e` to stderr (and stdout when piped). Same diagnostic shape across vet and build.",
+      "evidence": [
+        {
+          "file": ".github/workflows/test.yml",
+          "line_start": 34,
+          "rationale": "CI runs `go vet -tags=run_computational ./...` and `go build -tags=... -o /dev/null` to surface diagnostics."
+        }
+      ],
+      "name": "go-tool-compiler",
+      "role": "log-encoder",
+      "version": "1.25.3"
+    },
+    {
+      "config_summary": "The harness sensor runner emits one Signal JSON object per matched line (stream mode) plus one final aggregate Signal on stdout as JSONL; objects conform to schemas/signal.json. Carrier of verdict/severity for cross-sensor routing.",
+      "evidence": [
+        {
+          "file": "lib/signal/builder.go",
+          "rationale": "Where Signals are constructed and serialized as JSON to stdout."
+        },
+        {
+          "file": "schemas/signal.json",
+          "rationale": "Contract for the JSON shape."
+        }
+      ],
+      "name": "harness-signal-encoder",
+      "role": "logger",
+      "version": "1.1.0"
+    }
+  ],
+  "detected_at": "2026-05-14T10:00:00Z",
+  "detected_by": "anthropic/claude-opus-4-7",
+  "languages": [
+    {
+      "name": "go",
+      "version": "1.25.3"
+    }
+  ],
+  "log_shapes": [
+    {
+      "format": "plain",
+      "id": "go-test-verbose",
+      "produced_by": [
+        "testing"
+      ],
+      "sample": "    --- PASS: TestEnvelopeValidate/all_required_fields (0.00s)",
+      "severity_values": [
+        "PASS",
+        "FAIL",
+        "SKIP"
+      ]
+    },
+    {
+      "format": "plain",
+      "id": "go-compiler-diagnostic",
+      "produced_by": [
+        "go-tool-compiler"
+      ],
+      "sample": "lib/sensor/validate.go:42:9: undefined: foo"
+    },
+    {
+      "fields": [
+        {
+          "key": "sensor_id",
+          "meaning": "service"
+        },
+        {
+          "key": "version",
+          "meaning": "version"
+        },
+        {
+          "key": "run_id",
+          "meaning": "request_id"
+        },
+        {
+          "key": "started_at",
+          "meaning": "timestamp"
+        },
+        {
+          "key": "finished_at",
+          "meaning": "timestamp"
+        },
+        {
+          "example_values": [
+            "pass",
+            "warn",
+            "fail",
+            "error"
+          ],
+          "key": "verdict",
+          "meaning": "other"
+        },
+        {
+          "example_values": [
+            "info",
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "key": "severity",
+          "meaning": "severity"
+        }
+      ],
+      "format": "json",
+      "id": "harness-signal-jsonl",
+      "produced_by": [
+        "harness-signal-encoder"
+      ],
+      "sample": "{\"sensor_id\":\"lint-go-vet-computational\",\"version\":\"0.1.0\",\"run_id\":\"42-abcd1234\",\"started_at\":\"2026-05-14T10:00:00Z\",\"finished_at\":\"2026-05-14T10:00:01Z\",\"verdict\":\"pass\",\"severity\":\"info\",\"confidence\":1,\"evidence\":[],\"cost_actual\":{\"latency_ms\":120}}",
+      "severity_values": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    }
+  ],
+  "version": "0.1.0"
+}

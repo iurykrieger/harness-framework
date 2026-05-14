@@ -63,7 +63,7 @@ func TestReapDead_DropsDeadHolders(t *testing.T) {
 	e := &registry.RunningSensorEntry{
 		HeldBy: []registry.HeldByEntry{
 			{Kind: "manual", AttachedAt: "t1"},
-			{Kind: "sensor", ID: "B", PID: 3_999_999, AttachedAt: "t2"}, // dead
+			{Kind: "sensor", ID: "B", PID: 3_999_999, AttachedAt: "t2"},          // dead
 			{Kind: "sensor", ID: "C", PID: registry.SelfPID(), AttachedAt: "t3"}, // alive
 		},
 	}

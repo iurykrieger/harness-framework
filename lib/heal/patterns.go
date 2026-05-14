@@ -4,9 +4,9 @@
 //
 // metadata.heal_hint contract (consumed by rule_heal_hint.go):
 //
-//   heal_hint := <shape> ":" <detail>
-//   shape     := "missing-env" | "binary-not-found" | "env-file-absent" | "service-unavailable" | "missing-context"
-//   detail    := opaque string (var name, binary name, path, service)
+//	heal_hint := <shape> ":" <detail>
+//	shape     := "missing-env" | "binary-not-found" | "env-file-absent" | "service-unavailable" | "missing-context"
+//	detail    := opaque string (var name, binary name, path, service)
 //
 // Adding a shape is a versioned plugin change; deleting one is a
 // breaking change.

@@ -53,7 +53,7 @@ func ValidateEntry(e RunningSensorEntry) error {
 // SanitizeReport records one mutation performed by SanitizeAll.
 type SanitizeReport struct {
 	SensorID string `json:"sensor_id"`
-	Field    string `json:"field"`   // "watcher_pid" | "held_by[i].pid" | "pid" | "pgid"
+	Field    string `json:"field"` // "watcher_pid" | "held_by[i].pid" | "pid" | "pgid"
 	OldValue int    `json:"old_value"`
 	Dropped  bool   `json:"dropped"` // entry or holder discarded entirely
 }

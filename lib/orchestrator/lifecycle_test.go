@@ -581,7 +581,6 @@ func loadSensorForTest(path string) (Sensor, error) {
 	return Sensor{ID: id, Path: path, JSON: j}, nil
 }
 
-
 // The aggregate Signal emitted on stdout is valid JSON and the LAST line.
 func TestRunOne_OutputIsValidJSON(t *testing.T) {
 	schemasDir := schematest.RepoSchemasDir(t)

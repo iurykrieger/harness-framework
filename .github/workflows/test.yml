@@ -68,3 +68,161 @@ jobs:
 
       - name: Build inferential runner
         run: go build -tags=run_inferential -o /dev/null ./skills/run-sensor/scripts
+
+  sensors:
+    name: sensors — run plugin against itself
+    runs-on: ubuntu-latest
+    env:
+      CLAUDE_PLUGIN_ROOT: ${{ github.workspace }}
+      HARNESS_REGISTRY_ROOT: ${{ github.workspace }}
+      GOWORK: "off"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Validate every sensor JSON against schemas/sensor.json
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          for f in .harness/sensors/*.json; do
+            go run -tags=write_sensor ./skills/detect-sensors/scripts \
+              --out="$tmp" --schemas-dir="$(pwd)/schemas" "$f" > /dev/null
+          done
+          rm -rf "$tmp"
+
+      - name: Validate .harness/stack.json against schemas/stack.json
+        run: |
+          set -euo pipefail
+          if [ -f .harness/stack.json ]; then
+            tmp=$(mktemp -d)
+            go run -tags=write_stack ./skills/detect-sensors/scripts \
+              --out="$tmp" --schemas-dir="$(pwd)/schemas" .harness/stack.json > /dev/null
+            rm -rf "$tmp"
+          fi
+
+      - name: Run all non-setup sensors (gate)
+        shell: bash
+        run: |
+          # GitHub Actions defaults to `bash -eo pipefail`. We want to
+          # collect every sensor's verdict before exiting, not abort on
+          # the first red signal.
+          set +e
+          set -uo pipefail
+          fail=0
+          declare -a results=()
+
+          # run_one drives the lifecycle for a single sensor.
+          # - One-shot sensors go through /run-sensor and the aggregate
+          #   is read off the last JSONL line.
+          # - Blocking sensors go through /start-sensor → /tail-sensor
+          #   (looped until the first individual Signal appears or a
+          #   boot timeout elapses) → /stop-sensor for the aggregate.
+          run_one() {
+            local id="$1" blocking="$2"
+            local out verdict severity counts mode
+
+            if [ "$blocking" = "true" ]; then
+              mode="blocking"
+
+              # Defensive cleanup in case a prior step left it running.
+              go run -tags=stop_sensor ./skills/stop-sensor/scripts "$id" >/dev/null 2>&1 || true
+
+              # /start-sensor — fail fast if start itself fails.
+              local start_out start_verdict
+              start_out=$(go run -tags=start_sensor ./skills/start-sensor/scripts "$id" 2>&1 | tail -n 1)
+              start_verdict=$(echo "$start_out" | jq -r '.verdict // "error"')
+              if [ "$start_verdict" != "pass" ]; then
+                echo "$id|$start_verdict|$(echo "$start_out" | jq -r '.severity // "high"')|start_failed|$mode"
+                return
+              fi
+
+              # /tail-sensor loop — wait up to BOOT_TIMEOUT_S seconds for
+              # the first non-envelope Signal. Each /tail-sensor call
+              # returns N individual lines followed by one envelope line
+              # carrying metadata.next_cursor.
+              local cursor=0 deadline saw_individual=0 tail_out individuals
+              local BOOT_TIMEOUT_S=15
+              deadline=$(( $(date +%s) + BOOT_TIMEOUT_S ))
+              while [ "$(date +%s)" -lt "$deadline" ]; do
+                tail_out=$(go run -tags=tail_sensor ./skills/tail-sensor/scripts "$id" "$cursor" 2>&1)
+                cursor=$(echo "$tail_out" | tail -n 1 | jq -r '.metadata.next_cursor // 0')
+                individuals=$(echo "$tail_out" | jq -c 'select(.metadata.kind != "envelope")' 2>/dev/null || true)
+                if [ -n "$individuals" ]; then
+                  saw_individual=1
+                  echo "::group::tail $id (boot — first individuals)"
+                  echo "$individuals" | head -n 20
+                  echo "::endgroup::"
+                  break
+                fi
+                sleep 0.5
+              done
+
+              # /stop-sensor — always runs; produces the aggregate.
+              out=$(go run -tags=stop_sensor ./skills/stop-sensor/scripts "$id" 2>&1 | tail -n 1)
+              verdict=$(echo "$out" | jq -r '.verdict // "error"')
+              severity=$(echo "$out" | jq -r '.severity // "high"')
+              counts=$(echo "$out" | jq -r '.metadata.counts | "p=\(.pass) w=\(.warn) f=\(.fail) e=\(.error)"' 2>/dev/null || echo "n/a")
+              # If the sensor never produced an individual line, downgrade
+              # to a fail — it never proved itself "up".
+              if [ "$saw_individual" = "0" ] && [ "$verdict" = "pass" ]; then
+                verdict="fail"; severity="high"; counts="${counts} (no boot within ${BOOT_TIMEOUT_S}s)"
+              fi
+            else
+              mode="one-shot"
+              out=$(go run -tags=run_computational ./skills/run-sensor/scripts "$id" 2>&1 | tail -n 1)
+              verdict=$(echo "$out" | jq -r '.verdict // "error"')
+              severity=$(echo "$out" | jq -r '.severity // "high"')
+              counts=$(echo "$out" | jq -r '.metadata.counts | "p=\(.pass) w=\(.warn) f=\(.fail) e=\(.error)"' 2>/dev/null || echo "n/a")
+            fi
+
+            echo "::group::sensor $id ($mode) → $verdict/$severity ($counts)"
+            echo "$out" | jq .
+            echo "::endgroup::"
+            echo "$id|$verdict|$severity|$counts|$mode"
+          }
+
+          for f in .harness/sensors/*.json; do
+            id=$(basename "$f" .json)
+            kind=$(jq -r .kind "$f")
+            blocking=$(jq -r '.execution.blocking // false' "$f")
+
+            if [ "$kind" = "setup" ]; then
+              echo "skip $id (kind=$kind — pulled in by orchestrator only as a dep)"
+              continue
+            fi
+
+            row=$(run_one "$id" "$blocking" | tail -n 1)
+            results+=("$row")
+            verdict=$(echo "$row" | cut -d'|' -f2)
+            if [ "$verdict" != "pass" ]; then
+              echo "::error file=.harness/sensors/$id.json::Sensor $id failed: $row"
+              fail=1
+            fi
+          done
+
+          echo ""
+          echo "========================================================================"
+          echo "  Sensors report (pre-merge gate)"
+          echo "========================================================================"
+          printf '%-44s %-9s %-7s %-9s %s\n' "SENSOR" "MODE" "VERDICT" "SEVERITY" "COUNTS"
+          echo "------------------------------------------------------------------------"
+          for row in "${results[@]}"; do
+            IFS='|' read -r id verdict severity counts mode <<< "$row"
+            case "$verdict" in
+              pass) icon="✅" ;;
+              warn) icon="⚠️ " ;;
+              *)    icon="❌" ;;
+            esac
+            printf '%s %-44s %-9s %-7s %-9s %s\n' "$icon" "$id" "$mode" "$verdict" "$severity" "$counts"
+          done
+          echo "========================================================================"
+          exit $fail

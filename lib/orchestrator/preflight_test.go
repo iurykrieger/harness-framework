@@ -391,4 +391,3 @@ func TestRunDeps_BlockingDepGateFails_EmitsPreflightSignalAndCascadesRoot(t *tes
 		t.Error("registry has entry for blocking-dep; expected none")
 	}
 }
-

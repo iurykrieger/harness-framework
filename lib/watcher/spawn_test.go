@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-
 func TestSpawn_DelegatesToSpawnFn(t *testing.T) {
 	called := false
 	prev := SpawnFn
@@ -36,13 +35,12 @@ func TestSpawn_DelegatesToSpawnFn(t *testing.T) {
 	}
 }
 
-
 func TestSpawn_RejectsEmptyPluginRoot(t *testing.T) {
 	// Force production code path (no SpawnFn override).
 	pid, err := Spawn(SpawnOpts{
-		ProjectRoot:    t.TempDir(),
-		SensorID:       "x",
-		RunID:          "r1",
+		ProjectRoot: t.TempDir(),
+		SensorID:    "x",
+		RunID:       "r1",
 		// PluginRoot intentionally empty
 		RawLogPath:     "/dev/null",
 		SignalsLogPath: "/dev/null",
