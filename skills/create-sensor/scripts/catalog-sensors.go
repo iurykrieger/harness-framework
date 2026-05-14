@@ -8,9 +8,10 @@
 //
 // Usage:
 //
-//	catalog-sensors [--sensors-dir <dir>] [--schemas-dir <dir>]
+//	catalog-sensors
 //
-// Exit codes: 0 normal completion, 2 usage error.
+// Exit codes: 0 normal completion, 1 registry discovery failed,
+// 2 usage error, 2 schema validator init failed.
 package main
 
 import (
@@ -22,11 +23,10 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"time"
 
-	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/cli"
 	"github.com/iurykrieger/harness-framework/lib/schema"
-	"github.com/iurykrieger/harness-framework/lib/sensor"
+	"github.com/iurykrieger/harness-framework/lib/signal"
 )
 
 func main() {
@@ -36,32 +36,22 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("catalog-sensors", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var sensorsDir, schemasDir string
-	fs.StringVar(&sensorsDir, "sensors-dir", "", "directory to scan (default: <projectRoot>/.harness/sensors/)")
-	fs.StringVar(&schemasDir, "schemas-dir", "", "schemas directory; when set, each sensor is schema-validated")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "usage: catalog-sensors [--sensors-dir DIR] [--schemas-dir DIR]")
+		fmt.Fprintln(stderr, "usage: catalog-sensors")
 		return 2
 	}
 
-	// Resolve sensorsDir via registry discovery if not explicit.
-	if sensorsDir == "" {
-		cwd, _ := os.Getwd()
-		res, err := registry.Lookup(cwd)
-		if err != nil {
-			// Discovery failed; emit the canonical signal and exit 0 (empty catalog).
-			emitJSON(stdout, registry.DiscoveryErrorSignal(err, "catalog-sensors"))
-			return 0
-		}
-		sensorsDir = filepath.Join(res.ProjectRoot, ".harness", "sensors")
+	boot := cli.Bootstrap("catalog-sensors", stdout, stderr)
+	if boot.ExitCode != 0 {
+		return boot.ExitCode
 	}
 
+	sensorsDir := filepath.Join(boot.Res.ProjectRoot, ".harness", "sensors")
 	entries, err := os.ReadDir(sensorsDir)
 	if err != nil {
-		// Missing directory: empty catalog, exit 0.
 		if os.IsNotExist(err) {
 			return 0
 		}
@@ -69,7 +59,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	// Build a stable order for deterministic output.
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
@@ -78,16 +67,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
-
-	var validator *schema.Validator
-	if schemasDir != "" {
-		v, vErr := schema.NewValidator(schemasDir)
-		if vErr != nil {
-			fmt.Fprintln(stderr, "error: load schemas:", vErr)
-			return 2
-		}
-		validator = v
-	}
 
 	for _, name := range names {
 		fpath := filepath.Join(sensorsDir, name)
@@ -101,11 +80,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			emitJSON(stdout, warnSignal(name, fmt.Sprintf("parse %s: %v", fpath, err)))
 			continue
 		}
-		if validator != nil {
-			if err := validator.Validate(schema.TargetSensor, m); err != nil {
-				emitJSON(stdout, warnSignal(name, fmt.Sprintf("schema-invalid %s: %v", fpath, err)))
-				continue
-			}
+		if err := boot.Validator.Validate(schema.TargetSensor, m); err != nil {
+			emitJSON(stdout, warnSignal(name, fmt.Sprintf("schema-invalid %s: %v", fpath, err)))
+			continue
 		}
 		emitJSON(stdout, digest(m))
 	}
@@ -121,38 +98,26 @@ func digest(m map[string]interface{}) map[string]interface{} {
 			blocking = b
 		}
 	}
-	relPath := path.Join(".harness", "sensors", id+".json")
-	out := map[string]interface{}{
+	return map[string]interface{}{
 		"id":          id,
 		"kind":        m["kind"],
 		"type":        m["type"],
 		"output":      m["output"],
 		"blocking":    blocking,
 		"description": m["description"],
-		"path":        relPath,
+		"path":        path.Join(".harness", "sensors", id+".json"),
 	}
-	return out
 }
 
 func warnSignal(file, rationale string) map[string]interface{} {
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	return map[string]interface{}{
-		"sensor_id":   "catalog-sensors",
-		"version":     "0.1.0",
-		"run_id":      sensor.NewUUIDv4(),
-		"started_at":  now,
-		"finished_at": now,
-		"verdict":     "warn",
-		"severity":    "low",
-		"confidence":  1.0,
-		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale, "file": file}},
-		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata":    map[string]interface{}{"kind": "catalog_entry_skipped"},
-	}
+	return signal.NewBuilder("catalog-sensors", "0.1.0").
+		WithVerdict("warn", "low").
+		WithKind("catalog_entry_skipped").
+		WithEvidence([]interface{}{map[string]interface{}{"rationale": rationale, "file": file}}).
+		Build()
 }
 
 func emitJSON(w io.Writer, m map[string]interface{}) {
 	body, _ := json.Marshal(m)
 	fmt.Fprintln(w, string(body))
 }
-

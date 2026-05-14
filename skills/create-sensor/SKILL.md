@@ -34,8 +34,7 @@ Invoke `catalog-sensors.go` to enumerate the existing sensor inventory:
 ```bash
 HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=catalog_sensors \
-  ./skills/create-sensor/scripts \
-  --schemas-dir "${CLAUDE_PLUGIN_ROOT}/schemas"
+  ./skills/create-sensor/scripts
 ```
 
 Each stdout line is either a sensor digest (`{id, kind, type, output, blocking, description, path}`) or a `verdict=warn` Signal envelope describing a malformed entry that was skipped. Surface the warns to the user inline if any appeared so they know to clean up later, then proceed with the valid digests.

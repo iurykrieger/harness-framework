@@ -21,12 +21,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
+	"github.com/iurykrieger/harness-framework/lib/signal"
 )
 
 func main() {
@@ -133,60 +133,34 @@ func checkFixtures(stdout io.Writer, draft map[string]interface{}, projectRoot s
 }
 
 func passSignal(path, id string, draft map[string]interface{}) map[string]interface{} {
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	return map[string]interface{}{
-		"sensor_id":   "write-sensor",
-		"version":     "0.1.0",
-		"run_id":      sensor.NewUUIDv4(),
-		"started_at":  now,
-		"finished_at": now,
-		"verdict":     "pass",
-		"severity":    "info",
-		"confidence":  1.0,
-		"evidence":    []interface{}{map[string]interface{}{"rationale": "sensor persisted"}},
-		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata": map[string]interface{}{
-			"kind":      "sensor_persisted",
+	return signal.NewBuilder("write-sensor", "0.1.0").
+		WithVerdict("pass", "info").
+		WithKind("sensor_persisted").
+		WithRationale("sensor persisted").
+		WithMetadata(map[string]interface{}{
 			"path":      path,
 			"id":        id,
 			"kind_attr": draft["kind"],
 			"type_attr": draft["type"],
-		},
-	}
+		}).
+		Build()
 }
 
 func sensorAlreadyExistsSignal(target string) map[string]interface{} {
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	return map[string]interface{}{
-		"sensor_id":   "write-sensor",
-		"version":     "0.1.0",
-		"run_id":      sensor.NewUUIDv4(),
-		"started_at":  now,
-		"finished_at": now,
-		"verdict":     "error",
-		"severity":    "high",
-		"confidence":  1.0,
-		"evidence":    []interface{}{map[string]interface{}{"rationale": "sensor file already exists; refusing to overwrite"}},
-		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata":    map[string]interface{}{"kind": "sensor_already_exists", "path": target},
-	}
+	return signal.NewBuilder("write-sensor", "0.1.0").
+		WithVerdict("error", "high").
+		WithKind("sensor_already_exists").
+		WithRationale("sensor file already exists; refusing to overwrite").
+		WithMetadata(map[string]interface{}{"path": target}).
+		Build()
 }
 
 func errorSignal(kind, rationale string) map[string]interface{} {
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	return map[string]interface{}{
-		"sensor_id":   "write-sensor",
-		"version":     "0.1.0",
-		"run_id":      sensor.NewUUIDv4(),
-		"started_at":  now,
-		"finished_at": now,
-		"verdict":     "error",
-		"severity":    "high",
-		"confidence":  1.0,
-		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
-		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata":    map[string]interface{}{"kind": kind},
-	}
+	return signal.NewBuilder("write-sensor", "0.1.0").
+		WithVerdict("error", "high").
+		WithKind(kind).
+		WithRationale(rationale).
+		Build()
 }
 
 func emitJSON(w io.Writer, m map[string]interface{}) {

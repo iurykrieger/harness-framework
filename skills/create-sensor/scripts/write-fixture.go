@@ -20,10 +20,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
-	"github.com/iurykrieger/harness-framework/lib/sensor"
+	"github.com/iurykrieger/harness-framework/lib/signal"
 )
 
 func main() {
@@ -108,37 +107,20 @@ func runWithStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 }
 
 func passSignal(target string) map[string]interface{} {
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	return map[string]interface{}{
-		"sensor_id":   "write-fixture",
-		"version":     "0.1.0",
-		"run_id":      sensor.NewUUIDv4(),
-		"started_at":  now,
-		"finished_at": now,
-		"verdict":     "pass",
-		"severity":    "info",
-		"confidence":  1.0,
-		"evidence":    []interface{}{map[string]interface{}{"rationale": "fixture written"}},
-		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata":    map[string]interface{}{"kind": "fixture_written", "path": target},
-	}
+	return signal.NewBuilder("write-fixture", "0.1.0").
+		WithVerdict("pass", "info").
+		WithKind("fixture_written").
+		WithRationale("fixture written").
+		WithMetadata(map[string]interface{}{"path": target}).
+		Build()
 }
 
 func errorSignal(kind, rationale string) map[string]interface{} {
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	return map[string]interface{}{
-		"sensor_id":   "write-fixture",
-		"version":     "0.1.0",
-		"run_id":      sensor.NewUUIDv4(),
-		"started_at":  now,
-		"finished_at": now,
-		"verdict":     "error",
-		"severity":    "high",
-		"confidence":  1.0,
-		"evidence":    []interface{}{map[string]interface{}{"rationale": rationale}},
-		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata":    map[string]interface{}{"kind": kind},
-	}
+	return signal.NewBuilder("write-fixture", "0.1.0").
+		WithVerdict("error", "high").
+		WithKind(kind).
+		WithRationale(rationale).
+		Build()
 }
 
 func emitJSON(w io.Writer, m map[string]interface{}) {

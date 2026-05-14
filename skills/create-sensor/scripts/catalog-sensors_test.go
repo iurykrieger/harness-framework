@@ -21,32 +21,34 @@ func repoRoot(t *testing.T) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", ".."))
 }
 
-func TestRun_EmptyDir(t *testing.T) {
-	dir := t.TempDir()
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"--sensors-dir", dir}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+// withProjectRoot creates a fresh project root with a .harness/sensors/
+// child directory, sets HARNESS_REGISTRY_ROOT to it, and returns the
+// absolute path to .harness/sensors/ (where copyCanonical writes).
+func withProjectRoot(t *testing.T, mkSensorsDir bool) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".harness"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if strings.TrimSpace(stdout.String()) != "" {
-		t.Fatalf("expected empty stdout, got %q", stdout.String())
+	if mkSensorsDir {
+		if err := os.MkdirAll(filepath.Join(root, ".harness", "sensors"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
+	prev, had := os.LookupEnv("HARNESS_REGISTRY_ROOT")
+	os.Setenv("HARNESS_REGISTRY_ROOT", root)
+	t.Cleanup(func() {
+		if had {
+			os.Setenv("HARNESS_REGISTRY_ROOT", prev)
+		} else {
+			os.Unsetenv("HARNESS_REGISTRY_ROOT")
+		}
+	})
+	return filepath.Join(root, ".harness", "sensors")
 }
 
-func TestRun_MissingDir(t *testing.T) {
-	parent := t.TempDir()
-	missing := filepath.Join(parent, "does-not-exist")
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"--sensors-dir", missing}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
-	}
-	if strings.TrimSpace(stdout.String()) != "" {
-		t.Fatalf("expected empty stdout, got %q", stdout.String())
-	}
-}
-
-// helper: copy a sensor JSON from lib/sensor/testdata into a temp dir, with id rewritten.
+// copyCanonical writes a copy of the canonical-computational sensor under
+// dstDir with the id field rewritten to newID.
 func copyCanonical(t *testing.T, dstDir, newID string) string {
 	t.Helper()
 	src := filepath.Join(repoRoot(t), "lib", "sensor", "testdata", "canonical-computational.json")
@@ -62,12 +64,46 @@ func copyCanonical(t *testing.T, dstDir, newID string) string {
 	return dst
 }
 
+func splitNonEmpty(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func TestRun_EmptyDir(t *testing.T) {
+	withProjectRoot(t, true)
+	var stdout, stderr bytes.Buffer
+	code := run(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "" {
+		t.Fatalf("expected empty stdout, got %q", stdout.String())
+	}
+}
+
+func TestRun_MissingDir(t *testing.T) {
+	withProjectRoot(t, false) // .harness/ exists, .harness/sensors/ does not
+	var stdout, stderr bytes.Buffer
+	code := run(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "" {
+		t.Fatalf("expected empty stdout, got %q", stdout.String())
+	}
+}
+
 func TestRun_OneSensor(t *testing.T) {
-	dir := t.TempDir()
+	dir := withProjectRoot(t, true)
 	copyCanonical(t, dir, "alpha")
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--sensors-dir", dir}, &stdout, &stderr)
+	code := run(nil, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
@@ -90,13 +126,13 @@ func TestRun_OneSensor(t *testing.T) {
 }
 
 func TestRun_MultipleSensors_SortedByID(t *testing.T) {
-	dir := t.TempDir()
+	dir := withProjectRoot(t, true)
 	copyCanonical(t, dir, "charlie")
 	copyCanonical(t, dir, "alpha")
 	copyCanonical(t, dir, "bravo")
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--sensors-dir", dir}, &stdout, &stderr)
+	code := run(nil, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
@@ -112,24 +148,14 @@ func TestRun_MultipleSensors_SortedByID(t *testing.T) {
 	}
 }
 
-func splitNonEmpty(s string) []string {
-	var out []string
-	for _, line := range strings.Split(s, "\n") {
-		if strings.TrimSpace(line) != "" {
-			out = append(out, line)
-		}
-	}
-	return out
-}
-
 func TestRun_MalformedJSON_EmitsWarn(t *testing.T) {
-	dir := t.TempDir()
+	dir := withProjectRoot(t, true)
 	copyCanonical(t, dir, "ok-sensor")
 	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("not-json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--sensors-dir", dir}, &stdout, &stderr)
+	code := run(nil, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
@@ -152,8 +178,9 @@ func TestRun_MalformedJSON_EmitsWarn(t *testing.T) {
 }
 
 func TestRun_SchemaInvalid_EmitsWarn(t *testing.T) {
-	dir := t.TempDir()
+	dir := withProjectRoot(t, true)
 	copyCanonical(t, dir, "valid")
+
 	// Build a schema-invalid sensor: canonical with "regulation" deleted.
 	src := filepath.Join(repoRoot(t), "lib", "sensor", "testdata", "canonical-computational.json")
 	body, err := os.ReadFile(src)
@@ -171,9 +198,8 @@ func TestRun_SchemaInvalid_EmitsWarn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	schemasDir := filepath.Join(repoRoot(t), "schemas")
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--sensors-dir", dir, "--schemas-dir", schemasDir}, &stdout, &stderr)
+	code := run(nil, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
@@ -193,8 +219,9 @@ func TestRun_SchemaInvalid_EmitsWarn(t *testing.T) {
 }
 
 func TestRun_BlockingDerivation(t *testing.T) {
-	dir := t.TempDir()
-	// Load canonical and set execution.blocking = true.
+	dir := withProjectRoot(t, true)
+
+	// Build a schema-valid blocking + stream sensor.
 	src := filepath.Join(repoRoot(t), "lib", "sensor", "testdata", "canonical-computational.json")
 	body, err := os.ReadFile(src)
 	if err != nil {
@@ -205,9 +232,19 @@ func TestRun_BlockingDerivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	m["id"] = "blocking-one"
+	m["output"] = "stream"
 	exec := m["execution"].(map[string]interface{})
 	exec["blocking"] = true
 	exec["graceful_timeout_ms"] = float64(5000)
+	exec["output_parsing"] = map[string]interface{}{
+		"patterns": []interface{}{
+			map[string]interface{}{
+				"regex":    "ready",
+				"verdict":  "pass",
+				"severity": "info",
+			},
+		},
+	}
 	delete(m["cost"].(map[string]interface{})["latency"].(map[string]interface{}), "timeout_ms")
 	out, _ := json.Marshal(m)
 	if err := os.WriteFile(filepath.Join(dir, "blocking-one.json"), out, 0o644); err != nil {
@@ -215,9 +252,9 @@ func TestRun_BlockingDerivation(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--sensors-dir", dir}, &stdout, &stderr)
+	code := run(nil, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		t.Fatalf("exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	if !strings.Contains(stdout.String(), `"blocking":true`) {
 		t.Fatalf("expected blocking=true in digest, got %q", stdout.String())
