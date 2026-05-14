@@ -14,7 +14,7 @@ Issue #45 reports two defects in the orchestrator path of `/run-sensor`:
 
 The combined impact: the dep's terminal aggregate Signal emitted by `stopBlockingDep` always shows `verdict=pass` (it has no individuals to fold in), the build failure is invisible to the orchestrator, downstream consumers (`/list-sensors`, `/tail-sensor`, `/stop-sensor`, `heal-sensor`'s classifier) cannot find the evidence they need, and the root sensor that depends on this dep is informed via cascade only that "the dep finished" — not that its build was broken. The user sees a meaningless `pass` from the dep followed by the root sensor failing for opaque reasons.
 
-A related defect surfaces while triangulating issue #45: `skills/stop-sensor/scripts/stop.go:208` reads `r.SignalsLog(sensorID)` (flat) and `skills/list-sensors/scripts/list.go:66` emits `r.SignalsLog(e.SensorID)` (flat) — both consumers ignore the run-id-scoped layout that `/start-sensor` has been writing into since `2026-05-11-resolve-requires-and-persist-deps-logs-design.md`. So even where the watcher *is* spawned today (`/start-sensor`'s root sensor), `/stop-sensor` aggregates from an empty file and `/list-sensors` advertises an empty path. `/tail-sensor` is already correct (`tail.go:155-157` reads the run-id-scoped path with `LegacySignalsLog` fallback). This spec brings `/stop-sensor` and `/list-sensors` to the same surface so all consumers read where the writers write.
+A related defect surfaces while triangulating issue #45: `skills/stop-sensor/scripts/stop.go:208` reads `r.SignalsLog(sensorID)` (flat) and `skills/list-sensors/scripts/list.go:66` emits `r.SignalsLog(e.SensorID)` (flat) — both consumers ignore the run-id-scoped layout that `/start-sensor` has been writing into since `2026-05-11-resolve-requires-and-persist-deps-logs-design.md`. So even where the watcher *is* spawned today (`/start-sensor`'s root sensor), `/stop-sensor` aggregates from an empty file and `/list-sensors` advertises an empty path. `/tail-sensor` is already correct: `tail.go:155-158` selects `r.SignalsLogRun(...)` by default and falls back to `r.LegacySignalsLog(...)` when `strings.HasSuffix(entry.RunID, "-legacy")` — the `-legacy` suffix is synthesized by `lib/registry/sanitize.go:115-127` for pre-spec entries whose original `RunID` was empty (`cli.Bootstrap` calls `registry.LookupSanitized`, so every entry reaching a skill has a non-empty `RunID`). This spec brings `/stop-sensor` and `/list-sensors` onto the same surface so all consumers read where the writers write.
 
 ## What changes
 
@@ -22,9 +22,9 @@ A related defect surfaces while triangulating issue #45: `skills/stop-sensor/scr
 
 2. **`lib/orchestrator/live_deps.go::stopBlockingDep`** is extended to terminate the registered `WatcherPID` before falling through to the aggregate Signal emission. Mirrors the `stopWatcher(entry.WatcherPID)` call already present in `skills/stop-sensor/scripts/stop.go:204`. Without this, watchers spawned by `startBlockingDep` survive every detach and accumulate as orphan processes across multiple `/run-sensor` invocations.
 
-3. **`skills/stop-sensor/scripts/stop.go:208`** migrates `readSignals(r.SignalsLog(sensorID))` to `readSignals(r.SignalsLogRun(sensorID, entry.RunID))` with a `LegacySignalsLog(sensorID)` fallback when the run-id-scoped file does not exist. Adopts the same `os.Stat`-then-fallback idiom as `skills/tail-sensor/scripts/tail.go:155-157`. Entries without `RunID` (legacy state files) continue to work read-only.
+3. **`skills/stop-sensor/scripts/stop.go:208`** migrates `readSignals(r.SignalsLog(sensorID))` to `readSignals(r.SignalsLogRun(sensorID, entry.RunID))`, falling back to `r.LegacySignalsLog(sensorID)` when `strings.HasSuffix(entry.RunID, "-legacy")`. Adopts the existing convention established by `lib/registry/sanitize.go` (which synthesizes the `-legacy` suffix on Load) and used by `skills/tail-sensor/scripts/tail.go:155-158`.
 
-4. **`skills/list-sensors/scripts/list.go:66`** migrates the `signals_log_path` field from `r.SignalsLog(e.SensorID)` to `r.SignalsLogRun(e.SensorID, e.RunID)` for entries with a non-empty `RunID`, falling back to `r.LegacySignalsLog(e.SensorID)` otherwise.
+4. **`skills/list-sensors/scripts/list.go:66`** migrates the `signals_log_path` field from `r.SignalsLog(e.SensorID)` to `r.SignalsLogRun(e.SensorID, e.RunID)`, falling back to `r.LegacySignalsLog(e.SensorID)` when `strings.HasSuffix(e.RunID, "-legacy")`. Same suffix-sentinel discipline as `/tail-sensor`.
 
 5. **No change to** `schemas/sensor.json`, `schemas/signal.json`, `schemas/stack.json`, `schemas/usecase.json`, the `RunningSensorEntry` Go struct, the on-disk shape of `running_sensors.json`, or the `lib/watcher` package. The `lib/registry::SensorDir/RawLog/SignalsLog/LegacyRawLog/LegacySignalsLog` helpers are preserved (the legacy ones become read-only fallbacks for pre-fix state files; `SensorDir` is still used as the run-id-scoped sensor parent directory).
 
@@ -64,6 +64,8 @@ The current `startBlockingDep` computes the dep's `runID` *after* the subprocess
 | `WatcherLogPath` | `filepath.Join(runDir, "watcher.log")` |
 
 `CLAUDE_PLUGIN_ROOT` is read via `os.Getenv` at the top of `startBlockingDep`. If empty, the function returns `fmt.Errorf("plugin root not set (set CLAUDE_PLUGIN_ROOT)")` before any subprocess work — same posture as `/start-sensor`'s line 61 check. The error propagates back through `AttachLiveDep` → `RunDeps`, where it is converted into the standard cascade-fail signal for dependents.
+
+**Spawn-gate invariant.** `watcher.Spawn` is an allowlisted call site under CLAUDE.md rule 12: the watcher binary does not execute the sensor's own `execution.command`, so it does not require `orchestrator.PreflightGate`. The relevant gate for the dep itself is the existing `PreflightGate` call in `AttachLiveDep` at `live_deps.go:117`, which runs *before* `startBlockingDep` ever spawns the subprocess. The new code adds no new gated spawn — the subprocess `SpawnDetached` continues to be covered by the upstream gate.
 
 ### Failure cleanup
 
@@ -112,24 +114,24 @@ The watcher drains and exits cleanly on SIGTERM (its signal handler in `watcher.
 
 ### Consumer migration: `/stop-sensor` and `/list-sensors`
 
-`/tail-sensor` already implements the canonical read pattern at `skills/tail-sensor/scripts/tail.go:155-157`:
+`/tail-sensor` already implements the canonical read pattern at `skills/tail-sensor/scripts/tail.go:155-158`:
 
 ```go
 sigsPath := r.SignalsLogRun(sensorID, entry.RunID)
-if _, err := os.Stat(sigsPath); err != nil {
+if strings.HasSuffix(entry.RunID, "-legacy") {
     sigsPath = r.LegacySignalsLog(sensorID)
 }
 ```
 
-`/stop-sensor` adopts the same idiom inside the existing `if !entry.Blocking { ... } else { ... }` branch where `readSignals(r.SignalsLog(sensorID))` is called. The selection happens *before* `readSignals`, with `entry.RunID` already in scope.
+This works because `cli.Bootstrap` calls `registry.LookupSanitized` (`lib/cli/bootstrap.go:40`), which calls `SanitizeAll` (`lib/registry/sanitize.go:115-127`), which rewrites every `RunID == ""` entry into `RunID = "<PID>-legacy"`. Skills therefore never see empty `RunID`s; the suffix sentinel is the canonical "this is a pre-spec entry" test.
+
+`/stop-sensor` adopts the identical idiom inside the existing branch where `readSignals(r.SignalsLog(sensorID))` is called. The selection happens *before* `readSignals`, with `entry.RunID` already in scope.
 
 `/list-sensors` adopts the same idiom inline when building the per-entry response map:
 
 ```go
 signalsPath := r.SignalsLogRun(e.SensorID, e.RunID)
-if e.RunID == "" {
-    signalsPath = r.LegacySignalsLog(e.SensorID)
-} else if _, err := os.Stat(signalsPath); err != nil {
+if strings.HasSuffix(e.RunID, "-legacy") {
     signalsPath = r.LegacySignalsLog(e.SensorID)
 }
 entry := map[string]interface{}{
@@ -138,7 +140,7 @@ entry := map[string]interface{}{
 }
 ```
 
-The two distinct fallback conditions (`RunID == ""` for entries written before the layout migration; `os.Stat` failure for entries whose run-id-scoped file was manually deleted) collapse into one branch in `/tail-sensor` and `/stop-sensor` because they only matter where the file is actually read; `/list-sensors` reports the path without opening it, so the `RunID == ""` case must be handled separately.
+There is no `os.Stat` probe. The suffix sentinel is sufficient because (a) `LookupSanitized` guarantees `RunID` is non-empty before the skill runs, (b) the post-fix `/start-sensor` and `startBlockingDep` paths always create both `raw.log` and `signals.log` in the run dir, so a non-`-legacy` `RunID` reliably indicates the run-id-scoped layout. Manual file deletion is out of scope; users who tamper with `.harness/runtime/` get a missing-file read error from the consumer, which is the intended UX.
 
 ### Locking discipline
 
@@ -187,15 +189,13 @@ Tests live in the existing `lib/orchestrator/live_deps_test.go`, `lib/orchestrat
 
 9. **`TestStop_ReadsRunIDScopedSignalsLog`** — seed a registry entry with `RunID = "12345-abcd"` and write a `signals.log` with 3 individual Signals (one `fail`, two `warn`) at `r.SignalsLogRun(sensorID, runID)`. Invoke stop's read path. The aggregate Signal's `metadata.counts` is `{pass: 0, warn: 2, fail: 1, error: 0}` and `verdict == "fail"` (highest stream verdict folded into the aggregate).
 
-10. **`TestStop_LegacyFallback`** — seed a registry entry with `RunID = ""` and write `signals.log` at `r.LegacySignalsLog(sensorID)` with 2 `pass` individuals. Aggregate's counts is `{pass: 2, ...}`. Confirms the read path falls back when `RunID` is absent (pre-fix entries).
+10. **`TestStop_LegacyFallback`** — seed a registry entry with `RunID = "12345-legacy"` and write `signals.log` at `r.LegacySignalsLog(sensorID)` with 2 `pass` individuals. Aggregate's counts is `{pass: 2, ...}`. Confirms the read path falls back when the `-legacy` suffix is present (post-`LookupSanitized` form of pre-fix entries).
 
 ### `skills/list-sensors/scripts/list_test.go`
 
-11. **`TestList_EmitsRunIDScopedPath`** — registry entry with `RunID = "7037-5ecd3f00"` and a file at `r.SignalsLogRun(...)`. The emitted entry's `signals_log_path` equals `r.SignalsLogRun(sensorID, runID)`.
+11. **`TestList_EmitsRunIDScopedPath`** — registry entry with `RunID = "7037-5ecd3f00"`. The emitted entry's `signals_log_path` equals `r.SignalsLogRun(sensorID, runID)`.
 
-12. **`TestList_LegacyFallback_EmptyRunID`** — registry entry with `RunID = ""`. `signals_log_path` equals `r.LegacySignalsLog(sensorID)`.
-
-13. **`TestList_LegacyFallback_FileMissing`** — registry entry with `RunID = "stale-123"` but the run-id-scoped file was manually deleted. `signals_log_path` equals `r.LegacySignalsLog(sensorID)`. Confirms the `os.Stat`-driven fallback.
+12. **`TestList_LegacyFallback`** — registry entry with `RunID = "12345-legacy"`. `signals_log_path` equals `r.LegacySignalsLog(sensorID)`. Confirms the `-legacy` suffix sentinel.
 
 ### Manual verification post-merge
 
