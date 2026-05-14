@@ -655,7 +655,6 @@ func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, v *sch
 	// for entries written before the per-run layout was introduced).
 	individuals, readErr := readIndividuals(r, entry)
 
-
 	_ = registry.WithFileLock(r.LockFile(), func() error {
 		rs, err := registry.Load(r)
 		if err != nil {
@@ -714,11 +713,11 @@ func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, v *sch
 		"evidence":    evidence,
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
 		"metadata": map[string]interface{}{
-			"kind":              "aggregate",
-			"command":           entry.Command,
-			"output_mode":       "stream",
-			"counts":            counts,
-			"subprocess_state":  subprocessState,
+			"kind":             "aggregate",
+			"command":          entry.Command,
+			"output_mode":      "stream",
+			"counts":           counts,
+			"subprocess_state": subprocessState,
 		},
 	}
 	agg = validateOrFallback(v, agg, entry.SensorID, stderr)

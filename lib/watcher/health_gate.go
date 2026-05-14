@@ -12,10 +12,10 @@ import (
 type HealthGateOutcome string
 
 const (
-	OutcomeReady         HealthGateOutcome = "ready"
-	OutcomeFailed        HealthGateOutcome = "failed"
-	OutcomeDiedSilently  HealthGateOutcome = "died_silently"
-	OutcomeTimedOut      HealthGateOutcome = "timed_out"
+	OutcomeReady        HealthGateOutcome = "ready"
+	OutcomeFailed       HealthGateOutcome = "failed"
+	OutcomeDiedSilently HealthGateOutcome = "died_silently"
+	OutcomeTimedOut     HealthGateOutcome = "timed_out"
 )
 
 // HealthGateOpts configures one WaitForReady call.
