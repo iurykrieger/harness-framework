@@ -115,7 +115,11 @@ JSON Schema Draft 2020-12, mirrors the conventions of `sensor.json` and `stack.j
 
 **Top-level required fields:** `id`, `version`, `name`, `description`, `journey_id`, `trigger`, `behavior`, `expected_outcome`, `evidence`.
 
-**Top-level optional fields:** `regression_priority` (enum `critical|high|medium|low`), `blind_spots[]`, `tags[]`, `references[]`.
+- `id` enforces `"pattern": "^[a-z][a-z0-9-]*$"` — kebab-case starting with a letter, the same constraint `sensor.json` uses. The further `<verb>-<entity>-<discriminator>` shape (`create-user-with-email`, `login-with-wrong-password`) is a *naming convention* enforced by the skill prose in Phase 1, not by the regex.
+- `version` enforces SemVer via `"pattern": "^\\d+\\.\\d+\\.\\d+(-[A-Za-z0-9.-]+)?(\\+[A-Za-z0-9.-]+)?$"`, same as `sensor.json`.
+- `journey_id` enforces the same kebab-case pattern as `id`.
+
+**Top-level optional fields:** `regression_priority` (enum `critical|high|medium|low`), `blind_spots[]` (array of string), `tags[]` (array of string), `references[]` (array of string — URLs or paths to specs, RFCs, ADRs justifying this UseCase; same shape as `sensor.json`'s `references[]`).
 
 #### `trigger` sub-schema
 
@@ -333,7 +337,7 @@ LLM judgment, informed by what the stack already contains:
    - `cli-tool` → top-level commands (`@Command`, Cobra `cmd.AddCommand`).
    - `scheduler` → each scheduled job.
 
-Persist via `write-stack.go --refresh-purpose` (or whatever equivalent flag — see Implementation milestones).
+Persist via the existing `skills/detect-sensors/scripts/write-stack.go` writer. This skill calls the same Go primitive (`stack.ValidateAndPersist`) without adding a CLI flag — augmenting `purpose`/`archetypes`/`journeys` is a normal overwrite of `<project>/.harness/stack.json` with the updated `Stack` struct. No new flag, no new subcommand, no change to the existing `write_stack` script's CLI surface.
 
 ### Phase 1 — Per journey, enumerate variations
 
@@ -572,7 +576,7 @@ Invokes `main` with `os.Args` patterns; captures stdout/stderr and inspects on-d
 Ordered — each milestone is a potential PR boundary. Schema before struct before validator before script before skill.
 
 1. **`schemas/usecase.json`** — write schema; load-test it via `lib/schema.LoadSchema`.
-2. **`schemas/stack.json`** — add `purpose`/`archetypes`/`journeys` optional fields + their `$defs/{Journey,EntryPoint,Archetype,EntryPointKind}`. Bump artifact `version` examples to `0.2.0`.
+2. **`schemas/stack.json`** — add `purpose`/`archetypes`/`journeys` optional fields + their `$defs/{Journey,EntryPoint,Archetype,EntryPointKind}`. Bump artifact `version` examples to `0.2.0`. No CLI changes to `write-stack.go` — augmentation by `/detect-usecases` reuses the existing `stack.ValidateAndPersist` primitive with the updated struct.
 3. **`lib/stack/`** — extend `shape.go` with `Purpose`/`Archetypes`/`Journeys` fields + `Journey`/`EntryPoint` types; add cross-check for `journeys[].archetype` membership; expand tests (legacy + full).
 4. **`lib/usecase/`** — implement in order `shape.go` → `load.go` → `evidence.go` → `cross_check.go` → `persist.go`, each TDD with its `_test.go`. Build `testdata/` fixtures alongside.
 5. **`skills/detect-usecases/scripts/write-usecase.go`** — CLI wrapper over `usecase.ValidateAndPersist`; build tag `write_usecase`; CLI tests.
