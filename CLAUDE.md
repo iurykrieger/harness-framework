@@ -40,15 +40,16 @@ Durable conventions. Apply them to every change.
 
 ## Architecture
 
-### The three schemas
+### The four schemas
 
-Both `signal.json` and `sensor.json` are JSON Schema **Draft 2020-12**. Validators must support that draft and resolve `$ref` across files.
+All four are JSON Schema **Draft 2020-12**. Validators must support that draft and resolve `$ref` across files.
 
 - `schemas/signal.json` — the output contract. Defines the canonical `Verdict` and `Severity` enums under `$defs/`. **Edit enum values here only.**
 - `schemas/sensor.json` — the definition contract. References `signal.json` two ways:
   - `#/$defs/Signal` is `{ "$ref": "signal.json" }`, so tooling can dereference a sensor's runtime output contract by chained `$ref`.
   - Enum sites inside `sensor.json` (`execution.exit_code_map[].{verdict,severity}`, `verification.golden_cases[].{expected_verdict,expected_severity}`) use `{ "$ref": "signal.json#/$defs/Verdict" }` and `…/Severity`. Adding a new verdict or severity value means editing `signal.json` only — `sensor.json` picks it up automatically.
 - `schemas/stack.json` — the project-stack contract. Produced by `/detect-sensors` Phase A; consumed by Phase B when authoring `kind=observation` + `output=stream` sensors. Independent of `signal.json` and `sensor.json` (no cross-`$ref`).
+- `schemas/usecase.json` — the use-case contract. Describes one observable journey variation of the project (trigger as narrative + fixture, behavior, expected_outcome with invariants and side_effects, file:line evidence pointing at the implementation). Produced by `/detect-usecases`; consumed by a future `/create-sensor` skill to synthesize deterministic regression sensors. References `stack.json` indirectly via `journey_id` (validated in Go, not JSON Schema).
 
 ### Discriminators
 
@@ -71,6 +72,8 @@ When adding fields, update the `allOf` so each branch's mutual exclusion stays w
 Each `skills/<name>/SKILL.md` has YAML frontmatter (`name`, `description`) read by Claude Code's skill loader. The body is procedural prose addressed to whichever agent invokes the skill.
 
 `skills/run-sensor/` is the canonical sensor runner. Both runners (computational and inferential) follow the same model: spawn `sh -c <execution.command>`, scan stdout+stderr line-by-line against `execution.output_parsing.patterns` (when declared), emit one Signal per match as JSONL on stdout, then end with one aggregate Signal as the LAST JSONL line. The aggregate's verdict is the worse of `exit_code_map[exitCode]` and the highest-rank verdict observed in the stream. The inferential runner additionally exposes the rendered `user_prompt_template` to the subprocess via the `HARNESS_PROMPT` env var and applies the calibration `fail → warn` downgrade when the subprocess emits a `HARNESS_AGGREGATE_CONFIDENCE=<float>` line on its stdout below `calibration.confidence_threshold`. Both runners are thin CLI wrappers; the deterministic pipeline (path resolution, schema validation, envelope construction, pattern matching, subprocess streaming, aggregation, signal validation) lives in the top-level `lib/` package.
+
+`skills/detect-usecases/` scans the project, augments `stack.json` with `purpose`/`archetypes`/`journeys` when missing, then drafts one descriptive UseCase per observable journey variation and persists each via `skills/detect-usecases/scripts/write-usecase.go` to `<project>/.harness/usecases/<id>.json`.
 
 ### Dependencies and lifecycle
 
@@ -148,6 +151,7 @@ go test -tags=stop_sensor       ./skills/...
 go test -tags=list_sensors      ./skills/...
 go test -tags=tail_sensor       ./skills/...
 go test -tags=heal_retry_original ./skills/heal-sensor/...
+go test -tags=write_usecase   ./skills/...          # the write-usecase script
 go vet -tags=run_computational  ./...
 go vet -tags=run_inferential    ./...
 

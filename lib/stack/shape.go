@@ -10,6 +10,10 @@ type Stack struct {
 	Languages  []Language  `json:"languages"`
 	Components []Component `json:"components"`
 	LogShapes  []LogShape  `json:"log_shapes"`
+
+	Purpose    string      `json:"purpose,omitempty"`
+	Archetypes []Archetype `json:"archetypes,omitempty"`
+	Journeys   []Journey   `json:"journeys,omitempty"`
 }
 
 type Language struct {
@@ -95,6 +99,56 @@ const (
 	MeaningVersion    FieldMeaning = "version"
 	MeaningOther      FieldMeaning = "other"
 )
+
+// Archetype is the enum from $defs/Archetype in stack.json.
+type Archetype string
+
+const (
+	ArchetypeHTTPAPI            Archetype = "http-api"
+	ArchetypeHTTPSPA            Archetype = "http-spa"
+	ArchetypeHTTPSSR            Archetype = "http-ssr"
+	ArchetypeQueueConsumer      Archetype = "queue-consumer"
+	ArchetypeQueueProducer      Archetype = "queue-producer"
+	ArchetypeCLITool            Archetype = "cli-tool"
+	ArchetypeLibrary            Archetype = "library"
+	ArchetypeIaC                Archetype = "iac"
+	ArchetypeDataPipeline       Archetype = "data-pipeline"
+	ArchetypeScheduler          Archetype = "scheduler"
+	ArchetypeEventDrivenService Archetype = "event-driven-service"
+	ArchetypeDBBoundService     Archetype = "db-bound-service"
+)
+
+// EntryPointKind is the enum from $defs/EntryPointKind.
+type EntryPointKind string
+
+const (
+	EntryPointHTTPRoute         EntryPointKind = "http-route"
+	EntryPointQueueSubscription EntryPointKind = "queue-subscription"
+	EntryPointCLICommand        EntryPointKind = "cli-command"
+	EntryPointScheduledJob      EntryPointKind = "scheduled-job"
+	EntryPointEventHandler      EntryPointKind = "event-handler"
+	EntryPointGRPCMethod        EntryPointKind = "grpc-method"
+)
+
+// Journey groups one or more UseCases under a shared concept.
+type Journey struct {
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Summary     string       `json:"summary"`
+	Archetype   Archetype    `json:"archetype"`
+	EntryPoints []EntryPoint `json:"entry_points"`
+}
+
+// EntryPoint identifies where a journey enters the system.
+type EntryPoint struct {
+	Kind     EntryPointKind `json:"kind"`
+	Method   string         `json:"method,omitempty"`
+	Path     string         `json:"path,omitempty"`
+	Topic    string         `json:"topic,omitempty"`
+	Command  string         `json:"command,omitempty"`
+	Schedule string         `json:"schedule,omitempty"`
+	Evidence Evidence       `json:"evidence"`
+}
 
 // ShapesByRole returns log_shapes whose produced_by[] intersects the
 // names of components with the given role.
