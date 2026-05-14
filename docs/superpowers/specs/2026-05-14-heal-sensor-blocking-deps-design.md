@@ -69,7 +69,7 @@ itself dies post-spawn.
 
 ## Fix
 
-Four coordinated changes, each independently testable and committable.
+Five coordinated changes, each independently testable and committable.
 
 ### 1. Capture dep exit status via wrapper
 
@@ -87,7 +87,12 @@ that directory happens immediately before the spawn, mirroring the existing
 `raw.log` / `signals.log` setup.
 
 The wrapper is portable POSIX shell and survives `sh -c` already being the
-spawn shell — `sh -c 'sh -c "…"'` is well-defined.
+spawn shell — `sh -c 'sh -c "…"'` is well-defined. The wrapper does NOT
+inherit `set -e` from the parent: it runs the user's command inside a
+subshell `( <command> )`, then captures `$?` unconditionally before
+re-exiting with the original code. A unit fixture asserts that a command
+exiting with code 42 produces `42` in the `exit_code` file and propagates
+exit 42 to the wrapper itself.
 
 ### 2. Honest `stopBlockingDep` aggregate
 
@@ -206,13 +211,14 @@ Binary checks. Each must be objectively verifiable.
    `metadata.exit_code=1`, and at least one `evidence[]` entry with a
    non-empty `excerpt`.
 3. **Liveness gate emits cascade**: when the dep dies before the dependent
-   runs, the stream contains exactly three signals in order:
+   runs, the stream contains exactly two signals after the dep aggregate, in
+   order:
    1. dep's aggregate (`verdict=fail`),
    2. cascade Signal of the dependent (`metadata.kind=cascade`,
-      `metadata.failed_dep_id=<dep>`),
-   3. no aggregate for the dependent (it never ran).
-   The dependent's command is never spawned (best-effort proxy: dependent's
-   `raw.log` either doesn't exist or is empty).
+      `metadata.failed_dep_id=<dep>`).
+   The dependent's aggregate does NOT appear in the stream (asserted as
+   JSONL line count == 2 + count of preceding dep aggregates, not via
+   raw.log absence). The dependent's command is never spawned.
 4. **Hook classifies cascade end-to-end**: replaying the JSONL stream of (3)
    through `setup-failure-detector` produces an injection whose `rule` is
    `subprocess-failed` and whose `--sensor=` argument points at the dep's
