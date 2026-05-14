@@ -9,13 +9,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
+	"github.com/iurykrieger/harness-framework/lib/watcher"
 )
 
 func TestRunOneWithLiveDeps_AttachesAndDetachesBlockingDep(t *testing.T) {
@@ -1013,5 +1016,329 @@ func TestRunWithDepsImpl_CascadeThroughBlockingDep(t *testing.T) {
 	}
 	if rs.FindEntry("blocking-intermediate") != nil {
 		t.Error("blocking-intermediate must not have been attached; found a registry entry")
+	}
+}
+
+func TestStartBlockingDep_UsesRunIDLayout(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_ROOT", pluginRootForTest(t))
+
+	root := t.TempDir()
+	writeBlockingDep(t, root, "blocking-tick")
+	dep := loadDepSensor(t, root, "blocking-tick")
+
+	r := registry.NewRoot(root)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{}
+	holder := registry.HeldByEntry{Kind: "sensor", ID: "holder-id", PID: 99999, AttachedAt: "2026-05-14T00:00:00Z"}
+
+	runID, err := orchestrator.ExportedStartBlockingDep(&rs, r, dep, holder, root)
+	if err != nil {
+		t.Fatalf("ExportedStartBlockingDep: %v", err)
+	}
+	t.Cleanup(func() {
+		teardownEntry(t, r, runID)
+	})
+
+	if _, err := os.Stat(r.RawLogRun("blocking-tick", runID)); err != nil {
+		t.Errorf("RawLogRun missing: %v", err)
+	}
+	if _, err := os.Stat(r.SignalsLogRun("blocking-tick", runID)); err != nil {
+		t.Errorf("SignalsLogRun missing: %v", err)
+	}
+	if _, err := os.Stat(r.LegacyRawLog("blocking-tick")); err == nil {
+		t.Error("LegacyRawLog still exists at flat path; expected staged-then-renamed away")
+	}
+	if _, err := os.Stat(r.LegacySignalsLog("blocking-tick")); err == nil {
+		t.Error("LegacySignalsLog should never be created on the fix path")
+	}
+
+	entry := rs.FindEntry("blocking-tick")
+	if entry == nil {
+		t.Fatal("registry entry missing")
+	}
+	if entry.RunID != runID {
+		t.Errorf("entry.RunID: got %q, want %q", entry.RunID, runID)
+	}
+	if entry.LogDir != r.RelativeRunDir("blocking-tick", runID) {
+		t.Errorf("entry.LogDir: got %q, want %q", entry.LogDir, r.RelativeRunDir("blocking-tick", runID))
+	}
+	if entry.WatcherPID <= 0 {
+		t.Errorf("entry.WatcherPID: got %d, want > 0", entry.WatcherPID)
+	}
+}
+
+// pluginRootForTest returns the plugin checkout's absolute path. Tests
+// must point CLAUDE_PLUGIN_ROOT at it so lib/watcher.Spawn can find the
+// watcher source tree.
+func pluginRootForTest(t *testing.T) string {
+	t.Helper()
+	// orchestrator package lives at <pluginRoot>/lib/orchestrator
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Dir(filepath.Dir(wd))
+}
+
+// teardownEntry tears down a spawned subprocess + watcher recorded under
+// runID. Idempotent; safe to call on a partially-completed test.
+func teardownEntry(t *testing.T, r registry.Root, runID string) {
+	t.Helper()
+	rs, err := registry.Load(r)
+	if err != nil {
+		return
+	}
+	entry := rs.FindEntryByRunID(runID)
+	if entry == nil {
+		return
+	}
+	if entry.PGID > 0 {
+		_ = syscallKill(-entry.PGID, syscall.SIGKILL)
+	}
+	if entry.WatcherPID > 0 {
+		_ = syscallKill(entry.WatcherPID, syscall.SIGKILL)
+	}
+}
+
+// syscallKill wraps syscall.Kill so the test file does not need its
+// own platform-conditional build tag. SIGKILL is universally available
+// on darwin and linux (the only test targets per the project's go test
+// invocation).
+func syscallKill(pid int, sig syscall.Signal) error {
+	return syscall.Kill(pid, sig)
+}
+
+func writeBlockingDepNoPatterns(t *testing.T, root, id string) {
+	t.Helper()
+	dir := filepath.Join(root, ".harness", "sensors")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Same as writeBlockingDep but output: "single" so output_parsing is
+	// not required by the schema. blocking: true is still legal for
+	// output: single.
+	body := []byte(`{
+"id": "` + id + `",
+"version": "1.0.0",
+"name": "Quiet blocker",
+"description": "blocker without patterns",
+"determinism": "high",
+"kind": "setup",
+"type": "computational",
+"output": "single",
+"regulation": "behaviour",
+"phase": "continuous",
+"triggers": [{"on": "manual"}],
+"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"cost": {
+  "class": "cheap",
+  "compute": {"cpu":"low","memory_mb":32},
+  "latency": {"p50_ms":10,"p95_ms":50}
+},
+"execution": {
+  "command": "sleep 5",
+  "blocking": true,
+  "graceful_timeout_ms": 200,
+  "exit_code_map": [{"exit_code":"*","verdict":"pass","severity":"info"}]
+}
+}`)
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStartBlockingDep_NoPatterns_StillSpawnsWatcher(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_ROOT", pluginRootForTest(t))
+	root := t.TempDir()
+	writeBlockingDepNoPatterns(t, root, "quiet-blocker")
+	dep := loadDepSensor(t, root, "quiet-blocker")
+
+	r := registry.NewRoot(root)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{}
+	holder := registry.HeldByEntry{Kind: "sensor", ID: "h", PID: 1, AttachedAt: "2026-05-14T00:00:00Z"}
+
+	runID, err := orchestrator.ExportedStartBlockingDep(&rs, r, dep, holder, root)
+	if err != nil {
+		t.Fatalf("ExportedStartBlockingDep: %v", err)
+	}
+	t.Cleanup(func() { teardownEntry(t, r, runID) })
+
+	entry := rs.FindEntry("quiet-blocker")
+	if entry == nil || entry.WatcherPID <= 0 {
+		t.Fatalf("expected watcher_pid > 0, entry=%+v", entry)
+	}
+	// signals.log MUST exist and be empty (or contain only post-spawn signals).
+	info, err := os.Stat(r.SignalsLogRun("quiet-blocker", runID))
+	if err != nil {
+		t.Fatalf("signals.log: %v", err)
+	}
+	_ = info
+}
+
+func writeBlockingDepWithErrorPattern(t *testing.T, root, id string) {
+	t.Helper()
+	dir := filepath.Join(root, ".harness", "sensors")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{
+"id": "` + id + `",
+"version": "1.0.0",
+"name": "Error emitter",
+"description": "emits one ERROR line then sleeps",
+"determinism": "high",
+"kind": "setup",
+"type": "computational",
+"output": "stream",
+"regulation": "behaviour",
+"phase": "continuous",
+"triggers": [{"on": "manual"}],
+"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"cost": {
+  "class": "cheap",
+  "compute": {"cpu":"low","memory_mb":32},
+  "latency": {"p50_ms":10,"p95_ms":50}
+},
+"execution": {
+  "command": "while true; do echo 'ERROR: ouch'; sleep 0.1; done",
+  "blocking": true,
+  "graceful_timeout_ms": 200,
+  "exit_code_map": [{"exit_code":"*","verdict":"pass","severity":"info"}],
+  "output_parsing": {"patterns":[{"regex":"^ERROR","verdict":"fail","severity":"high","rationale":"error line"}]}
+}
+}`)
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStartBlockingDep_PatternsEmitSignals(t *testing.T) {
+	// The orchestrator test binary's TestMain replaces watcher.SpawnFn with
+	// a fake returning a fixed PID; opt back into the real spawner so this
+	// test exercises the actual watcher pipeline (compile via `go run`,
+	// fsnotify, pattern matching, append to signals.log).
+	prev := watcher.SpawnFn
+	watcher.SpawnFn = watcher.RealSpawn
+	t.Cleanup(func() { watcher.SpawnFn = prev })
+
+	t.Setenv("CLAUDE_PLUGIN_ROOT", pluginRootForTest(t))
+	root := t.TempDir()
+	writeBlockingDepWithErrorPattern(t, root, "errs")
+	dep := loadDepSensor(t, root, "errs")
+
+	r := registry.NewRoot(root)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{}
+	holder := registry.HeldByEntry{Kind: "sensor", ID: "h", PID: 1, AttachedAt: "2026-05-14T00:00:00Z"}
+
+	runID, err := orchestrator.ExportedStartBlockingDep(&rs, r, dep, holder, root)
+	if err != nil {
+		t.Fatalf("ExportedStartBlockingDep: %v", err)
+	}
+	t.Cleanup(func() { teardownEntry(t, r, runID) })
+
+	// Poll signals.log for up to 15 seconds (allow for cold compile cache).
+	sigsPath := r.SignalsLogRun("errs", runID)
+	deadline := time.Now().Add(15 * time.Second)
+	var lines []string
+	for time.Now().Before(deadline) {
+		data, _ := os.ReadFile(sigsPath)
+		if len(data) > 0 {
+			lines = strings.Split(strings.TrimSpace(string(data)), "\n")
+			if len(lines) >= 1 {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if len(lines) == 0 {
+		t.Fatalf("signals.log empty after 15s; expected >=1 individual signal")
+	}
+	var sig map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[0]), &sig); err != nil {
+		t.Fatalf("parse signal: %v (line=%q)", err, lines[0])
+	}
+	if v, _ := sig["verdict"].(string); v != "fail" {
+		t.Errorf("verdict: got %q, want fail", v)
+	}
+	if s, _ := sig["severity"].(string); s != "high" {
+		t.Errorf("severity: got %q, want high", s)
+	}
+	md, _ := sig["metadata"].(map[string]interface{})
+	if k, _ := md["kind"].(string); k != "individual" {
+		t.Errorf("metadata.kind: got %q, want individual", k)
+	}
+}
+
+func TestStartBlockingDep_PluginRootMissing(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_ROOT", "")
+	root := t.TempDir()
+	writeBlockingDep(t, root, "blocking-tick")
+	dep := loadDepSensor(t, root, "blocking-tick")
+
+	r := registry.NewRoot(root)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{}
+	holder := registry.HeldByEntry{Kind: "sensor", ID: "h", PID: 1, AttachedAt: "2026-05-14T00:00:00Z"}
+
+	_, err := orchestrator.ExportedStartBlockingDep(&rs, r, dep, holder, root)
+	if err == nil {
+		t.Fatal("expected error when CLAUDE_PLUGIN_ROOT empty, got nil")
+	}
+	if !strings.Contains(err.Error(), "plugin root not set") {
+		t.Errorf("error: got %q, want substring 'plugin root not set'", err)
+	}
+	if len(rs.Entries) != 0 {
+		t.Errorf("registry should be untouched; got %d entries", len(rs.Entries))
+	}
+	if _, statErr := os.Stat(r.SensorDir("blocking-tick")); statErr == nil {
+		t.Error("SensorDir created despite early error; want no side effects")
+	}
+}
+
+func TestStartBlockingDep_WatcherSpawnFailure(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_ROOT", pluginRootForTest(t))
+	root := t.TempDir()
+	writeBlockingDep(t, root, "blocking-tick")
+	dep := loadDepSensor(t, root, "blocking-tick")
+
+	prev := watcher.SpawnFn
+	watcher.SpawnFn = func(opts watcher.SpawnOpts) (int, error) {
+		return 0, fmt.Errorf("forced")
+	}
+	t.Cleanup(func() { watcher.SpawnFn = prev })
+
+	r := registry.NewRoot(root)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{}
+	holder := registry.HeldByEntry{Kind: "sensor", ID: "h", PID: 1, AttachedAt: "2026-05-14T00:00:00Z"}
+
+	_, err := orchestrator.ExportedStartBlockingDep(&rs, r, dep, holder, root)
+	if err == nil {
+		t.Fatal("expected error from forced watcher failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "forced") {
+		t.Errorf("error: got %q, want substring 'forced'", err)
+	}
+	if len(rs.Entries) != 0 {
+		t.Errorf("registry should be untouched; got %d entries", len(rs.Entries))
+	}
+	// Run dir must have been removed.
+	entries, _ := os.ReadDir(r.SensorDir("blocking-tick"))
+	for _, e := range entries {
+		if e.IsDir() {
+			t.Errorf("found run-dir %q after watcher-failure cleanup; should be gone", e.Name())
+		}
 	}
 }
