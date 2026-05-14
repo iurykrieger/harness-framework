@@ -66,7 +66,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "bump patch version for", p.ID, ":", err)
 			return 1
 		}
-		path, err := sensor.ValidateAndPersist(bumped, outDir, schemasDir)
+		path, err := sensor.ValidateAndPersist(bumped, sensor.PersistOpts{
+			OutDir:     outDir,
+			SchemasDir: schemasDir,
+		})
 		if err != nil {
 			fmt.Fprintln(stderr, "persist patch", p.ID, ":", err)
 			return 1
@@ -79,7 +82,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "marshal new sensor:", err)
 			return 1
 		}
-		path, err := sensor.ValidateAndPersist(body, outDir, schemasDir)
+		path, err := sensor.ValidateAndPersist(body, sensor.PersistOpts{
+			OutDir:     outDir,
+			SchemasDir: schemasDir,
+		})
 		if err != nil {
 			fmt.Fprintln(stderr, "persist new sensor", n.ID, ":", err)
 			return 1
