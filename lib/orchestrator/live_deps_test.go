@@ -1342,3 +1342,64 @@ func TestStartBlockingDep_WatcherSpawnFailure(t *testing.T) {
 		}
 	}
 }
+
+func TestDetachLiveDep_KillsWatcher(t *testing.T) {
+	// The orchestrator test binary's TestMain replaces watcher.SpawnFn with
+	// a fake returning a fixed PID; opt back into the real spawner so this
+	// test exercises the actual watcher pipeline and we can observe the
+	// watcher process being killed on detach.
+	prev := watcher.SpawnFn
+	watcher.SpawnFn = watcher.RealSpawn
+	t.Cleanup(func() { watcher.SpawnFn = prev })
+
+	t.Setenv("CLAUDE_PLUGIN_ROOT", pluginRootForTest(t))
+	root := t.TempDir()
+	writeBlockingDep(t, root, "blocking-tick")
+	dep := loadDepSensor(t, root, "blocking-tick")
+
+	v := loadValidator(t)
+	var stdout, stderr bytes.Buffer
+
+	// DetachLiveDep removes the holder using PID: os.Getpid(); match it so
+	// the only-holder branch fires and we actually exercise stopBlockingDep.
+	holderPID := os.Getpid()
+	result, err := orchestrator.AttachLiveDep(
+		context.Background(), dep, root, "h", holderPID,
+		v, &stdout, &stderr,
+	)
+	if err != nil {
+		t.Fatalf("AttachLiveDep: %v", err)
+	}
+
+	r := registry.NewRoot(root)
+	rsBefore, _ := registry.Load(r)
+	entry := rsBefore.FindEntry("blocking-tick")
+	if entry == nil || entry.WatcherPID <= 0 {
+		t.Fatalf("expected live watcher in registry, entry=%+v", entry)
+	}
+	savedWatcherPID := entry.WatcherPID
+
+	// Detach should tear down the dep (only holder) and kill the watcher.
+	orchestrator.DetachLiveDep(result.Live, root, "h", v, &stdout, &stderr)
+
+	// Poll up to 3 seconds for the watcher to be reaped. The watcher was
+	// spawned via exec.Command + cmd.Process.Release(), so the test
+	// process is its parent but no Wait goroutine is running — once
+	// SIGTERM/SIGKILL hits, the kernel keeps the entry as a zombie
+	// until we Wait4() it. Wait4 with WNOHANG returns the pid when
+	// the process is reapable (terminated), 0 when still running, and
+	// ECHILD when already reaped or not a child. Any of "reaped" or
+	// "no longer a child" means the watcher process is dead.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var ws syscall.WaitStatus
+		wpid, err := syscall.Wait4(savedWatcherPID, &ws, syscall.WNOHANG, nil)
+		if wpid == savedWatcherPID || err != nil {
+			return // success: terminated and reaped, or not our child anymore
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Errorf("watcher pid %d still alive 3s after DetachLiveDep", savedWatcherPID)
+	// Best-effort cleanup so the orphan does not survive the test process.
+	_ = syscall.Kill(savedWatcherPID, syscall.SIGKILL)
+}

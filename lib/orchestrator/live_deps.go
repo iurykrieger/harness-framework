@@ -406,6 +406,21 @@ func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, v *sch
 			_ = syscall.Kill(-entry.PGID, syscall.SIGKILL)
 		}
 	}
+	// Kill the watcher subprocess if one was registered. Mirrors the
+	// stopWatcher helper in skills/stop-sensor/scripts/stop.go.
+	if entry.WatcherPID > 0 && registry.IsPIDAlive(entry.WatcherPID) {
+		_ = syscall.Kill(entry.WatcherPID, syscall.SIGTERM)
+		watcherDeadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(watcherDeadline) {
+			if !registry.IsPIDAlive(entry.WatcherPID) {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if registry.IsPIDAlive(entry.WatcherPID) {
+			_ = syscall.Kill(entry.WatcherPID, syscall.SIGKILL)
+		}
+	}
 	_ = registry.WithFileLock(r.LockFile(), func() error {
 		rs, err := registry.Load(r)
 		if err != nil {
