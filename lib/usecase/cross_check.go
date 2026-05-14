@@ -16,5 +16,8 @@ func CheckJourneyReference(uc *UseCase, s *stack.Stack) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("usecase %q references journey_id %q absent from stack.journeys[]", uc.ID, uc.JourneyID)
+	return &stack.CrossCheckError{
+		Kind:    "journey_reference_orphan",
+		Message: fmt.Sprintf("usecase %q references journey_id %q absent from stack.journeys[]", uc.ID, uc.JourneyID),
+	}
 }

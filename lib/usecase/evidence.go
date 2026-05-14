@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/iurykrieger/harness-framework/lib/stack"
 )
 
 // CheckEvidenceFiles verifies every UseCase.Evidence[].File exists on
@@ -21,5 +23,8 @@ func CheckEvidenceFiles(uc *UseCase, projectRoot string) error {
 	if len(missing) == 0 {
 		return nil
 	}
-	return fmt.Errorf("evidence files not found under %s: %s", projectRoot, strings.Join(missing, ", "))
+	return &stack.CrossCheckError{
+		Kind:    "evidence_file_missing",
+		Message: fmt.Sprintf("evidence files not found under %s: %s", projectRoot, strings.Join(missing, ", ")),
+	}
 }

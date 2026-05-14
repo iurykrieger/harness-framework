@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,5 +40,17 @@ func TestCheckEvidenceFiles_Empty(t *testing.T) {
 	uc := &UseCase{}
 	if err := CheckEvidenceFiles(uc, "/no/such"); err != nil {
 		t.Errorf("empty evidence should be OK at this layer (schema validates minItems)")
+	}
+}
+
+func TestCheckEvidenceFiles_ReturnsTypedError(t *testing.T) {
+	uc := &UseCase{Evidence: []stack.Evidence{{File: "a.go", Rationale: "x"}}}
+	err := CheckEvidenceFiles(uc, t.TempDir())
+	var cce *stack.CrossCheckError
+	if !errors.As(err, &cce) {
+		t.Fatalf("expected *stack.CrossCheckError, got %T", err)
+	}
+	if cce.Kind != "evidence_file_missing" {
+		t.Errorf("kind = %q", cce.Kind)
 	}
 }
