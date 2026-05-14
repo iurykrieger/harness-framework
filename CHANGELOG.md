@@ -8,6 +8,7 @@
 
 ### Added
 
+- `/create-sensor` skill: takes a single requirement (acceptance criterion, functional requirement, use case) as free text and produces one targeted assertion sensor at `<project>/.harness/sensors/<id>.json`. Composes existing sensors via `requires[kind=sensor]`. Includes three skill-local Go scripts: `catalog-sensors`, `write-fixture`, `write-sensor`.
 - `metadata.cause`, `metadata.missing_envs`, `metadata.missing_tools`, `metadata.missing_contexts` on the canonical preflight signal across every spawn entry point. Inferential sensors with `requires[kind=tool]` are now gated for the first time.
 
 ## 1.1.0 — 2026-05-12
