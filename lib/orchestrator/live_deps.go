@@ -537,7 +537,8 @@ func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, 
 }
 
 // shellQuote returns s wrapped in POSIX-safe single quotes, escaping any
-// embedded single quotes via the standard '\'' idiom. Used to splice
+// embedded single quotes via the standard close-reopen idiom (close the
+// single-quoted string, emit an escaped quote, reopen). Used to splice
 // file paths into shell-wrapped commands without command-injection risk.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
