@@ -443,7 +443,6 @@ func TestValidator_Sensor_RequiresArrayV2(t *testing.T) {
 	}
 }
 
-
 func TestValidator_Sensor_RequiresArrayV2_Rejections(t *testing.T) {
 	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
 	if err != nil {

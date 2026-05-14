@@ -84,4 +84,3 @@ func writeCanonical(path string, sensor map[string]interface{}) error {
 	}
 	return os.Rename(tmpPath, path)
 }
-
