@@ -1,9 +1,9 @@
 //go:build write_fixture
 
-// Command write-fixture writes a fixture payload atomically to a path
-// under <projectRoot>/.harness/sensors/fixtures/. Used by /create-sensor
-// to materialize the fixture files referenced by a sensor's
-// verification.golden_cases[].
+// Command write-fixture writes a fixture payload atomically under
+// <projectRoot>/.harness/sensors/fixtures/ via lib/sensor.WriteFixture —
+// the single shared fixture-persistence entrypoint. Path-escape guard,
+// parent-dir creation, and tmp+rename atomicity all live in the lib.
 //
 // Usage:
 //
@@ -14,14 +14,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
 )
 
@@ -49,14 +49,6 @@ func runWithStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		emitJSON(stdout, registry.DiscoveryErrorSignal(err, "write-fixture"))
 		return 2
 	}
-	projectRoot := res.ProjectRoot
-
-	fixturesRoot := filepath.Join(projectRoot, ".harness", "sensors", "fixtures")
-	target := filepath.Clean(filepath.Join(projectRoot, relPath))
-	if !strings.HasPrefix(target+string(os.PathSeparator), fixturesRoot+string(os.PathSeparator)) {
-		emitJSON(stdout, errorSignal("fixture_path_escape", fmt.Sprintf("path %q resolves outside %s", relPath, fixturesRoot)))
-		return 2
-	}
 
 	var payload []byte
 	if fromFile != "" {
@@ -69,40 +61,18 @@ func runWithStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return 2
 	}
 
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		emitJSON(stdout, errorSignal("mkdir", err.Error()))
-		return 2
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(target), ".tmp-fixture-*")
+	abs, err := sensor.WriteFixture(res.ProjectRoot, relPath, payload)
 	if err != nil {
-		emitJSON(stdout, errorSignal("create_tmp", err.Error()))
-		return 2
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.Write(payload); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		emitJSON(stdout, errorSignal("write_tmp", err.Error()))
-		return 2
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		emitJSON(stdout, errorSignal("sync_tmp", err.Error()))
-		return 2
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		emitJSON(stdout, errorSignal("close_tmp", err.Error()))
-		return 2
-	}
-	if err := os.Rename(tmpPath, target); err != nil {
-		os.Remove(tmpPath)
-		emitJSON(stdout, errorSignal("rename", err.Error()))
+		var fpe *sensor.FixturePathEscapeError
+		if errors.As(err, &fpe) {
+			emitJSON(stdout, errorSignal("fixture_path_escape", fpe.Error()))
+			return 2
+		}
+		emitJSON(stdout, errorSignal("write_failed", err.Error()))
 		return 2
 	}
 
-	emitJSON(stdout, passSignal(target))
+	emitJSON(stdout, passSignal(abs))
 	return 0
 }
 

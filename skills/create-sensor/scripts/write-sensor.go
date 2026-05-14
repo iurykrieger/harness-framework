@@ -1,10 +1,11 @@
 //go:build write_sensor
 
 // Command write-sensor persists a draft sensor JSON to
-// <projectRoot>/.harness/sensors/<id>.json. Strict mode: refuses if any
-// golden_cases[].fixture is missing on disk and refuses to overwrite an
-// existing <id>.json. Schema validation and atomic write are delegated
-// to lib/sensor.ValidateAndPersist.
+// <projectRoot>/.harness/sensors/<id>.json via lib/sensor.ValidateAndPersist
+// — the single shared persistence entrypoint used by every sensor-authoring
+// skill (/create-sensor, /detect-sensors, /heal-sensor). This wrapper sets
+// the strict options (RejectIfExists, RequireFixturesOnDisk) appropriate
+// to /create-sensor's authoring contract.
 //
 // Usage:
 //
@@ -20,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 
@@ -59,39 +59,39 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	// Parse for pre-checks; we re-pass body unchanged to ValidateAndPersist.
+	// Parse draft only to extract id/kind/type for the success signal
+	// metadata. lib/sensor.ValidateAndPersist re-parses and validates.
 	var draft map[string]interface{}
 	if err := json.Unmarshal(body, &draft); err != nil {
 		emitJSON(stdout, errorSignal("read_draft", "parse draft JSON: "+err.Error()))
 		return 2
 	}
 
-	// Resolve project root for fixture existence checks.
 	cwd, _ := os.Getwd()
 	res, err := registry.Lookup(cwd)
 	if err != nil {
 		emitJSON(stdout, registry.DiscoveryErrorSignal(err, "write-sensor"))
 		return 2
 	}
-	projectRoot := res.ProjectRoot
 
-	if code := checkFixtures(stdout, draft, projectRoot); code != 0 {
-		return code
-	}
-
-	id, _ := draft["id"].(string)
-	if id == "" {
-		emitJSON(stdout, errorSignal("usage", "sensor.id missing or empty"))
-		return 2
-	}
-	target := filepath.Join(outDir, id+".json")
-	if _, statErr := os.Stat(target); statErr == nil {
-		emitJSON(stdout, sensorAlreadyExistsSignal(target))
-		return 2
-	}
-
-	path, err := sensor.ValidateAndPersist(body, outDir, schemasDir)
+	path, err := sensor.ValidateAndPersist(body, sensor.PersistOpts{
+		OutDir:                outDir,
+		SchemasDir:            schemasDir,
+		RejectIfExists:        true,
+		RequireFixturesOnDisk: true,
+		ProjectRoot:           res.ProjectRoot,
+	})
 	if err != nil {
+		var saee *sensor.SensorAlreadyExistsError
+		if errors.As(err, &saee) {
+			emitJSON(stdout, sensorAlreadyExistsSignal(saee.Path))
+			return 2
+		}
+		var mfe *sensor.MissingFixtureError
+		if errors.As(err, &mfe) {
+			emitJSON(stdout, errorSignal("missing_fixture", mfe.Error()))
+			return 2
+		}
 		var ve *jsonschema.ValidationError
 		if errors.As(err, &ve) {
 			emitJSON(stdout, errorSignal("schema_invalid", err.Error()))
@@ -100,35 +100,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		emitJSON(stdout, errorSignal("persist_failed", err.Error()))
 		return 2
 	}
+
+	id, _ := draft["id"].(string)
 	emitJSON(stdout, passSignal(path, id, draft))
 	fmt.Fprintln(stdout, path)
-	return 0
-}
-
-func checkFixtures(stdout io.Writer, draft map[string]interface{}, projectRoot string) int {
-	ver, ok := draft["verification"].(map[string]interface{})
-	if !ok {
-		return 0 // schema will catch this later
-	}
-	cases, ok := ver["golden_cases"].([]interface{})
-	if !ok {
-		return 0
-	}
-	for _, raw := range cases {
-		gc, ok := raw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		rel, _ := gc["fixture"].(string)
-		if rel == "" {
-			continue
-		}
-		full := filepath.Join(projectRoot, rel)
-		if _, err := os.Stat(full); err != nil {
-			emitJSON(stdout, errorSignal("missing_fixture", fmt.Sprintf("fixture %q not found at %s", rel, full)))
-			return 2
-		}
-	}
 	return 0
 }
 

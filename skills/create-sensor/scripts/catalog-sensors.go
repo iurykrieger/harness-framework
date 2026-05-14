@@ -1,17 +1,16 @@
 //go:build catalog_sensors
 
 // Command catalog-sensors emits a JSONL digest of every sensor JSON file
-// under <projectRoot>/.harness/sensors/, plus warn envelopes for files
-// that fail to parse or fail schema validation. Used by /create-sensor
-// to seed the clarification dialogue with the user's existing sensor
-// inventory.
+// under <projectRoot>/.harness/sensors/ via lib/sensor.Catalog — the
+// single shared enumeration entrypoint. Schema-invalid or malformed
+// sensors produce a verdict=warn Signal envelope and are skipped.
 //
 // Usage:
 //
 //	catalog-sensors
 //
 // Exit codes: 0 normal completion, 1 registry discovery failed,
-// 2 usage error, 2 schema validator init failed.
+// 2 usage / catalog error.
 package main
 
 import (
@@ -22,10 +21,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 
 	"github.com/iurykrieger/harness-framework/lib/cli"
-	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
 )
 
@@ -50,70 +48,44 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	sensorsDir := filepath.Join(boot.Res.ProjectRoot, ".harness", "sensors")
-	entries, err := os.ReadDir(sensorsDir)
+	sensors, warns, err := sensor.Catalog(sensorsDir, boot.Validator)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return 0
-		}
-		fmt.Fprintln(stderr, "error: read dir:", err)
+		fmt.Fprintln(stderr, "error:", err)
 		return 2
 	}
 
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		names = append(names, e.Name())
+	for _, w := range warns {
+		emitJSON(stdout, warnSignal(w))
 	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		fpath := filepath.Join(sensorsDir, name)
-		body, err := os.ReadFile(fpath)
-		if err != nil {
-			emitJSON(stdout, warnSignal(name, fmt.Sprintf("read %s: %v", fpath, err)))
-			continue
-		}
-		var m map[string]interface{}
-		if err := json.Unmarshal(body, &m); err != nil {
-			emitJSON(stdout, warnSignal(name, fmt.Sprintf("parse %s: %v", fpath, err)))
-			continue
-		}
-		if err := boot.Validator.Validate(schema.TargetSensor, m); err != nil {
-			emitJSON(stdout, warnSignal(name, fmt.Sprintf("schema-invalid %s: %v", fpath, err)))
-			continue
-		}
-		emitJSON(stdout, digest(m))
+	for _, s := range sensors {
+		emitJSON(stdout, digest(s))
 	}
 	return 0
 }
 
-// digest projects the fields /create-sensor consumes from the sensor JSON.
-func digest(m map[string]interface{}) map[string]interface{} {
-	id, _ := m["id"].(string)
-	blocking := false
-	if exec, ok := m["execution"].(map[string]interface{}); ok {
-		if b, ok := exec["blocking"].(bool); ok {
-			blocking = b
-		}
-	}
+// digest projects the wire-format fields /create-sensor consumes from a
+// canonical *Sensor. Path uses forward slashes (the field is consumed as
+// a string by tooling, not as a filesystem path).
+func digest(s *sensor.Sensor) map[string]interface{} {
 	return map[string]interface{}{
-		"id":          id,
-		"kind":        m["kind"],
-		"type":        m["type"],
-		"output":      m["output"],
-		"blocking":    blocking,
-		"description": m["description"],
-		"path":        path.Join(".harness", "sensors", id+".json"),
+		"id":          s.ID,
+		"kind":        s.Kind,
+		"type":        s.Type,
+		"output":      s.Output,
+		"blocking":    s.Execution.Blocking,
+		"description": s.Description,
+		"path":        path.Join(".harness", "sensors", s.ID+".json"),
 	}
 }
 
-func warnSignal(file, rationale string) map[string]interface{} {
+func warnSignal(w sensor.CatalogWarn) map[string]interface{} {
 	return signal.NewBuilder("catalog-sensors", "0.1.0").
 		WithVerdict("warn", "low").
 		WithKind("catalog_entry_skipped").
-		WithEvidence([]interface{}{map[string]interface{}{"rationale": rationale, "file": file}}).
+		WithEvidence([]interface{}{map[string]interface{}{
+			"rationale": w.Reason,
+			"file":      w.File,
+		}}).
 		Build()
 }
 

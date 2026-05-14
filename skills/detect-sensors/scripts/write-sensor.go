@@ -55,7 +55,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	path, err := sensor.ValidateAndPersist(body, outDir, schemasDir)
+	path, err := sensor.ValidateAndPersist(body, sensor.PersistOpts{
+		OutDir:     outDir,
+		SchemasDir: schemasDir,
+	})
 	if err != nil {
 		var ve *jsonschema.ValidationError
 		if errors.As(err, &ve) {
