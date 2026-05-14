@@ -205,7 +205,11 @@ func runStop(b cli.BootstrapResult, args []string, reap bool) (int, map[string]i
 	sensorJSON := loadSensorJSONForStop(projectRoot, sensorID)
 	teardownResults := runTeardown(sensorJSON)
 
-	individuals := readSignals(r.SignalsLog(sensorID))
+	sigsPath := r.SignalsLogRun(sensorID, entry.RunID)
+	if strings.HasSuffix(entry.RunID, "-legacy") {
+		sigsPath = r.LegacySignalsLog(sensorID)
+	}
+	individuals := readSignals(sigsPath)
 	exitVerd, exitSev := exitMappingFromSensor(sensorJSON, entry)
 	streamVerd, streamSev := libsignal.MaxStreamVerdict(individuals)
 

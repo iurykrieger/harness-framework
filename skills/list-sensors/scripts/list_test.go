@@ -297,3 +297,93 @@ func TestList_RegistryMigratedSignal_ViaBootstrap(t *testing.T) {
 		t.Errorf("entry watcher_pid: got %v, want 0", e0["watcher_pid"])
 	}
 }
+
+func TestList_EmitsRunIDScopedPath(t *testing.T) {
+	root := t.TempDir()
+	r := registry.NewRoot(root)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{
+		Entries: []registry.RunningSensorEntry{{
+			SensorID:   "svc-x",
+			RunID:      "7037-5ecd3f00",
+			Blocking:   true,
+			PID:        os.Getpid(),
+			PGID:       os.Getpid(),
+			WatcherPID: os.Getpid(),
+			StartedAt:  "2026-05-14T00:00:00Z",
+			Command:    "true",
+			LogDir:     r.RelativeRunDir("svc-x", "7037-5ecd3f00"),
+			HeldBy:     []registry.HeldByEntry{{Kind: "manual", AttachedAt: "2026-05-14T00:00:00Z"}},
+		}},
+	}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatal(err)
+	}
+
+	sig := runListAndDecode(t, root)
+	md, _ := sig["metadata"].(map[string]interface{})
+	entries, _ := md["entries"].([]interface{})
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	first, _ := entries[0].(map[string]interface{})
+	got, _ := first["signals_log_path"].(string)
+	want := r.SignalsLogRun("svc-x", "7037-5ecd3f00")
+	if got != want {
+		t.Errorf("signals_log_path: got %q, want %q", got, want)
+	}
+}
+
+func runListAndDecode(t *testing.T, projectRoot string) map[string]interface{} {
+	t.Helper()
+	t.Setenv("HARNESS_REGISTRY_ROOT", projectRoot)
+	var stdout, stderr bytes.Buffer
+	b := cli.Bootstrap("list-sensors", &stdout, &stderr)
+	if b.ExitCode != 0 {
+		t.Fatalf("cli.Bootstrap exit=%d stderr=%s", b.ExitCode, stderr.String())
+	}
+	_ = runList(b, &stdout, &stderr)
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	var sig map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &sig); err != nil {
+		t.Fatalf("parse last signal: %v", err)
+	}
+	return sig
+}
+
+func TestList_LegacyFallback(t *testing.T) {
+	root := t.TempDir()
+	r := registry.NewRoot(root)
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.RunningSensors{
+		Entries: []registry.RunningSensorEntry{{
+			SensorID:   "svc-legacy",
+			RunID:      "12345-legacy",
+			Blocking:   true,
+			PID:        os.Getpid(),
+			PGID:       os.Getpid(),
+			WatcherPID: 0,
+			StartedAt:  "2026-05-14T00:00:00Z",
+			Command:    "true",
+			LogDir:     "",
+			HeldBy:     []registry.HeldByEntry{{Kind: "manual", AttachedAt: "2026-05-14T00:00:00Z"}},
+		}},
+	}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatal(err)
+	}
+
+	sig := runListAndDecode(t, root)
+	md, _ := sig["metadata"].(map[string]interface{})
+	entries, _ := md["entries"].([]interface{})
+	first, _ := entries[0].(map[string]interface{})
+	got, _ := first["signals_log_path"].(string)
+	want := r.LegacySignalsLog("svc-legacy")
+	if got != want {
+		t.Errorf("signals_log_path: got %q, want %q (legacy fallback expected)", got, want)
+	}
+}

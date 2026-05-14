@@ -31,6 +31,21 @@ type SpawnOpts struct {
 // invoking the real `go run` subprocess.
 var SpawnFn = realSpawn
 
+// RealSpawn is the production spawner exported for tests that have
+// (via a package-level TestMain) replaced SpawnFn with a fake and need
+// to opt back into the real implementation for one specific test. The
+// usual pattern is:
+//
+//	prev := watcher.SpawnFn
+//	watcher.SpawnFn = watcher.RealSpawn
+//	t.Cleanup(func() { watcher.SpawnFn = prev })
+//
+// Production code MUST go through Spawn, not RealSpawn — RealSpawn
+// bypasses the SpawnFn indirection that tests rely on.
+func RealSpawn(opts SpawnOpts) (int, error) {
+	return realSpawn(opts)
+}
+
 // earlyDeathTimeout is how long realSpawn polls to confirm the watcher
 // process is still alive before returning its PID. Tests may override
 // this to speed up or widen the early-death probe window.

@@ -17,6 +17,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
+	"github.com/iurykrieger/harness-framework/lib/watcher"
 )
 
 // writeInferentialSensor writes an inferential sensor fixture to
@@ -531,6 +532,14 @@ func TestRunInferential_AcceptsAbsolutePath(t *testing.T) {
 // inferential command runs, and the blocking dep is torn down. The
 // requested sensor's aggregate must remain the LAST JSONL line.
 func TestRunInferential_BlockingDep_AggregateLast(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_ROOT", pluginRootForTest(t))
+
+	// Replace the watcher spawn with a fake — the test only needs
+	// startBlockingDep to succeed, not a real watcher subprocess.
+	prev := watcher.SpawnFn
+	watcher.SpawnFn = func(opts watcher.SpawnOpts) (int, error) { return 99999, nil }
+	t.Cleanup(func() { watcher.SpawnFn = prev })
+
 	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	sensorsDir := filepath.Join(root, ".harness", "sensors")

@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+// pluginRootForTest returns the plugin checkout's absolute path. Tests
+// must point CLAUDE_PLUGIN_ROOT at it so lib/watcher.Spawn can find the
+// watcher source tree. skills/run-sensor/scripts is three directory
+// levels below the plugin root.
+func pluginRootForTest(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// skills/run-sensor/scripts -> plugin root
+	return filepath.Dir(filepath.Dir(filepath.Dir(wd)))
+}
+
 // repoRootForTest returns the absolute path of the repository root by
 // walking up from the current working directory until a go.mod file is
 // found. Tests that spawn `go run` need an absolute Dir so the module
