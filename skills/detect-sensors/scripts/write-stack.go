@@ -1,9 +1,8 @@
 //go:build write_stack
 
 // Command write-stack reads a draft stack JSON payload, validates it
-// against schemas/stack.json, cross-checks that every
-// log_shapes[].produced_by[] references an existing components[].name,
-// and persists it to <project-root>/.harness/stack.json.
+// against schemas/stack.json (including the library cross-checks in
+// lib/stack), and persists it to <project-root>/.harness/stack.json.
 //
 // Usage:
 //
@@ -15,7 +14,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -57,11 +55,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	if err := crossCheckProducedBy(body); err != nil {
-		fmt.Fprintln(stderr, "error: stack_produced_by_orphan:", err)
-		return 1
-	}
-
 	path, err := stack.ValidateAndPersist(body, outDir, schemasDir)
 	if err != nil {
 		var ve *jsonschema.ValidationError
@@ -69,40 +62,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 			schema.PrintValidationOrPlain(err, stderr)
 			return 1
 		}
+		var cce *stack.CrossCheckError
+		if errors.As(err, &cce) {
+			fmt.Fprintf(stderr, "error: stack_%s: %s\n", cce.Kind, cce.Message)
+			return 1
+		}
 		fmt.Fprintln(stderr, "error:", err)
 		return 2
 	}
 	fmt.Fprintln(stdout, path)
 	return 0
-}
-
-// crossCheckProducedBy validates that every log_shapes[].produced_by[]
-// entry matches some components[].name. Runs BEFORE schema validation
-// (cheap parse, fail-fast on the most common author mistake).
-func crossCheckProducedBy(body []byte) error {
-	var m struct {
-		Components []struct {
-			Name string `json:"name"`
-		} `json:"components"`
-		LogShapes []struct {
-			ID         string   `json:"id"`
-			ProducedBy []string `json:"produced_by"`
-		} `json:"log_shapes"`
-	}
-	if err := json.Unmarshal(body, &m); err != nil {
-		// Schema validator will catch malformed JSON with a richer message.
-		return nil
-	}
-	names := map[string]struct{}{}
-	for _, c := range m.Components {
-		names[c.Name] = struct{}{}
-	}
-	for _, sh := range m.LogShapes {
-		for _, pb := range sh.ProducedBy {
-			if _, ok := names[pb]; !ok {
-				return fmt.Errorf("log_shape %q references unknown component %q", sh.ID, pb)
-			}
-		}
-	}
-	return nil
 }
