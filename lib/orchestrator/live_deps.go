@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -263,9 +264,21 @@ func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, 
 		return "", fmt.Errorf("create staging raw.log: %w", err)
 	}
 
+	// Wrap the user command so the subprocess's exit status is captured
+	// into a sidecar file the orchestrator reads at detach time. The
+	// file lives at the sensor-level runtime dir; subsequent re-spawns
+	// of the same dep overwrite it idempotently (only the latest run's
+	// exit code matters at detach time). Inside the wrapper, the
+	// parentheses isolate set -e bleed; ec captures $? before the file
+	// write so a write failure cannot corrupt the original exit status.
+	// The final `exit $ec` preserves the original status.
+	exitCodeFile := filepath.Join(r.SensorDir(dep.ID), "exit_code")
+	wrapped := fmt.Sprintf("( %s ); ec=$?; echo $ec > %s; exit $ec",
+		command, shellQuote(exitCodeFile))
+
 	// Stage 2: spawn the subprocess detached.
 	det, err := subprocess.SpawnDetached(subprocess.DetachConfig{
-		Command: command,
+		Command: wrapped,
 		LogFile: stagingRaw,
 		Dir:     projectRoot,
 	})
@@ -379,6 +392,13 @@ func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, 
 		return "", err
 	}
 	return runID, nil
+}
+
+// shellQuote returns s wrapped in POSIX-safe single quotes, escaping any
+// embedded single quotes via the standard '\'' idiom. Used to splice
+// file paths into shell-wrapped commands without command-injection risk.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // stringFieldFromJSON extracts a string field from a sensor's parsed JSON

@@ -1403,3 +1403,92 @@ func TestDetachLiveDep_KillsWatcher(t *testing.T) {
 	// Best-effort cleanup so the orphan does not survive the test process.
 	_ = syscall.Kill(savedWatcherPID, syscall.SIGKILL)
 }
+
+// writeFailingBlockingDep writes a blocking sensor whose command exits exitCode
+// almost immediately. Used to verify exit-code capture wraps the user's
+// command without swallowing the original exit status.
+func writeFailingBlockingDep(t *testing.T, root, id string, exitCode int) {
+	t.Helper()
+	dir := filepath.Join(root, ".harness", "sensors")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(fmt.Sprintf(`{
+"id": "%s",
+"version": "1.0.0",
+"name": "Failing blocking dep",
+"description": "exits %d immediately",
+"determinism": "high",
+"kind": "setup",
+"type": "computational",
+"output": "stream",
+"regulation": "behaviour",
+"phase": "continuous",
+"triggers": [{"on": "manual"}],
+"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"cost": {
+  "class": "cheap",
+  "compute": {"cpu":"low","memory_mb":32},
+  "latency": {"p50_ms":10,"p95_ms":50}
+},
+"execution": {
+  "command": "echo FAILING-DEP-STDOUT; echo FAILING-DEP-STDERR 1>&2; exit %d",
+  "blocking": true,
+  "graceful_timeout_ms": 200,
+  "exit_code_map": [{"exit_code":"*","verdict":"pass","severity":"info"}],
+  "output_parsing": {"patterns":[{"regex":"^TICK$","verdict":"pass","severity":"info"}]}
+}
+}`, id, exitCode, exitCode))
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestStartBlockingDep_WritesExitCodeFile verifies the wrapper captures the
+// subprocess's real exit status into <sensorDir>/exit_code. The wrapper must
+// not swallow the exit code or replace it with its own.
+func TestStartBlockingDep_WritesExitCodeFile(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_ROOT", pluginRootForTest(t))
+
+	root := t.TempDir()
+	writeFailingBlockingDep(t, root, "fails-with-42", 42)
+	dep := loadDepSensor(t, root, "fails-with-42")
+
+	v := loadValidator(t)
+	var stdout, stderr bytes.Buffer
+
+	// Match holderPID to os.Getpid() so DetachLiveDep's holder-removal
+	// path fires at cleanup time.
+	result, err := orchestrator.AttachLiveDep(
+		context.Background(), dep, root, "holder-id", os.Getpid(),
+		v, &stdout, &stderr,
+	)
+	if err != nil {
+		t.Fatalf("AttachLiveDep: %v", err)
+	}
+	live := result.Live
+	if live.ID == "" {
+		t.Fatal("attach failed")
+	}
+
+	exitCodeFile := filepath.Join(root, ".harness", "runtime", live.ID, "exit_code")
+	deadline := time.Now().Add(2 * time.Second)
+	var content []byte
+	for time.Now().Before(deadline) {
+		b, rerr := os.ReadFile(exitCodeFile)
+		if rerr == nil && len(b) > 0 {
+			content = b
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if content == nil {
+		t.Fatalf("exit_code file never written at %s", exitCodeFile)
+	}
+	got := strings.TrimSpace(string(content))
+	if got != "42" {
+		t.Fatalf("exit_code = %q, want %q", got, "42")
+	}
+
+	orchestrator.DetachLiveDep(live, root, "holder-id", v, io.Discard, io.Discard)
+}
