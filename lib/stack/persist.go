@@ -72,4 +72,3 @@ func writeCanonical(path string, v map[string]interface{}) error {
 	}
 	return os.Rename(tmpPath, path)
 }
-

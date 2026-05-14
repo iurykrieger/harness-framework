@@ -39,6 +39,10 @@ func TestBootstrap_HappyPathInProjectRoot(t *testing.T) {
 }
 
 func TestBootstrap_DiscoveryFailureEmitsSignalAndExits(t *testing.T) {
+	// Force walk-up strategy by clearing the env override; otherwise an
+	// outer harness invocation (HARNESS_REGISTRY_ROOT=<worktree>) lets
+	// Discover succeed and we never reach the failure path under test.
+	t.Setenv("HARNESS_REGISTRY_ROOT", "")
 	tmp := t.TempDir() // no sensors/ subdir
 	chdir(t, tmp)
 	var out, errBuf bytes.Buffer

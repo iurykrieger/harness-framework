@@ -15,11 +15,11 @@ import (
 )
 
 // TestHealE2E_MissingEnvFile_HealAndRetry simulates the full loop:
-// 1) run-sensor fails because .env is missing
-// 2) classifier confirms setup-shape (env-file-absent rule fires via
-//    the curated stderr regex)
-// 3) heal applies copy-template
-// 4) retry passes
+//  1. run-sensor fails because .env is missing
+//  2. classifier confirms setup-shape (env-file-absent rule fires via
+//     the curated stderr regex)
+//  3. heal applies copy-template
+//  4. retry passes
 func TestHealE2E_MissingEnvFile_HealAndRetry(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go not in PATH")
@@ -122,7 +122,13 @@ func runSensor(t *testing.T, root, bin, sensorID string) (string, string) {
 	t.Helper()
 	cmd := exec.Command(bin, sensorID)
 	cmd.Dir = root // projectRoot for ResolveByID; schema discovery walks up to repo root.
-	cmd.Env = append(os.Environ(), "HARNESS_FIXTURE_ROOT="+root)
+	// Pin HARNESS_REGISTRY_ROOT to the fixture project. Otherwise an outer
+	// harness invocation leaks its own root into the child and the runner
+	// looks for run-needs-env.json in the wrong place.
+	cmd.Env = append(os.Environ(),
+		"HARNESS_FIXTURE_ROOT="+root,
+		"HARNESS_REGISTRY_ROOT="+root,
+	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

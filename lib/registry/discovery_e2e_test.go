@@ -426,7 +426,10 @@ func TestSanitize_LegacyMinusOneViaListSensors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, stderr, exit := runIn(t, listBin, proj, nil, nil)
+	// Pin HARNESS_REGISTRY_ROOT to proj so the listBin sees the legacy
+	// running_sensors.json we just placed, not the outer worktree's
+	// registry when this test is invoked via /run-sensor unit-test-lib.
+	stdout, stderr, exit := runIn(t, listBin, proj, nil, map[string]string{"HARNESS_REGISTRY_ROOT": proj})
 	if exit != 0 {
 		t.Fatalf("list-sensors exit=%d\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	}

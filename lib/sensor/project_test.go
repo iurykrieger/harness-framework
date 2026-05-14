@@ -65,7 +65,6 @@ func TestProject_EmptyAndMissing(t *testing.T) {
 	})
 }
 
-
 func TestProject_UnknownKindReturnsNil(t *testing.T) {
 	s := map[string]interface{}{
 		"requires": []interface{}{
