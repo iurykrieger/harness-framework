@@ -1444,6 +1444,149 @@ func writeFailingBlockingDep(t *testing.T, root, id string, exitCode int) {
 	}
 }
 
+// TestStopBlockingDep_NonZeroExit_EmitsFailWithEvidence verifies that a
+// dep that exited non-zero produces an aggregate with verdict=fail,
+// metadata.exit_code populated, and evidence[] carrying the tail of
+// raw.log.
+func TestStopBlockingDep_NonZeroExit_EmitsFailWithEvidence(t *testing.T) {
+	root := t.TempDir()
+	writeFailingBlockingDep(t, root, "fails-with-1", 1)
+	dep := loadDepSensor(t, root, "fails-with-1")
+
+	v := loadValidator(t)
+	var attachOut, attachErr bytes.Buffer
+	result, err := orchestrator.AttachLiveDep(
+		context.Background(), dep, root, "holder-id", os.Getpid(),
+		v, &attachOut, &attachErr,
+	)
+	if err != nil {
+		t.Fatalf("AttachLiveDep: %v", err)
+	}
+	live := result.Live
+
+	// Wait for the subprocess to exit and write the exit_code file.
+	exitCodeFile := filepath.Join(root, ".harness", "runtime", live.ID, "exit_code")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, rerr := os.ReadFile(exitCodeFile); rerr == nil && len(b) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Now detach. With no other holders, this triggers stopBlockingDep,
+	// which should emit the honest aggregate to stdout.
+	var detachOut, detachErr bytes.Buffer
+	orchestrator.DetachLiveDep(live, root, "holder-id", v, &detachOut, &detachErr)
+
+	// Find the aggregate Signal in detachOut.
+	lines := strings.Split(strings.TrimRight(detachOut.String(), "\n"), "\n")
+	if len(lines) == 0 {
+		t.Fatal("no signals on stdout")
+	}
+	var agg map[string]interface{}
+	for _, line := range lines {
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			continue
+		}
+		md, _ := m["metadata"].(map[string]interface{})
+		if md != nil && md["kind"] == "aggregate" {
+			agg = m
+		}
+	}
+	if agg == nil {
+		t.Fatalf("no aggregate Signal in output:\n%s", detachOut.String())
+	}
+
+	if v, _ := agg["verdict"].(string); v != "fail" {
+		t.Errorf("verdict = %q, want %q", v, "fail")
+	}
+	if v, _ := agg["severity"].(string); v != "high" {
+		t.Errorf("severity = %q, want %q", v, "high")
+	}
+	md, _ := agg["metadata"].(map[string]interface{})
+	if md == nil {
+		t.Fatal("metadata missing")
+	}
+	if ec, ok := md["exit_code"].(float64); !ok || int(ec) != 1 {
+		t.Errorf("metadata.exit_code = %v, want 1", md["exit_code"])
+	}
+
+	ev, _ := agg["evidence"].([]interface{})
+	if len(ev) == 0 {
+		t.Fatal("evidence is empty; expected raw.log tail")
+	}
+	found := false
+	for _, raw := range ev {
+		e, _ := raw.(map[string]interface{})
+		if e == nil {
+			continue
+		}
+		excerpt, _ := e["excerpt"].(string)
+		if strings.Contains(excerpt, "FAILING-DEP-STDOUT") ||
+			strings.Contains(excerpt, "FAILING-DEP-STDERR") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("evidence does not contain raw.log tail; got %+v", ev)
+	}
+
+	// Registry entry should be gone after stopBlockingDep.
+	r := registry.NewRoot(root)
+	if rs, _ := registry.Load(r); rs.FindEntry(live.ID) != nil {
+		t.Error("registry entry not removed after stopBlockingDep")
+	}
+}
+
+// TestStopBlockingDep_MissingExitCode_FallsBackToPass verifies the
+// backward-compatible path: when the exit_code file is missing (e.g.
+// the subprocess was killed by SIGTERM/SIGKILL before writing it),
+// stopBlockingDep keeps the legacy verdict=pass behavior.
+func TestStopBlockingDep_MissingExitCode_FallsBackToPass(t *testing.T) {
+	root := t.TempDir()
+	writeBlockingDep(t, root, "tick-long-lived")
+	dep := loadDepSensor(t, root, "tick-long-lived")
+
+	v := loadValidator(t)
+	var attachOut, attachErr bytes.Buffer
+	result, err := orchestrator.AttachLiveDep(
+		context.Background(), dep, root, "holder-id", os.Getpid(),
+		v, &attachOut, &attachErr,
+	)
+	if err != nil {
+		t.Fatalf("AttachLiveDep: %v", err)
+	}
+	live := result.Live
+
+	// The dep is the long-running ticker. Detach immediately — stopBlockingDep
+	// kills the subprocess via SIGTERM/SIGKILL before the wrapper can write
+	// the exit_code file, so the file should be missing.
+	var detachOut, detachErr bytes.Buffer
+	orchestrator.DetachLiveDep(live, root, "holder-id", v, &detachOut, &detachErr)
+
+	lines := strings.Split(strings.TrimRight(detachOut.String(), "\n"), "\n")
+	var agg map[string]interface{}
+	for _, line := range lines {
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			continue
+		}
+		md, _ := m["metadata"].(map[string]interface{})
+		if md != nil && md["kind"] == "aggregate" {
+			agg = m
+		}
+	}
+	if agg == nil {
+		t.Fatalf("no aggregate Signal:\n%s", detachOut.String())
+	}
+	if v, _ := agg["verdict"].(string); v != "pass" {
+		t.Errorf("verdict = %q, want %q (missing exit_code file)", v, "pass")
+	}
+}
+
 // TestStartBlockingDep_WritesExitCodeFile verifies the wrapper captures the
 // subprocess's real exit status into <sensorDir>/exit_code. The wrapper must
 // not swallow the exit code or replace it with its own.

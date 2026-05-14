@@ -1,18 +1,22 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
+	"github.com/iurykrieger/harness-framework/lib/heal"
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
@@ -410,7 +414,13 @@ func stringFieldFromJSON(m map[string]interface{}, key string) string {
 }
 
 // stopBlockingDep terminates the dep's process group and removes its
-// registry entry. Emits an aggregate Signal on stdout.
+// registry entry. Emits an aggregate Signal on stdout. When the dep
+// exited non-zero (recorded in <runtimeDir>/exit_code by the wrapper
+// in startBlockingDep), the aggregate carries verdict=fail with a
+// tail of raw.log in evidence and metadata.heal_hint synthesized from
+// curated stderr patterns. When the file is absent (the subprocess was killed before writing
+// it, or the file is absent for any other reason), the verdict=pass
+// aggregate is preserved.
 func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, v *schema.Validator, stdout, stderr io.Writer) {
 	gracefulMS := 5000
 	if entry.PGID > 0 {
@@ -449,22 +459,135 @@ func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, v *sch
 		rs.RemoveEntryByRunID(entry.RunID)
 		return registry.Save(r, rs)
 	})
+
+	verdict, severity, exitCode, evidenceItems, healHint := readDepExitState(r, entry.SensorID)
+
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	md := map[string]interface{}{
+		"kind":        "aggregate",
+		"command":     entry.Command,
+		"output_mode": "stream",
+		"counts":      map[string]int{"pass": 0, "warn": 0, "fail": 0, "error": 0},
+	}
+	if exitCode != nil {
+		md["exit_code"] = *exitCode
+	}
+	if healHint != "" {
+		md["heal_hint"] = healHint
+	}
 	agg := map[string]interface{}{
 		"sensor_id":   entry.SensorID,
 		"version":     "0.0.0",
 		"run_id":      uuid.NewString(),
 		"started_at":  entry.StartedAt,
 		"finished_at": now,
-		"verdict":     "pass",
-		"severity":    "info",
+		"verdict":     verdict,
+		"severity":    severity,
 		"confidence":  1.0,
-		"evidence":    []interface{}{map[string]interface{}{"rationale": fmt.Sprintf("blocking dep %q stopped on detach", entry.SensorID)}},
+		"evidence":    evidenceItems,
 		"cost_actual": map[string]interface{}{"latency_ms": 0},
-		"metadata":    map[string]interface{}{"kind": "aggregate", "command": entry.Command, "output_mode": "stream", "counts": map[string]int{"pass": 0, "warn": 0, "fail": 0, "error": 0}},
+		"metadata":    md,
 	}
 	agg = validateOrFallback(v, agg, entry.SensorID, stderr)
 	_ = json.NewEncoder(stdout).Encode(agg)
+}
+
+// depRawLogTailLines is the number of trailing non-empty raw.log lines
+// surfaced as evidence[] excerpts when a blocking dep exits non-zero.
+const depRawLogTailLines = 20
+
+// readDepExitState returns the aggregate-shaped pieces describing the
+// dep's exit state, derived from <runtime>/<id>/exit_code and raw.log.
+//
+//   - verdict, severity: "pass"/"info" when exit_code is 0 or absent,
+//     "fail"/"high" otherwise.
+//   - exitCode: pointer to the parsed int when the file existed, nil
+//     when it didn't.
+//   - evidenceItems: a default rationale on success; otherwise the last
+//     depRawLogTailLines non-empty lines of raw.log as excerpt entries.
+//   - healHint: "<shape>:<line>" when any tail line matches a curated
+//     heal pattern, empty otherwise.
+func readDepExitState(r registry.Root, depID string) (verdict, severity string, exitCode *int, evidenceItems []interface{}, healHint string) {
+	exitFile := filepath.Join(r.SensorDir(depID), "exit_code")
+	body, err := os.ReadFile(exitFile)
+	if err != nil || len(bytes.TrimSpace(body)) == 0 {
+		return "pass", "info",
+			nil,
+			[]interface{}{map[string]interface{}{
+				"rationale": fmt.Sprintf("blocking dep %q stopped on detach", depID),
+			}},
+			""
+	}
+	code, perr := strconv.Atoi(strings.TrimSpace(string(body)))
+	if perr != nil {
+		// File present but unparseable — treat like missing, no exit code.
+		return "pass", "info",
+			nil,
+			[]interface{}{map[string]interface{}{
+				"rationale": fmt.Sprintf("blocking dep %q stopped on detach (exit_code unparseable: %v)", depID, perr),
+			}},
+			""
+	}
+	if code == 0 {
+		return "pass", "info",
+			intPtr(0),
+			[]interface{}{map[string]interface{}{
+				"rationale": fmt.Sprintf("blocking dep %q stopped on detach (exit_code=0)", depID),
+			}},
+			""
+	}
+
+	tail := tailRawLog(r.RawLog(depID), depRawLogTailLines)
+	ev := make([]interface{}, 0, len(tail))
+	for _, line := range tail {
+		ev = append(ev, map[string]interface{}{
+			"rationale": fmt.Sprintf("blocking dep %q stderr/stdout tail", depID),
+			"excerpt":   line,
+		})
+	}
+	if len(ev) == 0 {
+		ev = append(ev, map[string]interface{}{
+			"rationale": fmt.Sprintf("blocking dep %q exited with code %d; raw.log empty", depID, code),
+		})
+	}
+
+	// Synthesize metadata.heal_hint when any tail line matches a curated pattern.
+	for _, line := range tail {
+		if shape, ok := heal.MatchStderrPattern(line); ok {
+			truncated := line
+			if utf8.RuneCountInString(truncated) > 120 {
+				runes := []rune(truncated)
+				truncated = string(runes[:120])
+			}
+			healHint = string(shape) + ":" + truncated
+			break
+		}
+	}
+
+	return "fail", "high", intPtr(code), ev, healHint
+}
+
+func intPtr(i int) *int { return &i }
+
+// tailRawLog returns the last n non-empty lines of the file at path.
+// Reads the whole file (raw.log is bounded by the dep's runtime) and
+// keeps things simple. Returns nil on read error.
+func tailRawLog(path string, n int) []string {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	allLines := strings.Split(string(body), "\n")
+	out := make([]string, 0, n)
+	// Walk backward, skipping empty lines.
+	for i := len(allLines) - 1; i >= 0 && len(out) < n; i-- {
+		line := strings.TrimRight(allLines[i], "\r")
+		if line == "" {
+			continue
+		}
+		out = append([]string{line}, out...)
+	}
+	return out
 }
 
 // RebindDepHolderPID atomically updates the pid of a holder in dep.HeldBy.
