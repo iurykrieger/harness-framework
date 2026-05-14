@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -377,5 +378,138 @@ func TestStop_BlockingPreferred_WhenMixedActives(t *testing.T) {
 	}
 	if leftNonBlocking != 1 {
 		t.Errorf("non-blocking entry mistakenly removed: %+v", after.Entries)
+	}
+}
+
+func TestStop_ReadsRunIDScopedSignalsLog(t *testing.T) {
+	root := t.TempDir()
+	r := registry.NewRoot(root)
+
+	// Spawn a real, long-running subprocess so /stop-sensor has something
+	// to SIGTERM. Recording stdin keeps go test from leaving zombies.
+	cmd := exec.Command("sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+
+	runID := fmt.Sprintf("%d-deadbeef", cmd.Process.Pid)
+	if err := os.MkdirAll(r.RunDir("svc-x", runID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 3 individuals: 1 fail (severity high), 2 warn (severity low).
+	body := strings.Join([]string{
+		`{"sensor_id":"svc-x","version":"1.0.0","run_id":"` + runID + `","started_at":"2026-05-14T00:00:00Z","finished_at":"2026-05-14T00:00:01Z","verdict":"fail","severity":"high","confidence":1.0,"evidence":[{"rationale":"e1"}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"individual"}}`,
+		`{"sensor_id":"svc-x","version":"1.0.0","run_id":"` + runID + `","started_at":"2026-05-14T00:00:00Z","finished_at":"2026-05-14T00:00:01Z","verdict":"warn","severity":"low","confidence":1.0,"evidence":[{"rationale":"e2"}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"individual"}}`,
+		`{"sensor_id":"svc-x","version":"1.0.0","run_id":"` + runID + `","started_at":"2026-05-14T00:00:00Z","finished_at":"2026-05-14T00:00:01Z","verdict":"warn","severity":"low","confidence":1.0,"evidence":[{"rationale":"e3"}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"individual"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(r.SignalsLogRun("svc-x", runID), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rs := registry.RunningSensors{
+		Entries: []registry.RunningSensorEntry{{
+			SensorID: "svc-x", RunID: runID, Blocking: true,
+			PID:        cmd.Process.Pid,
+			PGID:       cmd.Process.Pid,
+			WatcherPID: 0,
+			StartedAt:  "2026-05-14T00:00:00Z",
+			Command:    "sleep 60",
+			LogDir:     r.RelativeRunDir("svc-x", runID),
+			HeldBy:     []registry.HeldByEntry{},
+		}},
+	}
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatal(err)
+	}
+
+	sig := runStopAndDecode(t, root, "svc-x")
+	md, _ := sig["metadata"].(map[string]interface{})
+	counts, _ := md["counts"].(map[string]interface{})
+	if counts["fail"] != float64(1) {
+		t.Errorf("counts.fail: got %v, want 1", counts["fail"])
+	}
+	if counts["warn"] != float64(2) {
+		t.Errorf("counts.warn: got %v, want 2", counts["warn"])
+	}
+	if v, _ := sig["verdict"].(string); v != "fail" {
+		t.Errorf("verdict: got %q, want fail", v)
+	}
+}
+
+// runStopAndDecode invokes the same code path that the CLI runs and
+// decodes the aggregate signal as the CLI would (through JSON). This
+// normalizes nested map types (map[string]int -> map[string]float64) so
+// tests can use the same JSON-shape assertions used elsewhere.
+func runStopAndDecode(t *testing.T, projectRoot, sensorID string) map[string]interface{} {
+	t.Helper()
+	t.Setenv("HARNESS_REGISTRY_ROOT", projectRoot)
+	var stdout, stderr bytes.Buffer
+	b := cli.Bootstrap("stop-sensor", &stdout, &stderr)
+	if b.ExitCode != 0 {
+		t.Fatalf("cli.Bootstrap exit=%d stderr=%s", b.ExitCode, stderr.String())
+	}
+	_, sig := runStop(b, []string{sensorID}, false)
+	if sig == nil {
+		t.Fatalf("runStop returned nil signal; stderr=%s", stderr.String())
+	}
+	raw, err := json.Marshal(sig)
+	if err != nil {
+		t.Fatalf("marshal signal: %v", err)
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("unmarshal signal: %v (raw=%s)", err, raw)
+	}
+	return out
+}
+
+func TestStop_LegacyFallback(t *testing.T) {
+	root := t.TempDir()
+	r := registry.NewRoot(root)
+
+	cmd := exec.Command("sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+
+	runID := fmt.Sprintf("%d-legacy", cmd.Process.Pid)
+	if err := os.MkdirAll(r.SensorDir("svc-legacy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Join([]string{
+		`{"sensor_id":"svc-legacy","version":"1.0.0","run_id":"` + runID + `","started_at":"2026-05-14T00:00:00Z","finished_at":"2026-05-14T00:00:01Z","verdict":"pass","severity":"info","confidence":1.0,"evidence":[{"rationale":"e1"}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"individual"}}`,
+		`{"sensor_id":"svc-legacy","version":"1.0.0","run_id":"` + runID + `","started_at":"2026-05-14T00:00:00Z","finished_at":"2026-05-14T00:00:01Z","verdict":"pass","severity":"info","confidence":1.0,"evidence":[{"rationale":"e2"}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"individual"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(r.LegacySignalsLog("svc-legacy"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rs := registry.RunningSensors{
+		Entries: []registry.RunningSensorEntry{{
+			SensorID: "svc-legacy", RunID: runID, Blocking: true,
+			PID: cmd.Process.Pid, PGID: cmd.Process.Pid, WatcherPID: 0,
+			StartedAt: "2026-05-14T00:00:00Z",
+			Command:   "sleep 60",
+			LogDir:    "",
+			HeldBy:    []registry.HeldByEntry{},
+		}},
+	}
+	if err := os.MkdirAll(r.SensorsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Save(r, rs); err != nil {
+		t.Fatal(err)
+	}
+
+	sig := runStopAndDecode(t, root, "svc-legacy")
+	md, _ := sig["metadata"].(map[string]interface{})
+	counts, _ := md["counts"].(map[string]interface{})
+	if counts["pass"] != float64(2) {
+		t.Errorf("counts.pass: got %v, want 2 (legacy fallback should have read 2 pass signals)", counts["pass"])
 	}
 }

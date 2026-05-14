@@ -5,7 +5,9 @@
 package orchestrator_test
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +15,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
+	"github.com/iurykrieger/harness-framework/lib/watcher"
 )
 
 func TestRunSensor_ConcurrentRunsCoexist(t *testing.T) {
@@ -145,6 +150,142 @@ func TestRunSensor_ConcurrentRunsCoexist(t *testing.T) {
 	}
 	if len(rs.Entries) != 0 {
 		t.Errorf("registry not cleaned up after runs: %+v", rs.Entries)
+	}
+}
+
+// TestRunWithDepsRoot_DepSignalsPopulated drives RunWithDepsRoot against a
+// root sensor whose blocking dep declares an output_parsing pattern. After
+// the orchestrator runs to completion, the dep's run-id-scoped signals.log
+// must contain a parsed individual matching the pattern, and the flat path
+// (.harness/runtime/<id>/raw.log) must not exist. This is the end-to-end
+// regression that would have caught issue #45.
+func TestRunWithDepsRoot_DepSignalsPopulated(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_ROOT", pluginRootForTest(t))
+	schemasDir := schematest.RepoSchemasDir(t)
+	root := t.TempDir()
+
+	// Blocking dep with one matching pattern. Command echoes BOOM continuously
+	// so the watcher (which has a non-trivial compile-then-attach latency on
+	// cold cache) always has a line to observe after fsnotify registration.
+	depBody := []byte(`{
+"id": "blocking-boom",
+"version": "1.0.0",
+"name": "BOOM emitter",
+"description": "emits BOOM continuously",
+"determinism": "high",
+"kind": "setup",
+"type": "computational",
+"output": "stream",
+"regulation": "behaviour",
+"phase": "continuous",
+"triggers": [{"on": "manual"}],
+"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"cost": {"class":"cheap","compute":{"cpu":"low","memory_mb":32},"latency":{"p50_ms":10,"p95_ms":50}},
+"execution": {
+  "command": "while true; do echo BOOM; sleep 0.1; done",
+  "blocking": true,
+  "graceful_timeout_ms": 200,
+  "exit_code_map": [{"exit_code":"*","verdict":"pass","severity":"info"}],
+  "output_parsing": {"patterns":[{"regex":"^BOOM$","verdict":"fail","severity":"high"}]}
+}
+}`)
+	consumerBody := []byte(`{
+"id": "uses-boom",
+"version": "1.0.0",
+"name": "Uses boom",
+"description": "consumer",
+"determinism": "high",
+"kind": "assertion",
+"type": "computational",
+"output": "single",
+"regulation": "behaviour",
+"phase": "on-demand",
+"triggers": [{"on": "manual"}],
+"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"requires": [{"kind":"sensor","id":"blocking-boom"}],
+"cost": {"class":"cheap","compute":{"cpu":"low","memory_mb":32},"latency":{"p50_ms":10,"p95_ms":50,"timeout_ms":15000}},
+"execution": {
+  "command": "sleep 2 && echo OK",
+  "exit_code_map": [{"exit_code":0,"verdict":"pass","severity":"info"},{"exit_code":"*","verdict":"fail","severity":"high"}]
+}
+}`)
+
+	dir := filepath.Join(root, ".harness", "sensors")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "blocking-boom.json"), depBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "uses-boom.json"), consumerBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Opt into the real watcher spawner (orchestrator package's TestMain
+	// overrides watcher.SpawnFn with a fake by default).
+	prev := watcher.SpawnFn
+	watcher.SpawnFn = watcher.RealSpawn
+	t.Cleanup(func() { watcher.SpawnFn = prev })
+
+	r := registry.NewRoot(root)
+
+	exit := orchestrator.RunWithDepsRoot(context.Background(), "uses-boom", root, schemasDir, io.Discard, io.Discard)
+	if exit != 0 {
+		t.Fatalf("RunWithDepsRoot exit=%d", exit)
+	}
+
+	// After teardown, the per-run directory still exists with raw.log and
+	// signals.log preserved (registry entry is gone, files are not removed).
+	depBase := r.SensorDir("blocking-boom")
+	subs, err := os.ReadDir(depBase)
+	if err != nil {
+		t.Fatalf("read dep dir: %v", err)
+	}
+	var runDir string
+	for _, e := range subs {
+		if e.IsDir() {
+			runDir = filepath.Join(depBase, e.Name())
+			break
+		}
+	}
+	if runDir == "" {
+		t.Fatalf("no run-id-scoped run dir found under %s; flat layout suspected", depBase)
+	}
+
+	sigsData, err := os.ReadFile(filepath.Join(runDir, "signals.log"))
+	if err != nil {
+		t.Fatalf("read signals.log: %v", err)
+	}
+	if len(sigsData) == 0 {
+		t.Fatalf("signals.log empty; pattern did not fire")
+	}
+	lines := strings.Split(strings.TrimSpace(string(sigsData)), "\n")
+	matched := false
+	for _, line := range lines {
+		var sig map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &sig); err != nil {
+			continue
+		}
+		if v, _ := sig["verdict"].(string); v == "fail" {
+			ev, _ := sig["evidence"].([]interface{})
+			if len(ev) > 0 {
+				first, _ := ev[0].(map[string]interface{})
+				// No `rationale` capture in the pattern, so the rationale
+				// falls back to the matched line itself ("BOOM").
+				if r, _ := first["rationale"].(string); r == "BOOM" {
+					matched = true
+					break
+				}
+			}
+		}
+	}
+	if !matched {
+		t.Errorf("expected a fail individual with rationale=\"BOOM\"; got: %s", string(sigsData))
+	}
+
+	// Flat path must not exist.
+	if _, err := os.Stat(r.LegacyRawLog("blocking-boom")); err == nil {
+		t.Error("flat raw.log exists at .harness/runtime/blocking-boom/raw.log; expected only run-id-scoped")
 	}
 }
 

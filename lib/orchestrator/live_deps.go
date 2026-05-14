@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/subprocess"
+	"github.com/iurykrieger/harness-framework/lib/watcher"
 )
 
 // LiveDep identifies a single live blocking-dep entry that
@@ -224,55 +226,156 @@ func DetachLiveDep(dep LiveDep, projectRoot, holderID string, v *schema.Validato
 }
 
 // startBlockingDep is called from AttachLiveDep under flock. It spawns
-// the dep's command detached and writes a registry entry with the
-// given holder. Returns the freshly-minted run_id so the caller can
-// thread it into LiveDep.
+// the dep's command detached, renames the staging raw.log into a
+// per-run directory, spawns a watcher that tails the raw.log and emits
+// parsed Signals to signals.log, and writes a registry entry with the
+// given holder and the spawned watcher's PID. Returns the freshly-minted
+// run_id so the caller can thread it into LiveDep.
 //
 // projectRoot is set as the working directory for the detached subprocess
 // so the blocking dep's command runs from the user's project directory,
 // not from the runner's own cwd.
 //
-// No watcher process is spawned for orchestrator-managed deps — the
-// dep runs unobserved (signals.log stays empty); /stop-sensor of dep
-// would also see no individuals, which is intentional for the
-// orchestrator path (the dependent's aggregate is what matters).
+// CLAUDE_PLUGIN_ROOT must be set in the environment so lib/watcher.Spawn
+// can locate the watcher source tree (the watcher is launched via
+// `go run -tags=start_watcher`). Missing CLAUDE_PLUGIN_ROOT aborts the
+// spawn before any side effects.
 func startBlockingDep(rs *registry.RunningSensors, r registry.Root, dep Sensor, holder registry.HeldByEntry, projectRoot string) (string, error) {
-	execMap, _ := dep.JSON["execution"].(map[string]interface{})
-	command, _ := execMap["command"].(string)
-	if err := os.MkdirAll(r.SensorDir(dep.ID), 0o755); err != nil {
-		return "", fmt.Errorf("mkdir log dir: %w", err)
-	}
-	if err := os.WriteFile(r.RawLog(dep.ID), nil, 0o644); err != nil {
-		return "", fmt.Errorf("create raw.log: %w", err)
-	}
-	if err := os.WriteFile(r.SignalsLog(dep.ID), nil, 0o644); err != nil {
-		return "", fmt.Errorf("create signals.log: %w", err)
+	pluginRoot := os.Getenv("CLAUDE_PLUGIN_ROOT")
+	if pluginRoot == "" {
+		return "", fmt.Errorf("plugin root not set (set CLAUDE_PLUGIN_ROOT)")
 	}
 
-	det, err := subprocess.SpawnDetached(subprocess.DetachConfig{Command: command, LogFile: r.RawLog(dep.ID), Dir: projectRoot})
+	execMap, _ := dep.JSON["execution"].(map[string]interface{})
+	command, _ := execMap["command"].(string)
+
+	if err := os.MkdirAll(r.SensorDir(dep.ID), 0o755); err != nil {
+		return "", fmt.Errorf("mkdir sensor dir: %w", err)
+	}
+
+	// Stage 1: pre-create the staging raw.log at the flat SensorDir path.
+	// SpawnDetached opens this for stdout+stderr; we rename it into
+	// <run-id>/raw.log once the PID is known. os.Rename on the same
+	// filesystem preserves the subprocess's open fd, so writes continue
+	// uninterrupted at the new path.
+	stagingRaw := r.RawLog(dep.ID)
+	if err := os.WriteFile(stagingRaw, nil, 0o644); err != nil {
+		return "", fmt.Errorf("create staging raw.log: %w", err)
+	}
+
+	// Stage 2: spawn the subprocess detached.
+	det, err := subprocess.SpawnDetached(subprocess.DetachConfig{
+		Command: command,
+		LogFile: stagingRaw,
+		Dir:     projectRoot,
+	})
 	if err != nil {
+		_ = os.Remove(stagingRaw)
 		return "", fmt.Errorf("spawn: %w", err)
 	}
 
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	// Stage 3: derive composite run_id from the freshly-spawned PID
+	// and a short UUID. This becomes the per-run directory name and
+	// the run_id carried on every Signal the watcher emits.
 	shortUUID := uuid.NewString()
 	if len(shortUUID) >= 8 {
 		shortUUID = shortUUID[:8]
 	}
 	runID := fmt.Sprintf("%d-%s", det.PID, shortUUID)
+	runDir := r.RunDir(dep.ID, runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		if det.PGID > 0 {
+			_ = syscall.Kill(-det.PGID, syscall.SIGKILL)
+		}
+		_ = os.Remove(stagingRaw)
+		return "", fmt.Errorf("mkdir run dir: %w", err)
+	}
+
+	// Stage 4: rename the staging raw.log into <run-id>/raw.log.
+	// Atomic on POSIX; subprocess's open fd survives the rename.
+	rawPath := r.RawLogRun(dep.ID, runID)
+	if err := os.Rename(stagingRaw, rawPath); err != nil {
+		if det.PGID > 0 {
+			_ = syscall.Kill(-det.PGID, syscall.SIGKILL)
+		}
+		_ = os.Remove(stagingRaw)
+		_ = os.RemoveAll(runDir)
+		return "", fmt.Errorf("rename raw.log into run dir: %w", err)
+	}
+
+	sigsPath := r.SignalsLogRun(dep.ID, runID)
+	if err := os.WriteFile(sigsPath, nil, 0o644); err != nil {
+		if det.PGID > 0 {
+			_ = syscall.Kill(-det.PGID, syscall.SIGKILL)
+		}
+		_ = os.RemoveAll(runDir)
+		return "", fmt.Errorf("create signals.log: %w", err)
+	}
+
+	envelope, eerr := sensor.BuildEnvelope(dep.JSON)
+	if eerr != nil {
+		if det.PGID > 0 {
+			_ = syscall.Kill(-det.PGID, syscall.SIGKILL)
+		}
+		_ = os.RemoveAll(runDir)
+		return "", fmt.Errorf("build envelope: %w", eerr)
+	}
+	envelope.RunID = runID
+
+	patterns := []interface{}{}
+	if op, ok := execMap["output_parsing"].(map[string]interface{}); ok {
+		if raw, ok := op["patterns"].([]interface{}); ok {
+			patterns = raw
+		}
+	}
+	patternsJSON, _ := json.Marshal(patterns)
+	envelopeJSON, _ := json.Marshal(envelope)
+
+	// Stage 5: spawn the watcher via lib/watcher.
+	watcherPID, err := watcher.Spawn(watcher.SpawnOpts{
+		PluginRoot:     pluginRoot,
+		ProjectRoot:    projectRoot,
+		SensorID:       dep.ID,
+		RunID:          runID,
+		RawLogPath:     rawPath,
+		SignalsLogPath: sigsPath,
+		EnvelopeJSON:   envelopeJSON,
+		PatternsJSON:   patternsJSON,
+		SubprocessPID:  det.PID,
+		WatcherLogPath: filepath.Join(runDir, "watcher.log"),
+	})
+	if err != nil {
+		if det.PGID > 0 {
+			_ = syscall.Kill(-det.PGID, syscall.SIGKILL)
+		}
+		_ = os.RemoveAll(runDir)
+		return "", fmt.Errorf("start watcher: %w", err)
+	}
+
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	rs.Entries = append(rs.Entries, registry.RunningSensorEntry{
 		SensorID:   dep.ID,
 		RunID:      runID,
 		Blocking:   true,
 		PID:        det.PID,
 		PGID:       det.PGID,
-		WatcherPID: 0,
+		WatcherPID: watcherPID,
 		StartedAt:  now,
 		Command:    command,
 		LogDir:     r.RelativeRunDir(dep.ID, runID),
 		HeldBy:     []registry.HeldByEntry{holder},
 	})
 	if err := registry.Save(r, *rs); err != nil {
+		if det.PGID > 0 {
+			_ = syscall.Kill(-det.PGID, syscall.SIGKILL)
+		}
+		if watcherPID > 0 {
+			_ = syscall.Kill(watcherPID, syscall.SIGKILL)
+		}
+		_ = os.RemoveAll(runDir)
+		// Remove the entry we appended so callers see the registry as it
+		// was before the failed Save.
+		rs.Entries = rs.Entries[:len(rs.Entries)-1]
 		return "", err
 	}
 	return runID, nil
@@ -301,6 +404,21 @@ func stopBlockingDep(r registry.Root, entry *registry.RunningSensorEntry, v *sch
 		}
 		if registry.IsPIDAlive(entry.PID) {
 			_ = syscall.Kill(-entry.PGID, syscall.SIGKILL)
+		}
+	}
+	// Kill the watcher subprocess if one was registered. Mirrors the
+	// stopWatcher helper in skills/stop-sensor/scripts/stop.go.
+	if entry.WatcherPID > 0 && registry.IsPIDAlive(entry.WatcherPID) {
+		_ = syscall.Kill(entry.WatcherPID, syscall.SIGTERM)
+		watcherDeadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(watcherDeadline) {
+			if !registry.IsPIDAlive(entry.WatcherPID) {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if registry.IsPIDAlive(entry.WatcherPID) {
+			_ = syscall.Kill(entry.WatcherPID, syscall.SIGKILL)
 		}
 	}
 	_ = registry.WithFileLock(r.LockFile(), func() error {
