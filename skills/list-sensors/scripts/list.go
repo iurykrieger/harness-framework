@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/iurykrieger/harness-framework/lib/cli"
 	"github.com/iurykrieger/harness-framework/lib/registry"
@@ -54,6 +55,10 @@ func runList(b cli.BootstrapResult, stdout, stderr io.Writer) int {
 		if !pidAlive {
 			state = "orphan"
 		}
+		signalsPath := r.SignalsLogRun(e.SensorID, e.RunID)
+		if strings.HasSuffix(e.RunID, "-legacy") {
+			signalsPath = r.LegacySignalsLog(e.SensorID)
+		}
 		entry := map[string]interface{}{
 			"sensor_id":        e.SensorID,
 			"run_id":           e.RunID,
@@ -63,7 +68,7 @@ func runList(b cli.BootstrapResult, stdout, stderr io.Writer) int {
 			"started_at":       e.StartedAt,
 			"command":          e.Command,
 			"held_by":          registry.SummarizeHolders(e.HeldBy, registry.SummarizeOpts{}),
-			"signals_log_path": r.SignalsLog(e.SensorID),
+			"signals_log_path": signalsPath,
 			"state":            state,
 		}
 		if e.Blocking {
