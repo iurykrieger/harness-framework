@@ -292,6 +292,22 @@ func TestValidator_AcceptsOutputParsingOnInferential(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// UseCase target
+// ──────────────────────────────────────────────────────────────────────
+
+func TestValidator_UseCaseTarget(t *testing.T) {
+	schemasDir := schematest.RepoSchemasDir(t)
+	v, err := schema.NewValidator(schemasDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := map[string]interface{}{"id": "x"} // missing every other required field
+	if err := v.Validate(schema.TargetUseCase, bad); err == nil {
+		t.Fatal("expected schema rejection for empty usecase, got nil")
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // helpers
 // ──────────────────────────────────────────────────────────────────────
 
