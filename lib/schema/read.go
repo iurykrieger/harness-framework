@@ -14,6 +14,8 @@ import (
 // sigs.k8s.io/yaml; for .json files (and any other extension) it returns
 // the raw bytes unchanged. Used as the canonical entry point for any
 // authored harness artifact (sensors, use cases, stacks, drafts).
+// Format is detected purely by file extension; a JSON document misnamed
+// with .yaml/.yml will be parsed as YAML and re-serialized.
 func ReadAsJSON(path string) ([]byte, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
