@@ -252,7 +252,7 @@ additionalProperties: false
 description: 'Describes the runtime-observable stack of a single project: languages,
   components (libraries/frameworks the project actually uses), and the canonical shapes
   of stdout lines those components emit. Produced by /detect-sensors as LLM-derived
-  judgment from the project''s manifests and initialization code; persisted at <project>/.harness/stack.json.
+  judgment from the project''s manifests and initialization code; persisted at <project>/.harness/stack.yaml.
   Sensors authored against this project — particularly those with output: stream —
   derive execution.output_parsing.patterns[] from log_shapes[] rather than guessing.
   References: Boeckeler, ''Harness Engineering'' (martinfowler.com); Lopopolo, ''Harness

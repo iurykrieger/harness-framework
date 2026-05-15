@@ -133,7 +133,7 @@ properties:
     - "null"
   sensor_id:
     description: Stable id of the sensor that produced this signal. MUST equal the
-      id field in the sensor's definition (sensor.json).
+      id field in the sensor's definition (sensor.yaml).
     type: string
   severity:
     $ref: '#/$defs/Severity'
