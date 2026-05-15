@@ -110,7 +110,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	}
 
 	// Canonical location: <projectRoot>/.harness/sensors/<id>.json
-	id := orchestrator.StripJSONExt(filepath.Base(sensorPath))
+	id := orchestrator.StripSensorExt(filepath.Base(sensorPath))
 	projectRoot = filepath.Dir(filepath.Dir(filepath.Dir(sensorPath)))
 
 	ctx, cancel := signalCancellableContext()

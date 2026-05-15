@@ -107,7 +107,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "error: resolve:", err)
 		return 2
 	}
-	id := orchestrator.StripJSONExt(filepath.Base(sensorAbsPath))
+	id := orchestrator.StripSensorExt(filepath.Base(sensorAbsPath))
 	projectRoot = filepath.Dir(filepath.Dir(filepath.Dir(sensorAbsPath)))
 
 	v, code := schema.LoadValidator(schemasDir, stderr)

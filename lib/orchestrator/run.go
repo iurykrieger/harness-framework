@@ -71,7 +71,7 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 	// root is provided (out-of-tree path), so dep resolution uses the logical
 	// id rather than the filename. For in-tree sensors the filename and id are
 	// identical; falling back to the filename preserves existing behaviour.
-	rootID := StripJSONExt(filepath.Base(abs))
+	rootID := StripSensorExt(filepath.Base(abs))
 	if explicitProjectRoot != "" {
 		if b, readErr := os.ReadFile(abs); readErr != nil {
 			fmt.Fprintln(stderr, "warn: read sensor for rootID:", readErr)
@@ -155,10 +155,10 @@ func FirstFailedDep(s Sensor, signals map[string]map[string]interface{}) map[str
 	return nil
 }
 
-// StripJSONExt removes a trailing ".yaml" extension from a filename. It is
+// StripSensorExt removes a trailing ".yaml" extension from a filename. It is
 // the inverse of sensor.Resolve's "<id>.yaml" filename convention and is
 // exported so runner scripts can derive a sensor id from its on-disk path.
-func StripJSONExt(name string) string {
+func StripSensorExt(name string) string {
 	if len(name) > 5 && name[len(name)-5:] == ".yaml" {
 		return name[:len(name)-5]
 	}
