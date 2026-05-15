@@ -2,7 +2,7 @@
 
 // Command write-usecase reads a draft UseCase (JSON or YAML), validates
 // it via lib/usecase.ValidateAndPersist (schema + journey_id cross-check
-// + evidence file existence), and writes <out>/<id>.yaml.
+// + evidence file existence), and writes <out>/<journey_id>/<id>.yaml.
 //
 // Usage:
 //

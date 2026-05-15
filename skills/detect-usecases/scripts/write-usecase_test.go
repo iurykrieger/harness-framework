@@ -90,12 +90,12 @@ func TestRun_Happy(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
 	}
-	expected := filepath.Join(out, "create-user-with-email.yaml")
-	if !strings.Contains(stdout.String(), "create-user-with-email.yaml") {
-		t.Fatalf("stdout %q missing expected filename", stdout.String())
+	expected := filepath.Join(out, "user-registration", "create-user-with-email.yaml")
+	if !strings.Contains(stdout.String(), expected) {
+		t.Fatalf("stdout %q missing expected path %q", stdout.String(), expected)
 	}
 	if _, err := os.Stat(expected); err != nil {
-		t.Fatalf("file not written: %v", err)
+		t.Fatalf("file not written at %s: %v", expected, err)
 	}
 }
 
