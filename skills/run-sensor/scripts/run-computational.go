@@ -28,6 +28,7 @@ import (
 
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 )
 
@@ -67,7 +68,7 @@ func main() {
 }
 
 // run is the testable entry point. projectRoot is the directory from which
-// sensor ids are resolved (.harness/sensors/<id>.json); pass os.Getwd() for production.
+// sensor ids are resolved (.harness/sensors/<id>.yaml); pass os.Getwd() for production.
 func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run-computational", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -83,7 +84,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	}
 
 	// sensor.Resolve accepts both bare ids and path-shaped inputs (@-prefixed,
-	// containing "/", or .json-suffixed). For path inputs we then re-derive id
+	// containing "/", or .yaml-suffixed). For path inputs we then re-derive id
 	// and projectRoot from the canonical location so the orchestrator's
 	// registry-persistence path (RunWithDepsRoot) works in both cases.
 	arg := rest[0]
@@ -94,7 +95,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	}
 
 	var sensorJSON map[string]interface{}
-	if b, rerr := os.ReadFile(sensorPath); rerr != nil {
+	if b, rerr := schema.ReadAsJSON(sensorPath); rerr != nil {
 		fmt.Fprintln(stderr, "error: read:", rerr)
 		return 2
 	} else if jerr := json.Unmarshal(b, &sensorJSON); jerr != nil {
@@ -109,8 +110,8 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Canonical location: <projectRoot>/.harness/sensors/<id>.json
-	id := orchestrator.StripJSONExt(filepath.Base(sensorPath))
+	// Canonical location: <projectRoot>/.harness/sensors/<id>.yaml
+	id := orchestrator.StripSensorExt(filepath.Base(sensorPath))
 	projectRoot = filepath.Dir(filepath.Dir(filepath.Dir(sensorPath)))
 
 	ctx, cancel := signalCancellableContext()

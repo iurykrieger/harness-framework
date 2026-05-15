@@ -32,8 +32,11 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -53,7 +56,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	body, err := os.ReadFile(sensorPath)
+	body, err := schema.ReadAsJSON(sensorPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "read sensor:", err)
 		return 2
@@ -81,7 +84,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	tempSensor, err := os.CreateTemp("", "replay-sensor-*.json")
+	tempSensor, err := os.CreateTemp("", "replay-sensor-*.yaml")
 	if err != nil {
 		fmt.Fprintln(stderr, "create temp sensor:", err)
 		return 2
@@ -92,11 +95,21 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "cleanup temp sensor:", err)
 		}
 	}()
-	enc := json.NewEncoder(tempSensor)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(raw); err != nil {
+	jsonBytes, err := json.Marshal(raw)
+	if err != nil {
 		tempSensor.Close()
 		fmt.Fprintln(stderr, "marshal temp sensor:", err)
+		return 2
+	}
+	yamlBytes, err := yaml.JSONToYAML(jsonBytes)
+	if err != nil {
+		tempSensor.Close()
+		fmt.Fprintln(stderr, "convert temp sensor to YAML:", err)
+		return 2
+	}
+	if _, err := tempSensor.Write(yamlBytes); err != nil {
+		tempSensor.Close()
+		fmt.Fprintln(stderr, "write temp sensor:", err)
 		return 2
 	}
 	if err := tempSensor.Close(); err != nil {
@@ -117,7 +130,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 //     from cwd looking for the .harness/ marker. This is the canonical
 //     discovery path other skills use.
 //  2. Three Dir() calls above sensorPath, assuming the sensor lives at
-//     the canonical <projectRoot>/.harness/sensors/<id>.json location.
+//     the canonical <projectRoot>/.harness/sensors/<id>.yaml location.
 //     Useful when invoked from outside the project tree (e.g. CI).
 //
 // Both candidates are required to be existing directories before they

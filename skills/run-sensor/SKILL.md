@@ -48,7 +48,7 @@ The skipped sensor never runs its `command` or its prepare/teardown — only the
 /run-sensor <sensor.id>
 ```
 
-The argument is a bare sensor id (e.g. `my-sensor`). The runner resolves it to `.harness/sensors/<id>.json` relative to the project root. If absent, ask the user. Do not invent a sensor.
+The argument is a bare sensor id (e.g. `my-sensor`). The runner resolves it to `.harness/sensors/<id>.yaml` relative to the project root. If absent, ask the user. Do not invent a sensor.
 
 ### Refusing blocking sensors
 
@@ -61,7 +61,7 @@ If `execution.blocking: true`, the runner exits 2 with an error message pointing
 
 ### 1. Read `sensor.type` and `sensor.output`
 
-Both fields are required by `schemas/sensor.json`. Use the Read tool. Branch on `sensor.type` to choose the runner; the runner reads `sensor.output` itself and surfaces it as `metadata.output_mode` on the aggregate Signal — you don't have to pass it.
+Both fields are required by `schemas/sensor.yaml`. Use the Read tool. Branch on `sensor.type` to choose the runner; the runner reads `sensor.output` itself and surfaces it as `metadata.output_mode` on the aggregate Signal — you don't have to pass it.
 
 ### 2a. `computational`
 
@@ -71,16 +71,16 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   ./skills/run-sensor/scripts <SENSOR_ID>
 ```
 
-The script does everything: resolves the path (including `@` prefix), validates against `schemas/sensor.json`, spawns `sh -c <execution.command>` with the configured env capped by `cost.latency.timeout_ms`, scans stdout+stderr line-by-line, matches each line against `execution.output_parsing.patterns` (when declared), emits a Signal per match as JSONL, and ends with one aggregate Signal whose verdict is the worse of `exit_code_map[exitCode]` and the highest verdict observed in the stream. Pass its stdout through to step 3.
+The script does everything: resolves the path (including `@` prefix), validates against `schemas/sensor.yaml`, spawns `sh -c <execution.command>` with the configured env capped by `cost.latency.timeout_ms`, scans stdout+stderr line-by-line, matches each line against `execution.output_parsing.patterns` (when declared), emits a Signal per match as JSONL, and ends with one aggregate Signal whose verdict is the worse of `exit_code_map[exitCode]` and the highest verdict observed in the stream. Pass its stdout through to step 3.
 
-Exit codes: `0` Signals printed; `1` schema/pattern compile failure; `2` usage or I/O error (sensor unreadable, malformed JSON, wrong type).
+Exit codes: `0` Signals printed; `1` schema/pattern compile failure; `2` usage or I/O error (sensor unreadable, malformed YAML, wrong type).
 
 ### About the invocation contract
 
 Every script the framework ships runs through the same three knobs:
 
 - `-C "${CLAUDE_PLUGIN_ROOT}"` chdirs `go` itself to the plugin's checkout so the user's `go.mod` or `go.work` cannot interfere with module resolution.
-- `HARNESS_REGISTRY_ROOT="$(pwd)"` captures the agent's cwd as the project root before `-C` moves `go`. The runner uses this to resolve `sensors/<id>.json` and to set the subprocess's working directory.
+- `HARNESS_REGISTRY_ROOT="$(pwd)"` captures the agent's cwd as the project root before `-C` moves `go`. The runner uses this to resolve `sensors/<id>.yaml` and to set the subprocess's working directory.
 - `GOWORK=off` neutralizes any `go.work` in the user's tree.
 
 `${CLAUDE_PLUGIN_ROOT}` is exposed by Claude Code to plugin-originated commands; if it is empty the runner emits `verdict=error metadata.cause=plugin_root_missing`.
@@ -117,12 +117,12 @@ Calling agents parse bottom-up, so the aggregate stays unambiguously identifiabl
 The final ```json``` block is the aggregate. Its `metadata.kind` is always `"aggregate"`; its `metadata.output_mode` echoes the sensor's declared `output` (`"single"` or `"stream"`). Per-line Signals (only emitted in `stream` mode) carry `metadata.kind: "individual"` and `metadata.line` with the raw matched text.
 
 ```json
-{ ...aggregate Signal conforming to schemas/signal.json... }
+{ ...aggregate Signal conforming to schemas/signal.yaml... }
 ```
 
 ## Error envelope
 
-When the runner exits non-zero before any Signal can be produced, emit a Signal that still validates against `schemas/signal.json` as the trailing fenced ```json``` block. Capture the runner's stderr verbatim into `evidence[0].rationale`.
+When the runner exits non-zero before any Signal can be produced, emit a Signal that still validates against `schemas/signal.yaml` as the trailing fenced ```json``` block. Capture the runner's stderr verbatim into `evidence[0].rationale`.
 
 ```json
 {

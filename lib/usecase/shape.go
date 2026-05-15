@@ -5,7 +5,7 @@ package usecase
 
 import "github.com/iurykrieger/harness-framework/lib/stack"
 
-// UseCase is the typed view of a usecase.json file.
+// UseCase is the typed view of a usecase.yaml file.
 type UseCase struct {
 	ID                 string             `json:"id"`
 	Version            string             `json:"version"`

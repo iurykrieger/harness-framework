@@ -1,0 +1,43 @@
+behavior:
+  business_rules:
+  - Conflict detection is per-id, not per-payload-hash (renaming the draft is not
+    a workaround).
+  - Resolution belongs to the agent (rename + retry, or use /detect-sensors).
+  summary: Before writing, the script stats the target path; if present, it exits
+    1 with a stderr message naming the conflict. No file is overwritten.
+description: 'Conflict variation: /create-sensor refuses to overwrite an existing
+  sensor at <out>/.harness/sensors/<id>.json. This distinguishes /create-sensor (additive,
+  single-shot) from /detect-sensors (which overwrites idempotently). The script exits
+  non-zero and the agent is expected to ask the user for a different id or use /detect-sensors
+  instead.'
+evidence:
+- file: skills/create-sensor/scripts/write-sensor.go
+  rationale: Pre-write existence check unique to create-sensor's variant of the persistence
+    script.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    preexisting_file_unchanged: true
+    stderr_contains: already exists
+  invariants:
+  - File is not overwritten.
+  - Exit code is 1.
+  shape: Stderr message
+  summary: Stderr explains the conflict; exit 1; the preexisting file is unchanged.
+id: create-sensor-already-exists-conflict
+journey_id: create-sensor
+name: Refuse to create when a sensor with the same id already exists
+regression_priority: high
+tags:
+- validation
+- conflict
+trigger:
+  fixture:
+    argv:
+    - --out=/abs/project
+    - /tmp/draft-assert-already-exists.json
+    preexisting_file: .harness/sensors/lint-go-vet-computational.json
+  shape: CLI invocation
+  summary: Skill invokes write-sensor.go on an id that already exists in the project
+    tree.
+version: 1.0.0

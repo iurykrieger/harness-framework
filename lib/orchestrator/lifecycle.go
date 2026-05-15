@@ -616,7 +616,7 @@ func mapStepExitCode(code int, ecMap []interface{}, phase string) (string, strin
 }
 
 // buildLifecycleEvidence produces evidence[] entries for any non-pass
-// lifecycle steps. Uses only signal.json's allowed evidence fields
+// lifecycle steps. Uses only signal.yaml's allowed evidence fields
 // (rationale, excerpt).
 func buildLifecycleEvidence(prep, td []interface{}) []interface{} {
 	out := []interface{}{}

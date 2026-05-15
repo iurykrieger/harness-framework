@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
@@ -28,7 +30,7 @@ func TestApplySensors_NewSetupSensor(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
-	if _, err := os.Stat(filepath.Join(dir, "smoke-setup.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "smoke-setup.yaml")); err != nil {
 		t.Fatal("setup sensor not persisted")
 	}
 }
@@ -52,9 +54,13 @@ func TestApplySensors_PatchBumpsPatchVersion(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
-	out, _ := os.ReadFile(filepath.Join(dir, "smoke-comp.json"))
+	out, _ := os.ReadFile(filepath.Join(dir, "smoke-comp.yaml"))
+	jsonOut, err := yaml.YAMLToJSON(out)
+	if err != nil {
+		t.Fatalf("written YAML invalid: %v", err)
+	}
 	var got map[string]interface{}
-	json.Unmarshal(out, &got)
+	json.Unmarshal(jsonOut, &got)
 	if got["version"] != "0.1.1" {
 		t.Fatalf("expected patched version 0.1.1; got %v", got["version"])
 	}
@@ -78,7 +84,7 @@ func TestApplySensors_InvalidSensorRejected(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected 1 (validation), got %d (stderr=%s)", code, stderr.String())
 	}
-	if _, err := os.Stat(filepath.Join(dir, "smoke-comp.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "smoke-comp.yaml")); err == nil {
 		t.Fatal("invalid sensor must NOT be persisted")
 	}
 }

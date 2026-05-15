@@ -10,17 +10,13 @@ import (
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/usecase"
+	"sigs.k8s.io/yaml"
 )
 
 // LoadCanonical returns the canonical UseCase fixture.
 func LoadCanonical(t *testing.T) *usecase.UseCase {
 	t.Helper()
-	_, this, _, _ := runtime.Caller(0)
-	p := filepath.Clean(filepath.Join(filepath.Dir(this), "..", "testdata", "canonical-usecase.json"))
-	body, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatalf("read %s: %v", p, err)
-	}
+	body := CanonicalBody(t)
 	var uc usecase.UseCase
 	if err := json.Unmarshal(body, &uc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -28,14 +24,20 @@ func LoadCanonical(t *testing.T) *usecase.UseCase {
 	return &uc
 }
 
-// CanonicalBody returns the raw JSON bytes of the canonical fixture.
+// CanonicalBody returns the canonical fixture as JSON bytes, converting
+// from the on-disk YAML representation so callers can hand it to
+// json.Unmarshal or to ValidateAndPersist.
 func CanonicalBody(t *testing.T) []byte {
 	t.Helper()
 	_, this, _, _ := runtime.Caller(0)
-	p := filepath.Clean(filepath.Join(filepath.Dir(this), "..", "testdata", "canonical-usecase.json"))
+	p := filepath.Clean(filepath.Join(filepath.Dir(this), "..", "testdata", "canonical-usecase.yaml"))
 	body, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("read %s: %v", p, err)
 	}
-	return body
+	jb, err := yaml.YAMLToJSON(body)
+	if err != nil {
+		t.Fatalf("yaml→json: %v", err)
+	}
+	return jb
 }

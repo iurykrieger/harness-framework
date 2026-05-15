@@ -1,0 +1,48 @@
+behavior:
+  business_rules:
+  - 'Deterministic: same inputs produce the same output.'
+  - 'Pure read: no files are written, no side effects.'
+  summary: Read all three inputs, parse them, collect ambient project state (files
+    mentioned by the signal's remediation, .env.example presence, etc.), and emit
+    one JSON document to stdout.
+description: 'Step 1 of /heal-sensor: diagnose.go reads --signal=<failing-signal.json>,
+  --sensor=<failing-sensor.json>, and --root=<project>, then writes a deterministic
+  /tmp/heal-input.json bundle to stdout (the LLM agent reads this to plan the Setup
+  Plan).'
+evidence:
+- file: skills/heal-sensor/scripts/diagnose.go
+  line_start: 30
+  rationale: main() entry of the diagnose step.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_json:
+      root_state:
+        env_example_present: true
+      sensor:
+        id: api-tests
+      signal:
+        verdict: fail
+  invariants:
+  - No files written by diagnose itself.
+  - Bundle is valid JSON.
+  shape: Stdout (JSON document)
+  summary: Stdout has one JSON object describing the failure and the project's relevant
+    state; exit 0.
+id: heal-sensor-diagnose-happy
+journey_id: heal-sensor
+name: Diagnose reads the failing Signal + sensor + project state and emits an input
+  bundle
+regression_priority: high
+tags:
+- happy-path
+- diagnose
+trigger:
+  fixture:
+    argv:
+    - --signal=/tmp/last-signal.json
+    - --sensor=/abs/project/.harness/sensors/api-tests.json
+    - --root=/abs/project
+  shape: CLI invocation
+  summary: Hook or user invokes diagnose.go after a /run-sensor setup-shaped failure.
+version: 1.0.0

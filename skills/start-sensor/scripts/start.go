@@ -391,7 +391,7 @@ func runStart(b cli.BootstrapResult, args []string) (int, map[string]interface{}
 }
 
 func loadSensorJSON(path string) (map[string]interface{}, error) {
-	data, err := os.ReadFile(path)
+	data, err := schema.ReadAsJSON(path)
 	if err != nil {
 		return nil, fmt.Errorf("read sensor: %w", err)
 	}

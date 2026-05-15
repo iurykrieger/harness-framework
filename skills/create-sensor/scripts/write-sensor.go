@@ -1,7 +1,7 @@
 //go:build write_sensor
 
-// Command write-sensor persists a draft sensor JSON to
-// <projectRoot>/.harness/sensors/<id>.json via lib/sensor.ValidateAndPersist
+// Command write-sensor persists a draft sensor (JSON or YAML) to
+// <projectRoot>/.harness/sensors/<id>.yaml via lib/sensor.ValidateAndPersist
 // — the single shared persistence entrypoint used by every sensor-authoring
 // skill (/create-sensor, /detect-sensors, /heal-sensor). This wrapper sets
 // the strict options (RejectIfExists, RequireFixturesOnDisk) appropriate
@@ -9,7 +9,7 @@
 //
 // Usage:
 //
-//	write-sensor --out <dir> [--schemas-dir <dir>] <draft.json>
+//	write-sensor --out <dir> [--schemas-dir <dir>] <draft>
 //
 // Exit codes: 0 written, 1 schema-invalid, 2 usage / I/O / pre-check.
 package main
@@ -25,6 +25,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v5"
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
+	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
 )
@@ -53,7 +54,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	draftPath := fs.Arg(0)
 
-	body, err := os.ReadFile(draftPath)
+	body, err := schema.ReadAsJSON(draftPath)
 	if err != nil {
 		emitJSON(stdout, errorSignal("read_draft", err.Error()))
 		return 2

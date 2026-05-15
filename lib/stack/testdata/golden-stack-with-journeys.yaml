@@ -1,0 +1,35 @@
+archetypes:
+- http-api
+components:
+- evidence:
+  - file: cmd/server/main.go
+    line_start: 10
+    rationale: http.ListenAndServe call site
+  name: net/http
+  role: http-server
+detected_at: "2026-05-14T10:00:00Z"
+detected_by: manual
+journeys:
+- archetype: http-api
+  entry_points:
+  - evidence:
+      file: cmd/server/main.go
+      line_start: 25
+      rationale: registration handler
+    kind: http-route
+    method: POST
+    path: /users
+  id: user-registration
+  name: User registration
+  summary: POST /users creates an account.
+languages:
+- name: go
+  version: "1.25"
+log_shapes:
+- format: plain
+  id: plain-stdout
+  produced_by:
+  - net/http
+  sample: starting server on :8080
+purpose: HTTP API for managing user accounts.
+version: 0.2.0

@@ -18,7 +18,7 @@ func writeSensorJSON(t *testing.T, root, id string, depsOn []string) {
 		reqs = "[" + strings.Join(parts, ",") + "]"
 	}
 	body := `{"id":"` + id + `","requires":` + reqs + `}`
-	if err := os.WriteFile(filepath.Join(root, id+".json"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, id+".yaml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -10,10 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/iurykrieger/harness-framework/lib/transcript/transcripttest"
 )
 
-// withSensor writes a sensor JSON at <cwd>/.harness/sensors/<id>.json so
+// withSensor writes a sensor YAML at <cwd>/.harness/sensors/<id>.yaml so
 // loadFailedSensorView can find it. Returns the cwd to feed into the
 // hook input.
 func withSensor(t *testing.T, id string, requires []map[string]interface{}) string {
@@ -27,7 +29,11 @@ func withSensor(t *testing.T, id string, requires []map[string]interface{}) stri
 		"id":       id,
 		"requires": requires,
 	})
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+	yamlBody, err := yaml.JSONToYAML(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), yamlBody, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return cwd
@@ -103,7 +109,11 @@ func TestHook_CascadeFromFailedDep_TargetsDep(t *testing.T) {
 		"id":       "setup-env",
 		"requires": []map[string]interface{}{{"kind": "env", "name": "RSA_PRIVATE_KEY"}},
 	})
-	if err := os.WriteFile(filepath.Join(depDir, "setup-env.json"), depBody, 0o644); err != nil {
+	depYAML, err := yaml.JSONToYAML(depBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depDir, "setup-env.yaml"), depYAML, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	transcriptPath := transcripttest.Path(t, "cascade-failed-dep.jsonl")

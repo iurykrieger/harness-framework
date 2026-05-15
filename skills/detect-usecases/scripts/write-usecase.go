@@ -1,13 +1,13 @@
 //go:build write_usecase
 
-// Command write-usecase reads a draft UseCase JSON, validates it via
-// lib/usecase.ValidateAndPersist (schema + journey_id cross-check +
-// evidence file existence), and writes <out>/<id>.json.
+// Command write-usecase reads a draft UseCase (JSON or YAML), validates
+// it via lib/usecase.ValidateAndPersist (schema + journey_id cross-check
+// + evidence file existence), and writes <out>/<id>.yaml.
 //
 // Usage:
 //
 //	go run -tags=write_usecase ./skills/detect-usecases/scripts \
-//	  --out=<dir> --project-root=<dir> [--schemas-dir=<dir>] <draft.json>
+//	  --out=<dir> --project-root=<dir> [--schemas-dir=<dir>] <draft>
 //
 // Exit codes: 0 written, 1 validation failed (schema or cross-check),
 // 2 usage or I/O error.
@@ -38,7 +38,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	var outDir, projectRoot, schemasDir string
 	fs.StringVar(&outDir, "out", "", "directory to write the usecase file into (required)")
-	fs.StringVar(&projectRoot, "project-root", "", "project root (required, holds .harness/stack.json)")
+	fs.StringVar(&projectRoot, "project-root", "", "project root (required, holds .harness/stack.yaml)")
 	fs.StringVar(&schemasDir, "schemas-dir", "", "schemas directory (default: walk up from cwd)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -52,12 +52,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: write-usecase --out=DIR --project-root=DIR [--schemas-dir=DIR] <draft.json>")
+		fmt.Fprintln(stderr, "usage: write-usecase --out=DIR --project-root=DIR [--schemas-dir=DIR] <draft>")
 		return 2
 	}
 	draftPath := fs.Arg(0)
 
-	body, err := os.ReadFile(draftPath)
+	body, err := schema.ReadAsJSON(draftPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: read draft:", err)
 		return 2
@@ -88,12 +88,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func loadStack(projectRoot string, stderr io.Writer) (*stack.Stack, int) {
-	stackPath := filepath.Join(projectRoot, ".harness", "stack.json")
+	stackPath := filepath.Join(projectRoot, ".harness", "stack.yaml")
 	if _, err := os.Stat(stackPath); err != nil {
 		fmt.Fprintf(stderr, "error: stack_missing: %s — run /detect-sensors first\n", stackPath)
 		return nil, 2
 	}
-	body, err := os.ReadFile(stackPath)
+	body, err := schema.ReadAsJSON(stackPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: read stack:", err)
 		return nil, 2

@@ -36,7 +36,7 @@ type RunDepsResult struct {
 }
 
 // RunDeps resolves targetID's requires[kind=sensor] graph, validates every
-// sensor against schemas/sensor.json, and iterates topologically — emitting
+// sensor against schemas/sensor.yaml, and iterates topologically — emitting
 // per-dep aggregate (non-blocking via RunOne) or attach acks (blocking
 // via AttachLiveDep). Cascade signals for intermediate deps are emitted
 // on stdout during the loop. The root is NOT processed; caller handles

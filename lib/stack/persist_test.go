@@ -6,19 +6,34 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
-func TestValidateAndPersist_Golden(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("testdata", "golden-stack.json"))
+// readFixtureAsJSON reads a YAML fixture from testdata/ and returns its
+// canonical JSON byte representation, so callers can pass it to
+// ValidateAndPersist (which expects JSON bytes).
+func readFixtureAsJSON(t *testing.T, name string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
-		t.Fatalf("read golden: %v", err)
+		t.Fatalf("read %s: %v", name, err)
 	}
+	jb, err := yaml.YAMLToJSON(body)
+	if err != nil {
+		t.Fatalf("yaml→json %s: %v", name, err)
+	}
+	return jb
+}
+
+func TestValidateAndPersist_Golden(t *testing.T) {
+	body := readFixtureAsJSON(t, "golden-stack.yaml")
 	root := t.TempDir()
 	target, err := ValidateAndPersist(body, root, "")
 	if err != nil {
 		t.Fatalf("persist: %v", err)
 	}
-	want := filepath.Join(root, ".harness", "stack.json")
+	want := filepath.Join(root, ".harness", "stack.yaml")
 	if target != want {
 		t.Fatalf("target = %q, want %q", target, want)
 	}
@@ -26,21 +41,26 @@ func TestValidateAndPersist_Golden(t *testing.T) {
 		t.Fatalf("stat: %v", err)
 	}
 
-	// Round-trip
+	// Round-trip: re-decode the persisted YAML and compare against the
+	// canonical JSON-decoded view of the input.
 	out, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
+	outJSON, err := yaml.YAMLToJSON(out)
+	if err != nil {
+		t.Fatalf("yaml→json persisted: %v", err)
+	}
 	var a, b map[string]interface{}
 	_ = json.Unmarshal(body, &a)
-	_ = json.Unmarshal(out, &b)
+	_ = json.Unmarshal(outJSON, &b)
 	if ja, _ := json.Marshal(a); !bytes.Equal(ja, mustMarshal(b)) {
 		t.Fatalf("round-trip mismatch")
 	}
 }
 
 func TestValidateAndPersist_Idempotent(t *testing.T) {
-	body, _ := os.ReadFile(filepath.Join("testdata", "golden-stack.json"))
+	body := readFixtureAsJSON(t, "golden-stack.yaml")
 	root := t.TempDir()
 	target1, err := ValidateAndPersist(body, root, "")
 	if err != nil {
@@ -58,19 +78,19 @@ func TestValidateAndPersist_Idempotent(t *testing.T) {
 }
 
 func TestValidateAndPersist_SchemaFail(t *testing.T) {
-	body, _ := os.ReadFile(filepath.Join("testdata", "invalid-missing-required.json"))
+	body := readFixtureAsJSON(t, "invalid-missing-required.yaml")
 	root := t.TempDir()
 	_, err := ValidateAndPersist(body, root, "")
 	if err == nil {
 		t.Fatal("expected schema error, got nil")
 	}
-	if _, statErr := os.Stat(filepath.Join(root, ".harness", "stack.json")); statErr == nil {
+	if _, statErr := os.Stat(filepath.Join(root, ".harness", "stack.yaml")); statErr == nil {
 		t.Fatal("expected no file on disk after validation failure")
 	}
 }
 
 func TestValidateAndPersist_Permissions(t *testing.T) {
-	body, _ := os.ReadFile(filepath.Join("testdata", "golden-stack.json"))
+	body := readFixtureAsJSON(t, "golden-stack.yaml")
 	root := t.TempDir()
 	target, err := ValidateAndPersist(body, root, "")
 	if err != nil {

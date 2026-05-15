@@ -10,7 +10,7 @@ import (
 
 func TestRepoSchemasDir_ReturnsValidPath(t *testing.T) {
 	dir := schematest.RepoSchemasDir(t)
-	for _, name := range []string{"sensor.json", "signal.json", "stack.json"} {
+	for _, name := range []string{"sensor.yaml", "signal.yaml", "stack.yaml"} {
 		p := filepath.Join(dir, name)
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("expected %s in returned dir: %v", name, err)

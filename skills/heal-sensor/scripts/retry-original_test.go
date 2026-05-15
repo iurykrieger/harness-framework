@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
@@ -43,7 +45,7 @@ func TestRetryOriginal_PicksTypeAndShellsOut(t *testing.T) {
 
 	// The runner accepts absolute paths as well as sensor IDs. Write the
 	// sensor fixture into a temp project tree that mirrors the canonical
-	// layout (<projectDir>/.harness/sensors/<id>.json) so dependency
+	// layout (<projectDir>/.harness/sensors/<id>.yaml) so dependency
 	// resolution works.
 	projectDir := t.TempDir()
 	sensorsDir := filepath.Join(projectDir, ".harness", "sensors")
@@ -58,9 +60,13 @@ func TestRetryOriginal_PicksTypeAndShellsOut(t *testing.T) {
 			map[string]interface{}{"exit_code": "*", "verdict": "fail", "severity": "high"},
 		},
 	}
-	body, _ := json.Marshal(s)
-	// id = "smoke-comp" (from fixture); file must be .harness/sensors/smoke-comp.json
-	sensorFile := filepath.Join(sensorsDir, "smoke-comp.json")
+	jsonBody, _ := json.Marshal(s)
+	body, err := yaml.JSONToYAML(jsonBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// id = "smoke-comp" (from fixture); file must be .harness/sensors/smoke-comp.yaml
+	sensorFile := filepath.Join(sensorsDir, "smoke-comp.yaml")
 	if err := os.WriteFile(sensorFile, body, 0o644); err != nil {
 		t.Fatal(err)
 	}

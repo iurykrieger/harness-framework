@@ -48,7 +48,7 @@ func TestValidateOrEmergency_EmitsEmergencyOnInvalid(t *testing.T) {
 	if md["kind"] != "signal_validation_failed" {
 		t.Fatalf("kind: %v", md["kind"])
 	}
-	if !strings.Contains(buf.String(), "BUG: emitted signal failed signal.json validation") {
+	if !strings.Contains(buf.String(), "BUG: emitted signal failed signal.yaml validation") {
 		t.Fatalf("stderr should contain BUG message, got %q", buf.String())
 	}
 }

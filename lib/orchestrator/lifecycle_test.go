@@ -32,7 +32,7 @@ func roundTripJSON(t *testing.T, in map[string]interface{}) map[string]interface
 	return out
 }
 
-// makeSensorPath creates <tmp>/sensors/<id>.json so that RunOne's
+// makeSensorPath creates <tmp>/sensors/<id>.yaml so that RunOne's
 // projectRoot derivation (filepath.Dir(filepath.Dir(s.Path))) resolves to
 // tmp — a t.TempDir() — preventing .runtime from leaking into the repo tree.
 func makeSensorPath(t *testing.T, id string) string {
@@ -42,7 +42,7 @@ func makeSensorPath(t *testing.T, id string) string {
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return filepath.Join(sensorsDir, id+".json")
+	return filepath.Join(sensorsDir, id+".yaml")
 }
 
 func TestRunOne_SimpleNoLifecycle(t *testing.T) {
@@ -320,7 +320,7 @@ func TestRunOne_GateFailure_Tool(t *testing.T) {
 	}
 	s := Sensor{
 		ID:   "needs-docker",
-		Path: filepath.Join(sensorsDir, "needs-docker.json"),
+		Path: filepath.Join(sensorsDir, "needs-docker.yaml"),
 		JSON: map[string]interface{}{
 			"id":      "needs-docker",
 			"version": "0.1.0",
@@ -366,7 +366,7 @@ func TestRunOne_GateFailure_Context(t *testing.T) {
 	}
 	s := Sensor{
 		ID:   "needs-context",
-		Path: filepath.Join(sensorsDir, "needs-context.json"),
+		Path: filepath.Join(sensorsDir, "needs-context.yaml"),
 		JSON: map[string]interface{}{
 			"id":      "needs-context",
 			"version": "0.1.0",
@@ -409,7 +409,7 @@ func TestRunOne_GateFailure_Env(t *testing.T) {
 	}
 	s := Sensor{
 		ID:   "needs-env",
-		Path: filepath.Join(sensorsDir, "needs-env.json"),
+		Path: filepath.Join(sensorsDir, "needs-env.yaml"),
 		JSON: map[string]interface{}{
 			"id":      "needs-env",
 			"version": "0.1.0",
@@ -450,7 +450,7 @@ func TestRunOne_WithRoot_CreatesAndRemovesEntry(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	sensorPath := filepath.Join(proj, ".harness", "sensors", "echo.json")
+	sensorPath := filepath.Join(proj, ".harness", "sensors", "echo.yaml")
 	if err := os.WriteFile(sensorPath, []byte(`{
       "id": "echo", "version": "0.0.0", "kind": "observation",
       "type": "computational", "output": "single",
@@ -504,7 +504,7 @@ func TestRunOne_WithRoot_RegistryInsertFailureCleansUpDir(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	sensorPath := filepath.Join(proj, ".harness", "sensors", "echo.json")
+	sensorPath := filepath.Join(proj, ".harness", "sensors", "echo.yaml")
 	if err := os.WriteFile(sensorPath, []byte(`{
       "id": "echo", "version": "0.0.0", "kind": "observation",
       "type": "computational", "output": "single",
@@ -615,11 +615,11 @@ func TestRunOne_SingleOutputFailure_PopulatesEvidenceFromStderr(t *testing.T) {
   "exit_code_map": [{"exit_code":0,"verdict":"pass","severity":"info"},{"exit_code":"*","verdict":"fail","severity":"high"}]
 }
 }`)
-	if err := os.WriteFile(filepath.Join(dir, "build-fails.json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "build-fails.yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	sensorPath := filepath.Join(dir, "build-fails.json")
+	sensorPath := filepath.Join(dir, "build-fails.yaml")
 	s, err := loadSensorForTest(sensorPath)
 	if err != nil {
 		t.Fatal(err)

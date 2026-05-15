@@ -13,10 +13,10 @@ func TestLoadStackFile(t *testing.T) {
 		wantCode   int
 		wantSubstr string // expected fragment in stderr when wantCode != 0
 	}{
-		{name: "golden", fixture: "golden-stack.json", wantCode: 0},
-		{name: "with journeys", fixture: "golden-stack-with-journeys.json", wantCode: 0},
-		{name: "missing required", fixture: "invalid-missing-required.json", wantCode: 1, wantSubstr: "version"},
-		{name: "bad enum", fixture: "invalid-enum.json", wantCode: 1, wantSubstr: "format"},
+		{name: "golden", fixture: "golden-stack.yaml", wantCode: 0},
+		{name: "with journeys", fixture: "golden-stack-with-journeys.yaml", wantCode: 0},
+		{name: "missing required", fixture: "invalid-missing-required.yaml", wantCode: 1, wantSubstr: "version"},
+		{name: "bad enum", fixture: "invalid-enum.yaml", wantCode: 1, wantSubstr: "format"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -85,7 +85,7 @@ func writeFastDyingDep(t *testing.T, root, id string) {
   "output_parsing": {"patterns":[{"regex":"^READY$","verdict":"pass","severity":"info"}]}
 }
 }`
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -190,7 +190,7 @@ func TestAttachLiveDep_HealthGateDiedSilently(t *testing.T) {
 "cost":{"class":"cheap","compute":{"cpu":"low","memory_mb":32},"latency":{"p50_ms":10,"p95_ms":50,"timeout_ms":2000}},
 "execution":{"command":"echo never","exit_code_map":[{"exit_code":0,"verdict":"pass","severity":"info"}]}
 }`)
-	if err := os.WriteFile(filepath.Join(dir, "uses-fast-dying.json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "uses-fast-dying.yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 

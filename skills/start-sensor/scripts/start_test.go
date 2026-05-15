@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/iurykrieger/harness-framework/lib/cli"
 	"github.com/iurykrieger/harness-framework/lib/orchestrator"
 	"github.com/iurykrieger/harness-framework/lib/registry"
@@ -66,9 +68,16 @@ func writeFixtureSensor(t *testing.T, projectRoot, id string, body map[string]in
 		t.Fatal(err)
 	}
 	body["id"] = id
-	data, _ := json.MarshalIndent(body, "", "  ")
-	path := filepath.Join(dir, id+".json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yamlData, err := yaml.JSONToYAML(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, id+".yaml")
+	if err := os.WriteFile(path, yamlData, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -190,7 +199,7 @@ func blockingFixtureBody() map[string]interface{} {
 	}
 }
 
-// writeBlockingTarget writes a fixture sensor at <root>/sensors/<id>.json
+// writeBlockingTarget writes a fixture sensor at <root>/sensors/<id>.yaml
 // with execution.blocking=true and a stream output_parsing pattern.
 // Adds requires[kind=sensor] if dependsOn is non-nil, prepare[] if non-nil.
 func writeBlockingTarget(t *testing.T, root, id string, dependsOn []string, prepare []map[string]string) {
@@ -283,11 +292,15 @@ func writeBlockingDepFixtureForStart(t *testing.T, root, id string) {
   "output_parsing": {"patterns":[{"regex":"^TICK$","verdict":"pass","severity":"info"}]}
 }
 }`)
+	yamlBody, err := yaml.JSONToYAML(body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := filepath.Join(root, ".harness", "sensors")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), yamlBody, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

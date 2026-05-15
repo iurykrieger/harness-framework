@@ -14,11 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
-// writeSensor writes a sensor fixture to <root>/.harness/sensors/<id>.json and returns
+// writeSensor writes a sensor fixture to <root>/.harness/sensors/<id>.yaml and returns
 // the sensor id. Tests pass root as projectRoot so ResolveByID can find it.
 func writeSensor(t *testing.T, root, id string, mut func(map[string]interface{})) string {
 	t.Helper()
@@ -31,8 +33,12 @@ func writeSensor(t *testing.T, root, id string, mut func(map[string]interface{})
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := json.MarshalIndent(s, "", "  ")
-	if err := os.WriteFile(filepath.Join(sensorsDir, id+".json"), b, 0o644); err != nil {
+	jsonBytes, _ := json.Marshal(s)
+	b, err := yaml.JSONToYAML(jsonBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sensorsDir, id+".yaml"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -151,8 +157,12 @@ func TestRunComputational_SIGTERMSetsTerminatedExternally(t *testing.T) {
 			"golden_cases": []interface{}{map[string]interface{}{"fixture": "f", "expected_verdict": "pass", "expected_severity": "info"}},
 		},
 	}
-	b, _ := json.Marshal(sensorJSON)
-	if err := os.WriteFile(filepath.Join(proj, ".harness", "sensors", "sleeper.json"), b, 0o644); err != nil {
+	jb, _ := json.Marshal(sensorJSON)
+	b, err := yaml.JSONToYAML(jb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, ".harness", "sensors", "sleeper.yaml"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -251,7 +261,7 @@ func TestRunComputational_AcceptsAbsolutePath(t *testing.T) {
 	id := writeSensor(t, root, "abs-path-sensor", func(s map[string]interface{}) {
 		s["execution"].(map[string]interface{})["command"] = "true"
 	})
-	absPath := filepath.Join(root, ".harness", "sensors", id+".json")
+	absPath := filepath.Join(root, ".harness", "sensors", id+".yaml")
 
 	if !filepath.IsAbs(absPath) {
 		t.Fatalf("expected absolute path, got %q", absPath)
@@ -259,7 +269,7 @@ func TestRunComputational_AcceptsAbsolutePath(t *testing.T) {
 
 	var out, errBuf bytes.Buffer
 	// Pass the absolute path. The runner re-derives projectRoot from the
-	// sensor's canonical location (.../<projectRoot>/.harness/sensors/<id>.json),
+	// sensor's canonical location (.../<projectRoot>/.harness/sensors/<id>.yaml),
 	// so projectRoot passed in here is overridden inside run().
 	code := run([]string{"--schemas-dir", schemasDir, absPath}, "" /* projectRoot overridden */, &out, &errBuf)
 

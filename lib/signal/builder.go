@@ -87,7 +87,7 @@ func (b *Builder) WithRunID(runID, startedAt, finishedAt string) *Builder {
 
 // Build emits the final signal as map[string]interface{} ready for
 // json.NewEncoder(...).Encode(). It does NOT validate against
-// schemas/signal.json — use signal.ValidateOrEmergency for that.
+// schemas/signal.yaml — use signal.ValidateOrEmergency for that.
 func (b *Builder) Build() map[string]interface{} {
 	version := b.version
 	if version == "" {

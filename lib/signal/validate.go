@@ -7,7 +7,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
-// ValidateOrEmergency validates sig against schemas/signal.json. If the
+// ValidateOrEmergency validates sig against schemas/signal.yaml. If the
 // validation fails, it logs the error to stderr and returns an emergency
 // signal (verdict=error, metadata.kind=signal_validation_failed) so the
 // bug surfaces without recursion. On success it returns sig unchanged.
@@ -20,7 +20,7 @@ func ValidateOrEmergency(v *schema.Validator, sig map[string]interface{}, fallba
 		return sig
 	}
 	if err := v.Validate(schema.TargetSignal, sig); err != nil {
-		fmt.Fprintf(stderr, "BUG: emitted signal failed signal.json validation: %v\n", err)
+		fmt.Fprintf(stderr, "BUG: emitted signal failed signal.yaml validation: %v\n", err)
 		return NewBuilder(fallbackID, "0.0.0").
 			WithVerdict("error", "high").
 			WithKind("signal_validation_failed").

@@ -1,0 +1,46 @@
+behavior:
+  business_rules:
+  - Stack must exist (else exit 2 with stack_missing).
+  - All evidence[].file paths must resolve under project root.
+  - Writes are atomic via temp + rename.
+  summary: Load stack.json, validate the draft against schemas/usecase.json, cross-check
+    journey_id against stack.journeys[].id, verify every evidence[].file exists in
+    the project tree, then write <out>/<id>.json.
+description: 'Happy path: write-usecase.go reads a UseCase draft, loads .harness/stack.json,
+  runs schema validation + journey_id cross-check + evidence file existence checks,
+  then writes <out>/<id>.json atomically. Print the absolute path on stdout and exit
+  0.'
+evidence:
+- file: skills/detect-usecases/scripts/write-usecase.go
+  line_start: 36
+  rationale: run() orchestrates flag parsing, stack load, validation, and persistence.
+- file: lib/usecase/persist.go
+  rationale: ValidateAndPersist runs schema + cross-checks + atomic write.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout: /abs/project/.harness/usecases/<id>.json
+  invariants:
+  - Target file exists.
+  - Filename stem matches the draft's id field.
+  shape: Stdout line
+  side_effects:
+  - <out>/<id>.json created or replaced atomically.
+  summary: Stdout has the absolute path; exit 0.
+id: detect-usecases-happy-persist
+journey_id: detect-usecases
+name: write-usecase validates and persists a valid UseCase draft
+regression_priority: critical
+tags:
+- happy-path
+- persistence
+trigger:
+  fixture:
+    argv:
+    - --out=/abs/project/.harness/usecases
+    - --project-root=/abs/project
+    - /tmp/draft-uc.json
+  shape: CLI invocation
+  summary: Skill invokes write-usecase.go with --out, --project-root, and a draft
+    path.
+version: 1.0.0

@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
 // TestE2EFixture proves that given a well-formed Stack, a deterministic
@@ -17,16 +19,20 @@ import (
 // This is the contract the LLM's Phase B prose is asked to honor.
 func TestE2EFixture(t *testing.T) {
 	fixtureDir := findFixtureDir(t)
-	stackPath := filepath.Join(fixtureDir, "expected-stack.json")
+	stackPath := filepath.Join(fixtureDir, "expected-stack.yaml")
 	stdoutPath := filepath.Join(fixtureDir, "expected-stdout.log")
 
 	body, err := os.ReadFile(stackPath)
 	if err != nil {
-		t.Fatalf("read expected-stack.json: %v", err)
+		t.Fatalf("read expected-stack.yaml: %v", err)
+	}
+	jb, err := yaml.YAMLToJSON(body)
+	if err != nil {
+		t.Fatalf("yaml→json expected-stack.yaml: %v", err)
 	}
 	var s Stack
-	if err := json.Unmarshal(body, &s); err != nil {
-		t.Fatalf("decode expected-stack.json: %v", err)
+	if err := json.Unmarshal(jb, &s); err != nil {
+		t.Fatalf("decode expected-stack.yaml: %v", err)
 	}
 	if len(s.LogShapes) == 0 {
 		t.Fatal("fixture stack has no log_shapes")

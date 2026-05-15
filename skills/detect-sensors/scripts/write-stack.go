@@ -1,13 +1,13 @@
 //go:build write_stack
 
-// Command write-stack reads a draft stack JSON payload, validates it
-// against schemas/stack.json (including the library cross-checks in
-// lib/stack), and persists it to <project-root>/.harness/stack.json.
+// Command write-stack reads a draft stack payload (JSON or YAML),
+// validates it against schemas/stack (including the library cross-checks
+// in lib/stack), and persists it to <project-root>/.harness/stack.yaml.
 //
 // Usage:
 //
 //	go run -tags=write_stack ./skills/detect-sensors/scripts \
-//	  --out=<project-root> [--schemas-dir=<dir>] <stack-payload.json>
+//	  --out=<project-root> [--schemas-dir=<dir>] <stack-payload>
 //
 // Exit codes: 0 stack written, 1 schema/cross-check failure,
 // 2 usage or I/O error.
@@ -34,7 +34,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("write-stack", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var outDir, schemasDir string
-	fs.StringVar(&outDir, "out", "", "project root to write .harness/stack.json into (required)")
+	fs.StringVar(&outDir, "out", "", "project root to write .harness/stack.yaml into (required)")
 	fs.StringVar(&schemasDir, "schemas-dir", "", "schemas directory (default: walk up from cwd)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -44,12 +44,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: write-stack --out=PROJECT_ROOT [--schemas-dir=DIR] <stack-payload.json>")
+		fmt.Fprintln(stderr, "usage: write-stack --out=PROJECT_ROOT [--schemas-dir=DIR] <stack-payload>")
 		return 2
 	}
 	payloadPath := fs.Arg(0)
 
-	body, err := os.ReadFile(payloadPath)
+	body, err := schema.ReadAsJSON(payloadPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: read:", err)
 		return 2
