@@ -53,3 +53,26 @@ func TestHealHintGrammar_Documented(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchStderrPattern_SubprocessFailed_Patterns(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"docker buildx", `failed to solve: process "/bin/sh -c go work sync" did not complete successfully: exit code: 1`},
+		{"go work module missing", `go: cannot load module charge-worker-conciliation listed in go.work file: open charge-worker-conciliation/go.mod: no such file or directory`},
+		{"docker COPY", `COPY failed: file not found in build context or excluded by .dockerignore: stat src/missing: file does not exist`},
+		{"plain did-not-complete", `process "/bin/sh -c npm run build" did not complete successfully: exit code: 2`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			shape, ok := heal.MatchStderrPattern(tc.text)
+			if !ok {
+				t.Fatalf("MatchStderrPattern returned ok=false for %q", tc.text)
+			}
+			if shape != heal.ShapeSubprocessFailed {
+				t.Fatalf("shape = %q, want %q", shape, heal.ShapeSubprocessFailed)
+			}
+		})
+	}
+}

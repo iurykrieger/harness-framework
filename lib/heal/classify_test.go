@@ -66,3 +66,9 @@ func TestShape_IsKnown(t *testing.T) {
 		}
 	}
 }
+
+func TestShape_IsKnown_IncludesSubprocessFailed(t *testing.T) {
+	if !heal.ShapeSubprocessFailed.IsKnown() {
+		t.Fatal("ShapeSubprocessFailed must be in IsKnown's switch")
+	}
+}
