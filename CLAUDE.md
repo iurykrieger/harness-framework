@@ -21,7 +21,7 @@ A Claude Code plugin that implements a **sensor harness** for AI coding agents. 
 Durable conventions. Apply them to every change.
 
 1. **Language: en-US.** All source files, comments, identifiers, docs, and commit messages.
-2. **Schemas are versioned with the plugin.** They live in `schemas/` and are the source of truth for entities (`sensor.json`, `signal.json`, `stack.json`). Skills and scripts MUST resolve schema paths relative to the plugin root (`schemas/<name>.json`); never copy a schema elsewhere. Bumping a schema is a plugin-version event.
+2. **Schemas are versioned with the plugin.** They live in `schemas/` and are the source of truth for entities (`sensor.yaml`, `signal.yaml`, `stack.yaml`). Skills and scripts MUST resolve schema paths relative to the plugin root (`schemas/<name>.yaml`); never copy a schema elsewhere. Bumping a schema is a plugin-version event.
 3. **Scripts are written in Go.** No Python, Bash, or Node for non-trivial logic. One-line shell glue is fine; anything with branches, parsing, or I/O orchestration goes in Go.
 4. **Scripts are skill-local; libraries can be shared.** Each script lives under `skills/<skill-name>/scripts/` and stays self-contained — never share *scripts* across skills via a top-level `scripts/`. Duplicate scripts before coupling. A top-level `lib/` package is permitted for stable, schema-tied primitives that several skills genuinely need (schema validation, envelope construction, subprocess streaming, exit-code mapping, template rendering); skill-specific logic does not belong there.
 5. **Prefer explicit files over folders for scripts.** A script is `scripts/<name>.go` plus `scripts/<name>_test.go`, not `scripts/<name>/main.go`. The file path is the script's identity. Subdirectories under `scripts/` are reserved for shared helpers within the skill, not for individual commands.
@@ -33,7 +33,7 @@ Durable conventions. Apply them to every change.
 11. **Test data and test helpers are split by purpose.** Three locations, three purposes:
     - `<pkg>/testdata/` — Go-convention static fixtures (JSON, txt, jsonl, nested go.mod sub-modules). Per-package; consumed by `_test.go` of the same package or by another package's `<pkg>test` helper via relative path. Ignored by `go build`.
     - `lib/<pkg>/<pkg>test/` — Go test helpers (functions taking `*testing.T`) that load/decorate testdata for cross-package use. Each `<pkg>test` package is owned by exactly one `<pkg>` and depends only on `<pkg>` and the standard library / testing. Convention follows `net/http/httptest` and `testing/iotest`. The package is importable from production code in principle; do not do so.
-    - `.harness/sensors/fixtures/` — sensor-domain fixture data referenced by `verification.golden_cases[].fixture` in sensor JSON. NOT a Go test fixture. Lives in the user project tree (under `.harness/`) and is consumed at sensor runtime.
+    - `.harness/sensors/fixtures/` — sensor-domain fixture data referenced by `verification.golden_cases[].fixture` in sensor YAML. NOT a Go test fixture. Lives in the user project tree (under `.harness/`) and is consumed at sensor runtime.
 
     A single shared "fixtures" or "testhelpers" package across the whole `lib/` tree is explicitly disallowed.
 12. **Sensor spawn is gated, no exceptions.** Every call to `subprocess.StreamSubprocess`, `subprocess.Start`, or `subprocess.SpawnDetached` that executes a sensor's `execution.command` MUST be preceded by `orchestrator.PreflightGate` in the same file. On gate failure, the caller emits the canonical signal returned (`metadata.kind="failed", cause="preflight_failed"`) and aborts the spawn. Legitimate exceptions — because they do not execute the sensor's own command — are allowlisted in `lib/orchestrator/gate_invariant_test.go`: `lib/watcher/` (spawns the watcher binary), `lib/subprocess/step.go` (prepare/teardown step commands), and the files of `lib/subprocess/` itself. The single helper is `orchestrator.PreflightGate(s Sensor, env sensor.Envelope, outputMode string) → (sig, failed)`. Do not call `sensor.CheckRequiresGate` or `sensor.BuildRequiresGateSignal` directly — they are implementation details encapsulated by the helper.
@@ -42,18 +42,20 @@ Durable conventions. Apply them to every change.
 
 ### The four schemas
 
-All four are JSON Schema **Draft 2020-12**. Validators must support that draft and resolve `$ref` across files.
+All four are JSON Schema **Draft 2020-12**, authored as YAML and converted to JSON bytes at validator construction time via `sigs.k8s.io/yaml`. Validators must support that draft and resolve `$ref` across files.
 
-- `schemas/signal.json` — the output contract. Defines the canonical `Verdict` and `Severity` enums under `$defs/`. **Edit enum values here only.**
-- `schemas/sensor.json` — the definition contract. References `signal.json` two ways:
-  - `#/$defs/Signal` is `{ "$ref": "signal.json" }`, so tooling can dereference a sensor's runtime output contract by chained `$ref`.
-  - Enum sites inside `sensor.json` (`execution.exit_code_map[].{verdict,severity}`, `verification.golden_cases[].{expected_verdict,expected_severity}`) use `{ "$ref": "signal.json#/$defs/Verdict" }` and `…/Severity`. Adding a new verdict or severity value means editing `signal.json` only — `sensor.json` picks it up automatically.
-- `schemas/stack.json` — the project-stack contract. Produced by `/detect-sensors` Phase A; consumed by Phase B when authoring `kind=observation` + `output=stream` sensors. Independent of `signal.json` and `sensor.json` (no cross-`$ref`).
-- `schemas/usecase.json` — the use-case contract. Describes one observable journey variation of the project (trigger as narrative + fixture, behavior, expected_outcome with invariants and side_effects, file:line evidence pointing at the implementation). Produced by `/detect-usecases`; consumed by a future `/create-sensor` skill to synthesize deterministic regression sensors. References `stack.json` indirectly via `journey_id` (validated in Go, not JSON Schema).
+- `schemas/signal.yaml` — the output contract. Defines the canonical `Verdict` and `Severity` enums under `$defs/`. **Edit enum values here only.**
+- `schemas/sensor.yaml` — the definition contract. References `signal.yaml` two ways:
+  - `#/$defs/Signal` is `{ "$ref": "signal.yaml" }`, so tooling can dereference a sensor's runtime output contract by chained `$ref`.
+  - Enum sites inside `sensor.yaml` (`execution.exit_code_map[].{verdict,severity}`, `verification.golden_cases[].{expected_verdict,expected_severity}`) use `{ "$ref": "signal.yaml#/$defs/Verdict" }` and `…/Severity`. Adding a new verdict or severity value means editing `signal.yaml` only — `sensor.yaml` picks it up automatically.
+- `schemas/stack.yaml` — the project-stack contract. Produced by `/detect-sensors` Phase A; consumed by Phase B when authoring `kind=observation` + `output=stream` sensors. Independent of `signal.yaml` and `sensor.yaml` (no cross-`$ref`).
+- `schemas/usecase.yaml` — the use-case contract. Describes one observable journey variation of the project (trigger as narrative + fixture, behavior, expected_outcome with invariants and side_effects, file:line evidence pointing at the implementation). Produced by `/detect-usecases`; consumed by a future `/create-sensor` skill to synthesize deterministic regression sensors. References `stack.yaml` indirectly via `journey_id` (validated in Go, not JSON Schema).
+
+**Comments in YAML artifacts are not preserved on round-trip.** `sigs.k8s.io/yaml` discards comments when marshalling, so any `# comment` lines added to a sensor or use case will be lost the next time the framework rewrites the file (`/heal-sensor`, re-running `/detect-sensors`). Durable explanations belong in commit messages, the design doc, or this CLAUDE.md — never in the artifact body.
 
 ### Discriminators
 
-`sensor.json`'s top-level `allOf` enforces both classification dimensions with `if/then/else` blocks.
+`sensor.yaml`'s top-level `allOf` enforces both classification dimensions with `if/then/else` blocks.
 
 `sensor.type ∈ {computational, inferential}`:
 
@@ -73,7 +75,7 @@ Each `skills/<name>/SKILL.md` has YAML frontmatter (`name`, `description`) read 
 
 `skills/run-sensor/` is the canonical sensor runner. Both runners (computational and inferential) follow the same model: spawn `sh -c <execution.command>`, scan stdout+stderr line-by-line against `execution.output_parsing.patterns` (when declared), emit one Signal per match as JSONL on stdout, then end with one aggregate Signal as the LAST JSONL line. The aggregate's verdict is the worse of `exit_code_map[exitCode]` and the highest-rank verdict observed in the stream. The inferential runner additionally exposes the rendered `user_prompt_template` to the subprocess via the `HARNESS_PROMPT` env var and applies the calibration `fail → warn` downgrade when the subprocess emits a `HARNESS_AGGREGATE_CONFIDENCE=<float>` line on its stdout below `calibration.confidence_threshold`. Both runners are thin CLI wrappers; the deterministic pipeline (path resolution, schema validation, envelope construction, pattern matching, subprocess streaming, aggregation, signal validation) lives in the top-level `lib/` package.
 
-`skills/detect-usecases/` scans the project, augments `stack.json` with `purpose`/`archetypes`/`journeys` when missing, then drafts one descriptive UseCase per observable journey variation and persists each via `skills/detect-usecases/scripts/write-usecase.go` to `<project>/.harness/usecases/<id>.json`.
+`skills/detect-usecases/` scans the project, augments `stack.yaml` with `purpose`/`archetypes`/`journeys` when missing, then drafts one descriptive UseCase per observable journey variation and persists each via `skills/detect-usecases/scripts/write-usecase.go` to `<project>/.harness/usecases/<id>.yaml`.
 
 ### Dependencies and lifecycle
 
@@ -87,7 +89,7 @@ Lifecycle phases live under `execution`:
 - `command` — the observed step (existing streaming pipeline; emits individual JSONL Signals for matched output lines).
 - `teardown[]` — silent, best-effort, finally semantics. Runs regardless of prepare/command outcome. Per-step failures contribute warn evidence but do NOT downgrade the aggregate verdict.
 
-Per-step lifecycle results fold into the aggregate Signal under `metadata.lifecycle.{prepare,teardown}` (free-form per signal.json). The aggregate Signal of the requested sensor remains the LAST JSONL line on stdout — deps' aggregates appear earlier in the stream.
+Per-step lifecycle results fold into the aggregate Signal under `metadata.lifecycle.{prepare,teardown}` (free-form per signal.yaml). The aggregate Signal of the requested sensor remains the LAST JSONL line on stdout — deps' aggregates appear earlier in the stream.
 
 The orchestrator lives in `lib/orchestrator/` (DAG resolution + lifecycle execution + cascade construction) and is reused by both `run-computational` and `run-inferential` runner scripts.
 

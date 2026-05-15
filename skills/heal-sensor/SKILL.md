@@ -10,7 +10,7 @@ Recover from setup-shaped sensor failures: missing env vars, missing binaries, a
 ## Invocation
 
 ```
-/heal-sensor --signal=<path-to-aggregate-signal-json> --sensor=<path-to-failing-sensor-json>
+/heal-sensor --signal=<path-to-aggregate-signal-json> --sensor=<path-to-failing-sensor-yaml>
 ```
 
 The hook's `additionalContext` includes both arguments. When invoked manually, ask the user for the failing Signal path (it's the last JSONL line emitted by the most recent `/run-sensor`).
@@ -30,7 +30,7 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   --root=<project-root> > /tmp/heal-input.json
 ```
 
-The output contains: the failing Signal verbatim, the sensor JSON verbatim, the contents of README/CLAUDE/AGENTS/GEMINI/CONTRIBUTING (capped to 16 KB each), and the list of `.example` template files in the tree.
+The output contains: the failing Signal verbatim, the sensor body (converted to JSON for the heal-input envelope), the contents of README/CLAUDE/AGENTS/GEMINI/CONTRIBUTING (capped to 16 KB each), and the list of `.example` template files in the tree.
 
 ### 2. Build the Setup Plan
 
@@ -54,10 +54,10 @@ Read `/tmp/heal-input.json` and write a Setup Plan to `/tmp/heal-plan.json` that
     { "kind": "shell", "command": "<unsafe or non-allowlisted>", "rationale": "..." }
   ],
   "sensor_patches": [
-    { "id": "<sensor id>", "patch": { "...full sensor JSON post-edit..." } }
+    { "id": "<sensor id>", "patch": { "...full sensor body post-edit..." } }
   ],
   "new_setup_sensors": [
-    { "id": "setup-env-from-example-<x>", "json": { "...full new sensor JSON..." } }
+    { "id": "setup-env-from-example-<x>", "json": { "...full new sensor body..." } }
   ]
 }
 ```
@@ -66,8 +66,8 @@ Rules for filling in the slots:
 
 - `shape`: pick from the closed enum. Match the rule that fired (the hook's injection message names it).
 - `auto_apply[]`: only the four kinds listed above. Anything else (`pnpm install`, `docker compose up`, `gcloud auth login`, custom Makefile targets) goes into `propose_only[]`. The `lib/heal.Apply` allowlist will reject anything else even if you list it.
-- `sensor_patches[]`: when the failing sensor would benefit from declaring an additional `requires[kind=env]` entry or wiring a `requires[kind=sensor]` reference to a new setup sensor — emit the patched full JSON. Don't emit a JSON patch document; emit the new full sensor object. `apply-sensors.go` will run `lib/heal/version.BumpPatch` before persisting.
-- `new_setup_sensors[]`: when the project would benefit from a reusable setup sensor (e.g., `setup-env-from-example`) — emit the full new sensor JSON at version `0.1.0` with `kind: "setup"`.
+- `sensor_patches[]`: when the failing sensor would benefit from declaring an additional `requires[kind=env]` entry or wiring a `requires[kind=sensor]` reference to a new setup sensor — emit the patched full sensor object. Don't emit a JSON patch document; emit the new full sensor object. `apply-sensors.go` will run `lib/heal/version.BumpPatch` before persisting.
+- `new_setup_sensors[]`: when the project would benefit from a reusable setup sensor (e.g., `setup-env-from-example`) — emit the full new sensor object at version `0.1.0` with `kind: "setup"`.
 
 ### 3. Apply file mutations
 
@@ -100,7 +100,7 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   --out=<project-root>/sensors > /tmp/heal-persist.json
 ```
 
-This validates each `sensor_patches[]` and `new_setup_sensors[]` entry against `schemas/sensor.json` via the shared `lib/sensor.ValidateAndPersist`. If any sensor fails validation, the script exits 1 and previously-written entries stay (they were valid).
+This validates each `sensor_patches[]` and `new_setup_sensors[]` entry against `schemas/sensor.yaml` via the shared `lib/sensor.ValidateAndPersist`. If any sensor fails validation, the script exits 1 and previously-written entries stay (they were valid).
 
 ### 5. Retry exactly once
 

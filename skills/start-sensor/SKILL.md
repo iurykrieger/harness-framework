@@ -1,6 +1,6 @@
 ---
 name: start-sensor
-description: Use when the user invokes /start-sensor or asks to bring a blocking sensor (one whose command does not terminate on its own) up for observation. Takes a `<sensor.id>` argument and resolves it to `.harness/sensors/<id>.json`. Validates the sensor against schemas/sensor.json, requires `execution.blocking: true`, resolves requires[kind=sensor] dep graph and brings deps up, runs requires[kind=step] fail-fast, spawns the command detached (Setsid, redirected stdout/stderr to .harness/runtime/<id>/raw.log), spawns a watcher binary that tails raw.log and emits parsed Signals to .harness/runtime/<id>/signals.log, and writes an entry into .harness/runtime/running_sensors.json with `held_by: [{kind: "manual", attached_at: ...}]`. Emits a Signal `verdict=pass`, `metadata.kind=started`. Singleton: rejects with `rejected` if the sensor already has a live registry entry.
+description: Use when the user invokes /start-sensor or asks to bring a blocking sensor (one whose command does not terminate on its own) up for observation. Takes a `<sensor.id>` argument and resolves it to `.harness/sensors/<id>.yaml`. Validates the sensor against schemas/sensor.yaml, requires `execution.blocking: true`, resolves requires[kind=sensor] dep graph and brings deps up, runs requires[kind=step] fail-fast, spawns the command detached (Setsid, redirected stdout/stderr to .harness/runtime/<id>/raw.log), spawns a watcher binary that tails raw.log and emits parsed Signals to .harness/runtime/<id>/signals.log, and writes an entry into .harness/runtime/running_sensors.json with `held_by: [{kind: "manual", attached_at: ...}]`. Emits a Signal `verdict=pass`, `metadata.kind=started`. Singleton: rejects with `rejected` if the sensor already has a live registry entry.
 ---
 
 # start-sensor
@@ -13,7 +13,7 @@ Bring a blocking sensor up. Only `execution.blocking: true` sensors can be start
 /start-sensor <sensor.id>
 ```
 
-The argument must be the sensor's id (lowercase letters/digits/dashes, starting with a letter). The runner resolves it to `.harness/sensors/<id>.json` relative to the project root.
+The argument must be the sensor's id (lowercase letters/digits/dashes, starting with a letter). The runner resolves it to `.harness/sensors/<id>.yaml` relative to the project root.
 
 ## Procedure
 
