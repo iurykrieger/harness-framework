@@ -1,0 +1,40 @@
+behavior:
+  business_rules:
+  - Email must be unique.
+  summary: Validates, persists, emits user.created.
+description: POST /users with a valid email creates an account and returns 201.
+evidence:
+- file: src/users/users.controller.ts
+  line_end: 68
+  line_start: 42
+  rationale: POST /users handler
+expected_outcome:
+  fixture:
+    body:
+      email: alice@example.com
+      id: uuid
+    status: 201
+  invariants:
+  - Response.body.id is UUID v4.
+  shape: HTTP response
+  side_effects:
+  - Row inserted in users.
+  summary: HTTP 201 with the user object.
+id: create-user-with-email
+journey_id: user-registration
+name: Create user with valid email
+regression_priority: critical
+tags:
+- happy-path
+- registration
+trigger:
+  fixture:
+    body:
+      email: alice@example.com
+    method: POST
+    path: /users
+  preconditions:
+  - No user with email 'alice@example.com' exists.
+  shape: HTTP request
+  summary: POST request to /users carrying a JSON body with a valid email.
+version: 0.1.0
