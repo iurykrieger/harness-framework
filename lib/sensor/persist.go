@@ -194,5 +194,9 @@ func writeCanonical(path string, sensor map[string]interface{}) error {
 		os.Remove(tmpPath)
 		return err
 	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
 	return os.Rename(tmpPath, path)
 }
