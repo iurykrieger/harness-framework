@@ -85,7 +85,7 @@ type Requirement struct {
 }
 
 type Execution struct {
-	Command            string             `json:"command"`
+	Command            string             `json:"command,omitempty"`
 	Env                map[string]string  `json:"env,omitempty"`
 	Blocking           bool               `json:"blocking,omitempty"`
 	GracefulTimeoutMS  *int               `json:"graceful_timeout_ms,omitempty"`
@@ -96,6 +96,71 @@ type Execution struct {
 	SystemPrompt       string             `json:"system_prompt,omitempty"`
 	UserPromptTemplate string             `json:"user_prompt_template,omitempty"`
 	Decoding           *Decoding          `json:"decoding,omitempty"`
+	// Steps is the typed-execution shape (mutually exclusive with Command
+	// per schemas/sensor.yaml execution.oneOf). When the on-disk YAML
+	// declares command:, Load() normalizes it into a single-element Steps
+	// in memory; the YAML on disk keeps its declared shape.
+	Steps []StepConfig `json:"steps,omitempty"`
+}
+
+// StepConfig is the YAML-decoded form of an execution.steps[] entry.
+// Type-specific fields are tagged omitempty so the same struct serves
+// every union arm; cross-field validation in lib/sensor/validate.go
+// (Task 9) ensures only the fields valid for the declared Type are
+// populated.
+type StepConfig struct {
+	ID   string                 `json:"id"`
+	Type string                 `json:"type"`
+	With map[string]interface{} `json:"with,omitempty"`
+
+	// Shell fields
+	Run         string             `json:"run,omitempty"`
+	ExitCodeMap map[string]Verdict `json:"exit_code_map,omitempty"`
+	Parse       *ParseConfig       `json:"parse,omitempty"`
+
+	// HTTP fields
+	Method   string            `json:"method,omitempty"`
+	URL      string            `json:"url,omitempty"`
+	Headers  map[string]string `json:"headers,omitempty"`
+	BodyFrom *BodyFromConfig   `json:"body_from,omitempty"`
+	Timeout  string            `json:"timeout,omitempty"`
+	Expect   interface{}       `json:"expect,omitempty"`
+
+	// Sensor fields
+	Ref                string `json:"ref,omitempty"`
+	OutputsPassthrough bool   `json:"outputs_passthrough,omitempty"`
+
+	// Common output declaration
+	Outputs map[string]OutputSpec `json:"outputs,omitempty"`
+}
+
+// Verdict mirrors signal.yaml#/$defs/Verdict. Duplicated here as a string
+// alias (not an import of lib/signal) to keep lib/sensor free of cycles
+// with lib/signal; the canonical type lives in lib/signal.
+type Verdict string
+
+// ParseConfig is the shell step `parse:` block: line-by-line output
+// parsing rules. Mirrors execution.output_parsing structurally so the
+// legacy command shortcut can be normalized into a step at load time.
+type ParseConfig struct {
+	Patterns []Pattern `json:"patterns"`
+}
+
+// BodyFromConfig is the discriminated union for http step body sources;
+// exactly one of Fixture / Template / Inline is populated per schema.
+type BodyFromConfig struct {
+	Fixture  string      `json:"fixture,omitempty"`
+	Template string      `json:"template,omitempty"`
+	Inline   interface{} `json:"inline,omitempty"`
+}
+
+// OutputSpec describes a single named output extraction. Modifiers
+// (Regex, JSONPath, Trim) are mutually exclusive per schema.
+type OutputSpec struct {
+	From     string `json:"from"`
+	Regex    string `json:"regex,omitempty"`
+	JSONPath string `json:"jsonpath,omitempty"`
+	Trim     bool   `json:"trim,omitempty"`
 }
 
 type LifecycleStep struct {
