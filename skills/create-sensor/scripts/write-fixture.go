@@ -1,13 +1,17 @@
 //go:build write_fixture
 
 // Command write-fixture writes a fixture payload atomically under
-// <projectRoot>/.harness/sensors/fixtures/ via lib/sensor.WriteFixture —
-// the single shared fixture-persistence entrypoint. Path-escape guard,
-// parent-dir creation, and tmp+rename atomicity all live in the lib.
+// <projectRoot>/.harness/fixtures/ via lib/fixture.Write — the single
+// shared fixture-persistence entrypoint. Path-escape guard, parent-dir
+// creation, and tmp+rename atomicity all live in the lib.
 //
 // Usage:
 //
 //	write-fixture [--from-file <src>] <target-relative-path>
+//
+// The target path is relative to the fixtures root (e.g. "order-valid.json"
+// or "orders/large.json"); the script will reject any path containing the
+// legacy ".harness/sensors/fixtures/" or ".harness/fixtures/" prefix.
 //
 // Exit codes: 0 success, 2 usage / path escape / I/O failure.
 package main
@@ -19,9 +23,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
+	"github.com/iurykrieger/harness-framework/lib/fixture"
 	"github.com/iurykrieger/harness-framework/lib/registry"
-	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
 )
 
@@ -42,6 +47,12 @@ func runWithStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return 2
 	}
 	relPath := fs.Arg(0)
+	if strings.HasPrefix(relPath, ".harness/sensors/fixtures/") ||
+		strings.HasPrefix(relPath, ".harness/fixtures/") {
+		emitJSON(stdout, errorSignal("legacy_fixture_prefix",
+			fmt.Sprintf("relPath %q must be relative to .harness/fixtures/, not include the prefix", relPath)))
+		return 2
+	}
 
 	cwd, _ := os.Getwd()
 	res, err := registry.Lookup(cwd)
@@ -61,11 +72,11 @@ func runWithStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return 2
 	}
 
-	abs, err := sensor.WriteFixture(res.ProjectRoot, relPath, payload)
+	abs, err := fixture.Write(res.ProjectRoot, relPath, payload)
 	if err != nil {
-		var fpe *sensor.FixturePathEscapeError
-		if errors.As(err, &fpe) {
-			emitJSON(stdout, errorSignal("fixture_path_escape", fpe.Error()))
+		var esc *fixture.PathEscapeError
+		if errors.As(err, &esc) {
+			emitJSON(stdout, errorSignal("fixture_path_escape", esc.Error()))
 			return 2
 		}
 		emitJSON(stdout, errorSignal("write_failed", err.Error()))
