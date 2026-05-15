@@ -1,0 +1,64 @@
+behavior:
+  business_rules:
+  - /create-sensor produces exactly one sensor.
+  - Only kind=assertion sensors may be produced (use /detect-sensors for observation/setup).
+  - Existing sensors are catalogued before drafting so deps reference real ids.
+  summary: Same persistence pipeline as /detect-sensors Phase B (lib/sensor.ValidateAndPersist),
+    but constrained to one sensor per invocation and kind=assertion. Composing existing
+    sensors as deps (requires[kind=sensor]) is allowed.
+description: 'Happy path: write-sensor.go validates a drafted assertion sensor and
+  writes it to <project>/.harness/sensors/<id>.json. The accompanying fixture file
+  (when referenced) is materialized via write-fixture.go in the same session. Exactly
+  one sensor of kind=assertion is produced per /create-sensor invocation.'
+evidence:
+- file: skills/create-sensor/scripts/write-sensor.go
+  line_start: 32
+  rationale: main() entry point of the create-sensor persistence script.
+- file: skills/create-sensor/scripts/catalog-sensors.go
+  rationale: Catalog companion that enumerates existing sensors for dep selection.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout: /abs/project/.harness/sensors/assert-rejects-empty-name.json
+  invariants:
+  - File written has kind=assertion.
+  - Existing sensors in the project tree are not modified.
+  shape: Stdout line
+  side_effects:
+  - <out>/.harness/sensors/<id>.json created.
+  - Optionally, a fixture file under .harness/sensors/fixtures/ via write-fixture.go.
+  summary: Stdout has the absolute path of the new sensor file; exit 0.
+id: create-sensor-happy-assertion
+journey_id: create-sensor
+name: Create one targeted assertion sensor from a free-text requirement
+regression_priority: critical
+tags:
+- happy-path
+- assertion
+trigger:
+  fixture:
+    argv:
+    - --out=/abs/project
+    - /tmp/assert-rejects-empty-name.json
+    draft_excerpt:
+      execution:
+        command: curl -fsS -X POST /users -d '{"name":""}' -o /dev/null -w '%{http_code}'
+          | grep -q 400
+        exit_code_map:
+        - exit_code: 0
+          severity: info
+          verdict: pass
+        - exit_code: 1
+          severity: high
+          verdict: fail
+      id: assert-rejects-empty-name
+      kind: assertion
+      output: single
+      requires:
+      - id: start-api-server
+        kind: sensor
+      type: computational
+  shape: CLI invocation
+  summary: Skill invokes write-sensor.go after the agent has drafted exactly one kind=assertion
+    sensor from a free-text requirement.
+version: 1.0.0
