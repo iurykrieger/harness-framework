@@ -24,11 +24,11 @@ func (r Root) SensorsDir() string {
 	return filepath.Join(r.projectRoot, ".harness", "runtime")
 }
 
-// SensorFile returns the absolute path of <root>/.harness/sensors/<id>.json.
-// Replaces the hardcoded "sensors/<id>.json" construction in lib/sensor
+// SensorFile returns the absolute path of <root>/.harness/sensors/<id>.yaml.
+// Replaces the hardcoded "sensors/<id>.yaml" construction in lib/sensor
 // and lib/orchestrator.
 func (r Root) SensorFile(id string) string {
-	return filepath.Join(r.projectRoot, ".harness", "sensors", id+".json")
+	return filepath.Join(r.projectRoot, ".harness", "sensors", id+".yaml")
 }
 
 // RegistryFile is the absolute path to running_sensors.json.

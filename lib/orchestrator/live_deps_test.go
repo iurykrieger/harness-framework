@@ -80,7 +80,7 @@ func writeBlockingDep(t *testing.T, root, id string) {
   "output_parsing": {"patterns":[{"regex":"^TICK$","verdict":"pass","severity":"info"}]}
 }
 }`)
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -112,7 +112,7 @@ func writeConsumer(t *testing.T, root, id string) {
   "exit_code_map": [{"exit_code":0,"verdict":"pass","severity":"info"},{"exit_code":"*","verdict":"fail","severity":"high"}]
 }
 }`)
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -129,10 +129,10 @@ func loadValidator(t *testing.T) *schema.Validator {
 	return v
 }
 
-// loadDepSensor parses sensors/<id>.json from root into a Sensor struct.
+// loadDepSensor parses sensors/<id>.yaml from root into a Sensor struct.
 func loadDepSensor(t *testing.T, root, id string) orchestrator.Sensor {
 	t.Helper()
-	path := filepath.Join(root, ".harness", "sensors", id+".json")
+	path := filepath.Join(root, ".harness", "sensors", id+".yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -776,7 +776,7 @@ func writeNonBlockingFailingDep(t *testing.T, root, id string) {
   "exit_code_map": [{"exit_code":0,"verdict":"pass","severity":"info"},{"exit_code":"*","verdict":"fail","severity":"high"}]
 }
 }`)
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -821,7 +821,7 @@ func writeConsumerWithTwoDeps(t *testing.T, root, id, firstDep, secondDep string
   "exit_code_map": [{"exit_code":0,"verdict":"pass","severity":"info"}]
 }
 }`)
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -899,7 +899,7 @@ func writeBlockingDepWithDep(t *testing.T, root, id, depID string) {
   "output_parsing": {"patterns":[{"regex":"^TICK$","verdict":"pass","severity":"info"}]}
 }
 }`)
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -934,7 +934,7 @@ func writeConsumerWithDep(t *testing.T, root, id, depID string) {
   "exit_code_map": [{"exit_code":0,"verdict":"pass","severity":"info"}]
 }
 }`)
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1144,7 +1144,7 @@ func writeBlockingDepNoPatterns(t *testing.T, root, id string) {
   "exit_code_map": [{"exit_code":"*","verdict":"pass","severity":"info"}]
 }
 }`)
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1212,7 +1212,7 @@ func writeBlockingDepWithErrorPattern(t *testing.T, root, id string) {
   "output_parsing": {"patterns":[{"regex":"^ERROR","verdict":"fail","severity":"high","rationale":"error line"}]}
 }
 }`)
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

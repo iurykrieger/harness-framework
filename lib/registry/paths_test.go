@@ -79,7 +79,7 @@ func TestLegacyRawLog_LegacySignalsLog(t *testing.T) {
 func TestSensorFile(t *testing.T) {
 	r := registry.NewRoot("/project")
 	got := r.SensorFile("my-sensor")
-	want := filepath.Join("/project", ".harness", "sensors", "my-sensor.json")
+	want := filepath.Join("/project", ".harness", "sensors", "my-sensor.yaml")
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}

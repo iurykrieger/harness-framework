@@ -25,7 +25,7 @@ func TestRunWithDepsRoot_SubprocessCwdIsProjectRoot(t *testing.T) {
 	exec := s["execution"].(map[string]interface{})
 	exec["command"] = "pwd > $HARNESS_REGISTRY_ROOT/probe.out"
 	b, _ := json.MarshalIndent(s, "", "  ")
-	_ = os.WriteFile(filepath.Join(proj, ".harness", "sensors", "cwd-probe.json"), b, 0o644)
+	_ = os.WriteFile(filepath.Join(proj, ".harness", "sensors", "cwd-probe.yaml"), b, 0o644)
 
 	t.Setenv("HARNESS_REGISTRY_ROOT", proj)
 

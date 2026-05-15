@@ -60,7 +60,7 @@ type AttachResult struct {
 }
 
 // RunWithDepsRoot is the id-resolving variant of RunWithDeps. The
-// requested sensor is identified by id (resolved to <root>/.harness/sensors/<id>.json),
+// requested sensor is identified by id (resolved to <root>/.harness/sensors/<id>.yaml),
 // schemasDir is resolved by the schema package's discovery if empty.
 // All blocking deps along the chain are started/attached before the
 // requested sensor runs and stopped/detached after.

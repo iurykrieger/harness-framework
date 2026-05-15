@@ -18,7 +18,7 @@ import (
 // failed. The aggregate Signal of the requested sensor is the LAST line
 // on stdout (contract preserved from the prior streaming-sensors design).
 //
-// sensorPath is typically located at <projectRoot>/.harness/sensors/<id>.json.
+// sensorPath is typically located at <projectRoot>/.harness/sensors/<id>.yaml.
 // When an explicit project root is supplied (via RunWithDepsRoot or the
 // explicitProjectRoot parameter of runWithDepsImpl), callers may pass an
 // arbitrary absolute path outside the project tree; the logical sensor id is
@@ -53,7 +53,7 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 		fmt.Fprintln(stderr, "error: abs path:", err)
 		return 2
 	}
-	// Sensor files live at <projectRoot>/.harness/sensors/<id>.json, so the
+	// Sensor files live at <projectRoot>/.harness/sensors/<id>.yaml, so the
 	// project root is three Dir() calls above the abs sensor path.
 	// When the caller supplies an explicit project root (e.g. for out-of-tree
 	// sensor paths), use it instead.
@@ -155,11 +155,11 @@ func FirstFailedDep(s Sensor, signals map[string]map[string]interface{}) map[str
 	return nil
 }
 
-// StripJSONExt removes a trailing ".json" extension from a filename. It is
-// the inverse of sensor.Resolve's "<id>.json" filename convention and is
+// StripJSONExt removes a trailing ".yaml" extension from a filename. It is
+// the inverse of sensor.Resolve's "<id>.yaml" filename convention and is
 // exported so runner scripts can derive a sensor id from its on-disk path.
 func StripJSONExt(name string) string {
-	if len(name) > 5 && name[len(name)-5:] == ".json" {
+	if len(name) > 5 && name[len(name)-5:] == ".yaml" {
 		return name[:len(name)-5]
 	}
 	return name
