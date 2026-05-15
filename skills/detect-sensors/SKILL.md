@@ -130,7 +130,7 @@ You are looking for *both* the archetype and the concrete commands. A `package.j
 2. `README.md` / `CONTRIBUTING.md` / `docs/*` — human-facing canonical recipes.
 3. CI workflow steps (`.github/workflows/*`, `.gitlab-ci.yml`, etc.) — real production invocations, but tend to wrap things in matrices or composite actions that don't translate cleanly to a single shell command.
 4. `Dockerfile` `CMD`/`ENTRYPOINT` — production runtime for run-style sensors.
-5. `Makefile` targets / `Taskfile` aliases / `package.json` scripts — developer-facing wrappers; useful when nothing more authoritative exists.
+5. `Makefile` targets / `Taskfile` aliases / `package.json` scripts — developer-facing wrappers; useful when nothing more authoritative exists. When the canonical command IS such a wrapper (e.g. `make dev`, `pnpm dev`, `task run`), apply the wrap-vs-unroll rule in §4.6 — do NOT silently inline the wrapper's body into `execution.command`.
 
 When a docs-sourced command and an inferred one disagree (e.g. README says `pnpm vitest run --coverage` but `package.json` has `"test": "vitest"`), the docs win — capture the documented form verbatim in `execution.command`. Note the source in `description` (e.g. *"Auto-detected via /detect-sensors from CLAUDE.md '## Build, validate, test' section"*) so the audit trail points at the exact heading the command came from.
 
@@ -323,6 +323,61 @@ execution:
     - command: docker compose stop postgres
       timeout_ms: 10000
 ```
+
+### 4.6 Wrap-vs-unroll: when the canonical command is a wrapper
+
+When the detected canonical command is itself a wrapper — `make dev` reading several steps out of a Makefile, `pnpm dev` aliasing a longer `docker compose` invocation, `task run` chaining a Taskfile recipe — choose between TWO strategies. **Never silently inline the wrapper's body into `execution.command`.** Silent inlining drops steps, hides drift (the Makefile can change but the sensor cannot follow), and produces commands that the project's humans do not recognize.
+
+**Strategy A — Wrap (preferred when shell-compatible).** Set `execution.command` to the wrapper invocation verbatim and stop there. This works when the wrapper:
+
+- Runs the underlying tool in the **foreground** (no `-d`, no `&`, no `nohup`, no `tmux/screen` detach).
+- Targets a **single observable process** (one container, one server, one watcher) — wrappers that bring up N services at once do not fit.
+- Already produces output on stdout/stderr that the sensor's patterns can consume — if patterns need to see stderr, append `2>&1` to the wrapper invocation (not inside the target body).
+
+Cite the source in the sensor `description` using the exact form *"Auto-detected from `<relative-path>#<target>`"* — e.g. *"Auto-detected from charge-api/Makefile#dev"*, *"Auto-detected from package.json scripts.dev"*. Always include the path and the wrapper-internal address (target name / script key / task name) so the audit trail points at the exact body of the wrapper that backs this sensor. Pin the wrapper to a `requires[kind=tool]` entry — `{ kind: tool, name: make }` / `{ kind: tool, name: pnpm }` / `{ kind: tool, name: task }` — so the preflight gate aborts cleanly when the wrapper is not on PATH.
+
+**Strategy B — Unroll (only when Strategy A's three preconditions fail).** The wrapper is incompatible because it daemonizes, brings up multiple services, or has prerequisite steps the harness needs as separate fail-fast checkpoints. In that case, decompose deliberately:
+
+1. **Pre-steps go to `requires[kind=step]`.** Every wrapper command BEFORE the observed one becomes a `requires[]` entry of `kind: step`, in the order the wrapper executes them, with the literal shell command verbatim. The §4.5 fail-fast semantics apply: any pre-step failing aborts before the main command runs.
+2. **The foreground equivalent goes to `execution.command`.** Translate the daemonized/multi-service final step into its foreground, mono-service form: e.g. `docker compose --profile dev up -d` → `docker compose --profile dev up --build api 2>&1` (drop `-d`, scope to one service, redirect stderr).
+3. **Annotate the divergence in `description` and `blind_spots[]`.** This is the load-bearing part of unrolling — without it, the next reader cannot tell why the sensor command differs from `make dev`.
+   - `description` MUST cite the wrapper *and* state it was decomposed. Example: *"Auto-detected from charge-api/Makefile#dev. Decomposed because the target daemonizes (-d) and builds multiple services — pre-steps preserved as requires[kind=step], final step rewritten as foreground mono-service."*
+   - `blind_spots[]` MUST include an entry: *"Decomposed from `<path>#<target>`. Changes to the wrapper body do not propagate — re-run /detect-sensors after editing the wrapper to recompute pre-steps and the foreground command."*
+
+**Example — unrolling `make dev` for an API service:**
+
+```yaml
+description: |
+  On demand, boots charge-api with its production-shaped docker compose stack and listens
+  for the first 30s. Auto-detected from charge-api/Makefile#dev. Decomposed because the
+  target daemonizes (-d) and builds multiple services — pre-steps preserved as
+  requires[kind=step], final step rewritten as foreground mono-service.
+requires:
+  - kind: tool
+    name: docker
+  - kind: tool
+    name: make
+  - kind: step
+    command: cd charge-api && docker compose stop
+    timeout_ms: 30000
+  - kind: step
+    command: cd charge-api && docker compose build api
+    timeout_ms: 300000
+execution:
+  command: cd charge-api && docker compose --profile dev up --build api 2>&1
+  blocking: true
+  ...
+blind_spots:
+  - "Decomposed from charge-api/Makefile#dev. Changes to the wrapper body do not propagate — re-run /detect-sensors after editing the Makefile target to recompute pre-steps and the foreground command."
+```
+
+**The same rule applies to non-Makefile wrappers:**
+
+- `package.json` scripts that chain commands (`"dev": "npm run build && npm run start:watch"`) — wrap when the chain stays foreground/mono-service; otherwise unroll the chain into `requires[kind=step]` for everything before the final foreground step.
+- `Taskfile.yml` targets with `deps:` — the declared deps become `requires[kind=step]` entries; the recipe body either wraps (Strategy A) or unrolls (Strategy B).
+- Nested wrappers (`make deploy` → invokes `scripts/deploy.sh` → invokes `terraform apply`) — unroll recursively until you reach a single shell command per step. The deepest foreground command is `execution.command`; every command above it on the path is either a `requires[kind=step]` (when its side effects are needed) or dropped (when it is purely a dispatcher with no side effects of its own).
+
+**Why this matters.** A sensor whose `execution.command` no longer resembles the project's documented workflow is a bug magnet: it skips setup the maintainers consider mandatory, it diverges from what `dev local roda make dev` produces, and when the Makefile changes the sensor lies silently. Strategy A keeps the sensor and the wrapper in lockstep. Strategy B makes the unrolling explicit and citable — when the wrapper changes, the `blind_spots[]` entry tells the reader the sensor must be regenerated.
 
 ### 5. Author fixtures BEFORE you persist
 
