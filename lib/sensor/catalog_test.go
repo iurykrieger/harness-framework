@@ -104,9 +104,11 @@ func TestCatalog_MultipleSorted(t *testing.T) {
 func TestCatalog_MalformedYAML_Warns(t *testing.T) {
 	dir := t.TempDir()
 	writeSensorWithID(t, dir, "ok")
-	// A scalar string is valid YAML syntactically but cannot decode into
-	// an object map, so the catalog should warn during parse.
-	if err := os.WriteFile(filepath.Join(dir, "broken.yaml"), []byte("not-an-object"), 0o644); err != nil {
+	// Structurally broken YAML: the lexer/parser itself rejects this
+	// document (unterminated flow sequence), so the catalog should warn
+	// at YAML parse time rather than at the decode-to-map step.
+	brokenYAML := []byte("key: [unterminated\n  - a\n  - b")
+	if err := os.WriteFile(filepath.Join(dir, "broken.yaml"), brokenYAML, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	out, warns, err := sensor.Catalog(dir, newValidator(t))
