@@ -85,7 +85,7 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   /tmp/<draft-name>.yaml
 ```
 
-The script reads `<project>/.harness/stack.yaml`, validates the draft against `schemas/usecase.yaml`, cross-checks `journey_id` against `stack.journeys[].id`, verifies every `evidence[].file` exists, then writes canonical YAML to `<out>/<id>.yaml` atomically.
+The script reads `<project>/.harness/stack.yaml`, validates the draft against `schemas/usecase.yaml`, cross-checks `journey_id` against `stack.journeys[].id`, verifies every `evidence[].file` exists, then writes canonical YAML to `<out>/<journey_id>/<id>.yaml` atomically (the per-journey subdirectory is created on first write for that journey).
 
 Exit codes:
 - `0` — written.
@@ -99,14 +99,14 @@ Surface a grouped list per journey:
 ```
 Generated 14 use cases at /repo/.harness/usecases/:
 
-journey: user-registration (5 use cases)
+journey: user-registration (5 use cases) → /repo/.harness/usecases/user-registration/
   - create-user-with-email.yaml                 — critical · happy-path
   - create-user-duplicate-email-conflict.yaml   — high · error-handling
   - create-user-invalid-email-format.yaml       — medium · validation
   - create-user-missing-password.yaml           — medium · validation
   - create-user-with-disposable-email.yaml      — low · edge-case
 
-journey: user-login (4 use cases)
+journey: user-login (4 use cases) → /repo/.harness/usecases/user-login/
   - ...
 
 Next: /create-sensor <use-case-id> to generate a deterministic regression sensor for each.
@@ -123,6 +123,6 @@ The skill never refuses to produce UseCases for lack of tests or docs. When the 
 ## Safety notes
 
 - The script never executes the implementation code. It only validates the draft and writes files.
-- Existing files at `<out>/<id>.yaml` are overwritten atomically by `os.Create` + `os.Rename`. Commit `.harness/usecases/` before re-running so diffs are reviewable.
+- Existing files at `<out>/<journey_id>/<id>.yaml` are overwritten atomically by `os.Create` + `os.Rename` within the per-journey subdirectory. Commit `.harness/usecases/` before re-running so diffs are reviewable.
 - Drafts staged in `/tmp/` are the user's to clean up; the script does not touch them.
 - Schemas are resolved by walking up from cwd; invoke from inside the harness-framework checkout (or pass `--schemas-dir=<plugin>/schemas`) so the validator sees the right contract.
