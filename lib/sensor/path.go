@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// idRegex matches the sensor.id shape required by schemas/sensor.json.
+// idRegex matches the sensor.id shape required by schemas/sensor.yaml.
 var idRegex = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // Resolve returns the canonical absolute path for a sensor identified by

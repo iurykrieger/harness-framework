@@ -26,7 +26,7 @@ const envVarName = "HARNESS_REGISTRY_ROOT"
 // markerDir is the directory name Discover walks up looking for.
 // .harness/ is the consolidated framework-artifact namespace inside a
 // user project: it holds sensors/ (definitions), runtime/ (per-run
-// state and logs), and stack.json (the observed-stack manifest). Its
+// state and logs), and stack.yaml (the observed-stack manifest). Its
 // presence is the unambiguous signal that the surrounding directory is
 // a harness project root.
 const markerDir = ".harness"

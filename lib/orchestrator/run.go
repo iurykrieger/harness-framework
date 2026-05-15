@@ -90,7 +90,7 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 	// finds the file directly). Fix up the root sensor's ID in the resolved
 	// order and in any cascade Signal so they carry the logical id rather than
 	// the abs path — schema validation and cascade Signals depend on the
-	// logical id matching sensor.json's ^[a-z][a-z0-9-]*$ constraint.
+	// logical id matching sensor.yaml's ^[a-z][a-z0-9-]*$ constraint.
 	if rootID != abs {
 		if len(pre.Order) > 0 && pre.Order[len(pre.Order)-1].ID == abs {
 			pre.Order[len(pre.Order)-1].ID = rootID

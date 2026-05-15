@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// ValidateAndPersist validates draftJSON against schemas/usecase.json,
+// ValidateAndPersist validates draftJSON against schemas/usecase.yaml,
 // cross-checks the journey_id reference against stk, verifies every
 // evidence file exists under projectRoot, then writes a canonical YAML
 // copy to <outDir>/<id>.yaml. Returns the absolute path.

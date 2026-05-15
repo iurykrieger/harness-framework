@@ -10,7 +10,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// ValidateAndPersist validates stackJSON against schemas/stack.json and,
+// ValidateAndPersist validates stackJSON against schemas/stack.yaml and,
 // on success, writes a canonical YAML copy to
 // <projectRoot>/.harness/stack.yaml. Returns the absolute path on success.
 //

@@ -2,7 +2,7 @@ package sensor
 
 import "encoding/json"
 
-// Sensor is the typed view of a sensor.json file. Mirrors the schema
+// Sensor is the typed view of a sensor.yaml file. Mirrors the schema
 // shape one-to-one with JSON tags. Optional fields use pointers or
 // omitempty so absence is distinguishable from zero.
 type Sensor struct {
@@ -167,7 +167,7 @@ type Calibration struct {
 	CalibrationDate     string  `json:"calibration_date"`
 }
 
-// Kind is the enum from sensor.json::properties.kind.
+// Kind is the enum from sensor.yaml::properties.kind.
 type Kind string
 
 const (
@@ -176,7 +176,7 @@ const (
 	KindSetup       Kind = "setup"
 )
 
-// Type is the enum from sensor.json::properties.type.
+// Type is the enum from sensor.yaml::properties.type.
 type Type string
 
 const (
