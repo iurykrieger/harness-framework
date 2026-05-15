@@ -134,9 +134,10 @@ type StepConfig struct {
 	Outputs map[string]OutputSpec `json:"outputs,omitempty"`
 }
 
-// Verdict mirrors signal.yaml#/$defs/Verdict. Duplicated here as a string
-// alias (not an import of lib/signal) to keep lib/sensor free of cycles
-// with lib/signal; the canonical type lives in lib/signal.
+// Verdict is a local string alias used for readability of the keys that
+// reference signal verdicts (e.g. in ExitCodeMap entries). The actual
+// signal verdict enum is enforced by the JSON Schema in schemas/sensor.yaml,
+// not by Go types.
 type Verdict string
 
 // ParseConfig is the shell step `parse:` block: line-by-line output

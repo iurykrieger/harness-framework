@@ -806,41 +806,7 @@ properties:
           patterns:
             description: Ordered match rules. First pattern that matches a line wins.
             items:
-              additionalProperties: false
-              properties:
-                captures:
-                  additionalProperties: false
-                  description: Map a Signal.evidence field to a 1-based capture-group
-                    index in regex.
-                  properties:
-                    excerpt:
-                      minimum: 1
-                      type: integer
-                    file:
-                      minimum: 1
-                      type: integer
-                    line_end:
-                      minimum: 1
-                      type: integer
-                    line_start:
-                      minimum: 1
-                      type: integer
-                    rationale:
-                      minimum: 1
-                      type: integer
-                  type: object
-                regex:
-                  description: Go regexp (RE2).
-                  type: string
-                severity:
-                  $ref: signal.yaml#/$defs/Severity
-                verdict:
-                  $ref: signal.yaml#/$defs/Verdict
-              required:
-              - regex
-              - verdict
-              - severity
-              type: object
+              $ref: '#/$defs/Pattern'
             minItems: 1
             type: array
         required:
