@@ -14,7 +14,7 @@ import (
 // ValidateAndPersist validates draftJSON against schemas/usecase.yaml,
 // cross-checks the journey_id reference against stk, verifies every
 // evidence file exists under projectRoot, then writes a canonical YAML
-// copy to <outDir>/<id>.yaml. Returns the absolute path.
+// copy to <outDir>/<journey_id>/<id>.yaml. Returns the absolute path.
 //
 // Idempotent: re-persisting the same body produces a byte-identical file.
 // Does NOT mutate draftJSON.
