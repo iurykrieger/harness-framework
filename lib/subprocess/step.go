@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"syscall"
 	"time"
 )
 
@@ -53,6 +54,19 @@ func RunStep(ctx context.Context, cfg StepConfig) (StepResult, error) {
 		}
 		cmd.Env = envList
 	}
+	// Run in a fresh process group so SIGTERM/SIGKILL on ctx cancellation
+	// reach the whole tree, not just sh -c. Matches the stream path.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if pgid, perr := syscall.Getpgid(cmd.Process.Pid); perr == nil {
+			return syscall.Kill(-pgid, syscall.SIGTERM)
+		}
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
+	cmd.WaitDelay = 5 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
