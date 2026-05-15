@@ -1,0 +1,99 @@
+{
+  "blind_spots": [
+    "Validates the computational runner only — does not exercise the inferential runner's blocking-rejection (which is structurally similar but has its own copy of the check; see skills/run-sensor/scripts/run-inferential.go).",
+    "The originating UseCase .harness/usecases/run-sensor-blocking-rejected.json claims exit_code=1 and a verdict=error Signal envelope; the implementation emits exit_code=2 + plain stderr instead. This sensor asserts the implementation's truth.",
+    "Substring grep for 'blocking' and 'start-sensor' tolerates wording changes (e.g. capitalization). A reworded remediation that omits either keyword would silently flip the verdict to fail.",
+    "The sensor's command shells out via `go run` (not a precompiled binary), and `go run` wraps the runner's exit code: the runner exits 2 on rejection, but the outer `go run` wrapper exits 1 while echoing 'exit status 2' to stderr. To stay robust to both invocation modes (wrapped and direct), the command treats any non-zero rc as acceptable as long as stderr carries both keywords."
+  ],
+  "cost": {
+    "class": "medium",
+    "compute": {
+      "cpu": "medium",
+      "memory_mb": 512
+    },
+    "latency": {
+      "p50_ms": 800,
+      "p95_ms": 4000,
+      "timeout_ms": 30000
+    }
+  },
+  "description": "Asserts that invoking the run-computational runner with a sensor whose execution.blocking=true short-circuits before any subprocess is spawned, exits 2, and prints a stderr message naming both 'blocking' and 'start-sensor' so the calling agent can remediate. Authored via /create-sensor from .harness/usecases/run-sensor-blocking-rejected.json; validates the actual implementation at skills/run-sensor/scripts/run-computational.go (the UseCase's claimed exit_code=1 and Signal-envelope output do not match the implementation — the truth is exit_code=2 + plain stderr).",
+  "determinism": "high",
+  "execution": {
+    "command": "set -u; F=\"${HARNESS_REGISTRY_ROOT}/.harness/sensors/fixtures/assert-run-sensor-rejects-blocking/blocking-fixture.json\"; out=$(GOWORK=off HARNESS_REGISTRY_ROOT=\"${HARNESS_REGISTRY_ROOT}\" go run -C \"${CLAUDE_PLUGIN_ROOT}\" -tags=run_computational ./skills/run-sensor/scripts \"${F}\" 2\u003e\u00261); rc=$?; if [ \"${rc}\" -ne 0 ] \u0026\u0026 printf '%s' \"${out}\" | grep -q 'blocking' \u0026\u0026 printf '%s' \"${out}\" | grep -q 'start-sensor'; then exit 0; else printf 'expected non-zero rc + output containing both \"blocking\" and \"start-sensor\"; got rc=%s out=%s\\n' \"${rc}\" \"${out}\" \u003e\u00262; exit 1; fi",
+    "exit_code_map": [
+      {
+        "exit_code": 0,
+        "severity": "info",
+        "verdict": "pass"
+      },
+      {
+        "exit_code": "*",
+        "severity": "high",
+        "verdict": "fail"
+      }
+    ]
+  },
+  "id": "assert-run-sensor-rejects-blocking",
+  "kind": "assertion",
+  "name": "/run-sensor refuses to spawn a blocking sensor",
+  "output": "single",
+  "phase": "pre-merge",
+  "references": [
+    "Use case: .harness/usecases/run-sensor-blocking-rejected.json",
+    "Implementation: skills/run-sensor/scripts/run-computational.go:105-110",
+    "Existing test: skills/run-sensor/scripts/run-computational_test.go TestRun_BlockingSensorRejected"
+  ],
+  "regulation": "behaviour",
+  "requires": [
+    {
+      "kind": "tool",
+      "name": "go"
+    },
+    {
+      "description": "Absolute path of the harness-framework plugin checkout. The sensor's command uses `go run -C` to ensure module resolution happens inside the plugin tree regardless of the project's cwd or go.work.",
+      "kind": "env",
+      "name": "CLAUDE_PLUGIN_ROOT"
+    },
+    {
+      "description": "Absolute path of the user project root. Captured before go -C chdirs the toolchain so the fixture path the sensor's command points at resolves correctly.",
+      "kind": "env",
+      "name": "HARNESS_REGISTRY_ROOT"
+    },
+    {
+      "id": "build-runner-computational",
+      "kind": "sensor"
+    }
+  ],
+  "self_correction": {
+    "escalation": "fail = the blocking-rejection contract regressed; the runner now either spawns blocking sensors silently or emits an output the agent cannot map to /start-sensor. Inspect run-computational.go around line 106 and the corresponding test TestRun_BlockingSensorRejected.",
+    "max_retries": 0,
+    "on_error": "escalate",
+    "on_fail": "advise",
+    "on_warn": "surface"
+  },
+  "triggers": [
+    {
+      "on": "manual"
+    },
+    {
+      "on": "file-change",
+      "when": "diff touches skills/run-sensor/scripts/run-computational.go"
+    },
+    {
+      "on": "pull-request"
+    }
+  ],
+  "type": "computational",
+  "verification": {
+    "golden_cases": [
+      {
+        "expected_severity": "info",
+        "expected_verdict": "pass",
+        "fixture": ".harness/sensors/fixtures/assert-run-sensor-rejects-blocking/blocking-fixture.json",
+        "notes": "Minimal JSON with execution.blocking=true. The runner reads + parses it, then short-circuits with exit 2 + stderr 'error: sensor is blocking; use /start-sensor instead' (skills/run-sensor/scripts/run-computational.go:106-108)."
+      }
+    ]
+  },
+  "version": "0.1.0"
+}

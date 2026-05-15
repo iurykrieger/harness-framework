@@ -1,0 +1,52 @@
+{
+  "behavior": {
+    "business_rules": [
+      "Empty registry is a valid steady state, not an error.",
+      "Verdict is pass regardless of entry count."
+    ],
+    "summary": "Read .harness/runtime/running_sensors.json (present, empty map). Fold zero entries into a pass Signal whose metadata.kind=list and metadata.entries=[]."
+  },
+  "description": "Happy idle path: /list-sensors with no running sensors emits exactly one pass Signal whose metadata.kind=list and metadata.entries=[].",
+  "evidence": [
+    {
+      "file": "skills/list-sensors/scripts/list.go",
+      "line_start": 30,
+      "rationale": "runList iterates over the entries map and emits the list Signal even when empty."
+    }
+  ],
+  "expected_outcome": {
+    "fixture": {
+      "exit_code": 0,
+      "stdout_last_line": {
+        "metadata": {
+          "entries": [],
+          "kind": "list"
+        },
+        "verdict": "pass"
+      }
+    },
+    "invariants": [
+      "Exactly one Signal on stdout.",
+      "metadata.entries is an empty array (not null, not absent)."
+    ],
+    "shape": "JSONL on stdout (one line)",
+    "summary": "Stdout has exactly one Signal: verdict=pass metadata.kind=list metadata.entries=[]."
+  },
+  "id": "list-sensors-empty",
+  "journey_id": "list-sensors",
+  "name": "List sensors when registry file is present but empty",
+  "regression_priority": "high",
+  "tags": [
+    "happy-path",
+    "idle"
+  ],
+  "trigger": {
+    "fixture": {
+      "argv": [],
+      "registry_state": {}
+    },
+    "shape": "CLI invocation",
+    "summary": "Agent invokes /list-sensors with no arguments after the registry file has been created but no sensors are live."
+  },
+  "version": "1.0.0"
+}

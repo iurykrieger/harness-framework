@@ -1,0 +1,68 @@
+{
+  "behavior": {
+    "business_rules": [
+      "Cursor is 1-based; 0 means read from the start.",
+      "Envelope Signal is always the LAST line on stdout regardless of how many lines were read."
+    ],
+    "summary": "Open signals.log, skip cursor (=0) lines, emit each remaining line on stdout as an individual Signal, then emit exactly one envelope Signal with metadata.kind=envelope metadata.next_cursor equal to the file line count after this read."
+  },
+  "description": "Initial-read variation: /tail-sensor \u003cid\u003e 0 emits every Signal previously written to signals.log followed by exactly one envelope Signal whose metadata.next_cursor equals the total line count.",
+  "evidence": [
+    {
+      "file": "skills/tail-sensor/scripts/tail.go",
+      "line_start": 35,
+      "rationale": "runTail handles cursor=0 and cursor=N uniformly via line-counter skip + envelope emission."
+    }
+  ],
+  "expected_outcome": {
+    "fixture": {
+      "exit_code": 0,
+      "stdout_jsonl": [
+        {
+          "sensor_id": "dev-server",
+          "verdict": "pass"
+        },
+        {
+          "sensor_id": "dev-server",
+          "verdict": "warn"
+        },
+        {
+          "metadata": {
+            "kind": "envelope",
+            "next_cursor": 2
+          },
+          "verdict": "pass"
+        }
+      ]
+    },
+    "invariants": [
+      "Envelope Signal is the last line.",
+      "next_cursor equals the number of individual Signals emitted (history length)."
+    ],
+    "shape": "JSONL on stdout",
+    "summary": "Stdout has the two history lines followed by the envelope Signal with next_cursor=2."
+  },
+  "id": "tail-sensor-cursor-zero",
+  "journey_id": "tail-sensor",
+  "name": "Cursor=0 returns everything since the sensor started",
+  "regression_priority": "critical",
+  "tags": [
+    "happy-path",
+    "cursor"
+  ],
+  "trigger": {
+    "fixture": {
+      "argv": [
+        "dev-server",
+        "0"
+      ],
+      "signals_log_lines": [
+        "{\"sensor_id\":\"dev-server\",\"verdict\":\"pass\",\"metadata\":{\"kind\":\"line\",\"line\":\"listening on :3000\"}}",
+        "{\"sensor_id\":\"dev-server\",\"verdict\":\"warn\",\"metadata\":{\"kind\":\"line\",\"line\":\"WARN config field deprecated\"}}"
+      ]
+    },
+    "shape": "CLI invocation",
+    "summary": "Agent invokes /tail-sensor dev-server 0 to read history."
+  },
+  "version": "1.0.0"
+}

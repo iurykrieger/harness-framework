@@ -1,0 +1,104 @@
+{
+  "behavior": {
+    "business_rules": [
+      "Aggregate verdict is the worst of exit_code_map[exitCode] and the highest-rank verdict observed in the stream.",
+      "The aggregate Signal is the LAST JSONL line on stdout — no other line may follow it.",
+      "Exit code 0 indicates the root ran and emitted its aggregate, regardless of verdict."
+    ],
+    "summary": "Resolve the id to its sensor path, validate the JSON against schemas/sensor.json, resolve and run requires[kind=sensor] deps topologically (none in this fixture), spawn `sh -c \u003cexecution.command\u003e`, stream stdout/stderr through the pattern matcher, and on exit fold (exit_code_map[exitCode], worst-stream-verdict) into one aggregate Signal."
+  },
+  "description": "Happy path: invoke /run-sensor on a sensor with type=computational + output=stream whose command exits 0 with no stream entries above the pass threshold. The runner emits zero individual Signals and exactly one aggregate Signal as the LAST JSONL line on stdout.",
+  "evidence": [
+    {
+      "file": "skills/run-sensor/scripts/run-computational.go",
+      "line_start": 55,
+      "rationale": "main() entry point of the computational runner."
+    },
+    {
+      "file": "lib/orchestrator/run.go",
+      "rationale": "RunOne / RunOneWithRoot performs DAG resolution + lifecycle execution + aggregate construction."
+    }
+  ],
+  "expected_outcome": {
+    "fixture": {
+      "exit_code": 0,
+      "stdout_last_line": {
+        "confidence": 1,
+        "cost_actual": {
+          "latency_ms": "*"
+        },
+        "evidence": [],
+        "finished_at": "*",
+        "run_id": "*",
+        "sensor_id": "lint-go-vet-computational",
+        "severity": "info",
+        "started_at": "*",
+        "verdict": "pass",
+        "version": "0.1.0"
+      }
+    },
+    "invariants": [
+      "Exactly one aggregate Signal is emitted on stdout.",
+      "The aggregate's sensor_id equals the requested id.",
+      "The process exit code is 0."
+    ],
+    "shape": "JSONL on stdout; final line is the aggregate Signal",
+    "side_effects": [
+      "No registry entry is written (sensor is non-blocking).",
+      "No files are created or modified in .harness/runtime/."
+    ],
+    "summary": "Stdout carries one JSON line, the aggregate Signal, with verdict=pass and severity=info."
+  },
+  "id": "run-sensor-computational-stream-pass",
+  "journey_id": "run-sensor",
+  "name": "Run a computational stream sensor whose command exits 0",
+  "regression_priority": "critical",
+  "tags": [
+    "happy-path",
+    "stream",
+    "computational"
+  ],
+  "trigger": {
+    "fixture": {
+      "argv": [
+        "lint-go-vet-computational"
+      ],
+      "env": {
+        "CLAUDE_PLUGIN_ROOT": "/abs/path/to/harness-framework",
+        "GOWORK": "off",
+        "HARNESS_REGISTRY_ROOT": "/abs/path/to/project"
+      },
+      "sensor_excerpt": {
+        "execution": {
+          "command": "go vet ./...",
+          "exit_code_map": [
+            {
+              "exit_code": 0,
+              "severity": "info",
+              "verdict": "pass"
+            }
+          ],
+          "output_parsing": {
+            "patterns": [
+              {
+                "regex": "^(.+):(\\d+):(\\d+): (.+)$",
+                "severity": "high",
+                "verdict": "fail"
+              }
+            ]
+          }
+        },
+        "output": "stream",
+        "type": "computational"
+      },
+      "sensor_file": ".harness/sensors/lint-go-vet-computational.json"
+    },
+    "preconditions": [
+      "The sensor file resolves under .harness/sensors/",
+      "The subprocess exits 0 and emits no lines matching the pattern"
+    ],
+    "shape": "CLI invocation",
+    "summary": "Agent invokes the run-computational script with a single bare sensor id."
+  },
+  "version": "1.0.0"
+}

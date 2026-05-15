@@ -1,4 +1,7 @@
 {
+  "archetypes": [
+    "cli-tool"
+  ],
   "components": [
     {
       "config_summary": "Go standard testing package. Tests are invoked via `go test -race -count=1 ./lib/...` and `go test -race -count=1 -tags=\u003ctag\u003e ./skills/...` in CI; sensors that observe these runs add `-v` so each test result becomes an individually-actionable `--- PASS:`, `--- FAIL:`, or `--- SKIP:` line on stdout. Table-driven tests are the project default.",
@@ -47,8 +50,208 @@
       "version": "1.1.0"
     }
   ],
-  "detected_at": "2026-05-14T10:00:00Z",
+  "detected_at": "2026-05-14T15:00:00Z",
   "detected_by": "anthropic/claude-opus-4-7",
+  "journeys": [
+    {
+      "archetype": "cli-tool",
+      "entry_points": [
+        {
+          "command": "run-sensor",
+          "evidence": {
+            "file": "skills/run-sensor/scripts/run-computational.go",
+            "line_start": 55,
+            "rationale": "Entry point for sensor.type=computational; spawns sh -c \u003cexecution.command\u003e and streams matched lines as Signals."
+          },
+          "kind": "cli-command"
+        },
+        {
+          "command": "run-sensor",
+          "evidence": {
+            "file": "skills/run-sensor/scripts/run-inferential.go",
+            "line_start": 61,
+            "rationale": "Entry point for sensor.type=inferential; renders user_prompt_template into HARNESS_PROMPT and applies calibration fail→warn downgrade."
+          },
+          "kind": "cli-command"
+        }
+      ],
+      "id": "run-sensor",
+      "name": "Run a regulatory sensor",
+      "summary": "Resolve a sensor id (computational or inferential, single or stream output), execute its requires[kind=sensor] dependency closure topologically, run the sensor's full lifecycle (prepare → command → teardown), and emit JSONL Signals to stdout with the requested sensor's aggregate as the LAST line."
+    },
+    {
+      "archetype": "cli-tool",
+      "entry_points": [
+        {
+          "command": "start-sensor",
+          "evidence": {
+            "file": "skills/start-sensor/scripts/start.go",
+            "line_start": 50,
+            "rationale": "runStart performs the full /start-sensor lifecycle: validation, dep resolution, detach, watcher, registry write, signal emission."
+          },
+          "kind": "cli-command"
+        }
+      ],
+      "id": "start-sensor",
+      "name": "Bring up a blocking sensor",
+      "summary": "Validate the sensor (must declare execution.blocking=true), resolve and bring up its sensor deps, run prepare steps fail-fast, spawn the command detached (Setsid, raw.log) plus a watcher tailing into signals.log, and write a registry entry with held_by:[{kind:manual}]."
+    },
+    {
+      "archetype": "cli-tool",
+      "entry_points": [
+        {
+          "command": "stop-sensor",
+          "evidence": {
+            "file": "skills/stop-sensor/scripts/stop.go",
+            "line_start": 46,
+            "rationale": "runStop covers idempotent absent-registry handling, held/manual-hold semantics, optional --reap-dead-holders, graceful → forceful kill, and aggregate construction."
+          },
+          "kind": "cli-command"
+        }
+      ],
+      "id": "stop-sensor",
+      "name": "Bring down a blocking sensor",
+      "summary": "Idempotently bring down a previously-started blocking sensor: remove the kind=manual hold, refuse with `held` if any sensor still holds the run, otherwise SIGTERM → wait execution.graceful_timeout_ms → SIGKILL on the subprocess group, drain the watcher, read signals.log, emit the aggregate Signal, and remove the registry entry."
+    },
+    {
+      "archetype": "cli-tool",
+      "entry_points": [
+        {
+          "command": "list-sensors",
+          "evidence": {
+            "file": "skills/list-sensors/scripts/list.go",
+            "line_start": 30,
+            "rationale": "runList walks the registry file, classifies entries running/orphan, and folds them into a single list Signal."
+          },
+          "kind": "cli-command"
+        }
+      ],
+      "id": "list-sensors",
+      "name": "List running blocking sensors",
+      "summary": "Read .harness/runtime/running_sensors.json, validate each entry's PID with kill(pid,0), annotate held_by sensor holders with their own pid_alive flag, and emit a single Signal verdict=pass, metadata.kind=list with metadata.entries=[…]."
+    },
+    {
+      "archetype": "cli-tool",
+      "entry_points": [
+        {
+          "command": "tail-sensor",
+          "evidence": {
+            "file": "skills/tail-sensor/scripts/tail.go",
+            "line_start": 35,
+            "rationale": "runTail handles arg parsing, cursor validation, file open and emission of (individual Signals... + envelope Signal) JSONL."
+          },
+          "kind": "cli-command"
+        }
+      ],
+      "id": "tail-sensor",
+      "name": "Tail Signals from a running sensor",
+      "summary": "Open .harness/runtime/\u003cid\u003e/signals.log, skip cursor lines (1-based; 0 = read all), emit each remaining JSON line on stdout as an individual Signal, and finish with one envelope Signal metadata.kind=envelope metadata.next_cursor=\u003cline-count-after-this-read\u003e."
+    },
+    {
+      "archetype": "cli-tool",
+      "entry_points": [
+        {
+          "command": "detect-sensors",
+          "evidence": {
+            "file": "skills/detect-sensors/scripts/write-stack.go",
+            "line_start": 33,
+            "rationale": "Phase A persistence: validates the stack payload against schemas/stack.json and cross-checks (CheckProducedBy, CheckJourneyArchetypes) before writing .harness/stack.json."
+          },
+          "kind": "cli-command"
+        },
+        {
+          "command": "detect-sensors",
+          "evidence": {
+            "file": "skills/detect-sensors/scripts/write-sensor.go",
+            "line_start": 29,
+            "rationale": "Phase B persistence: validates each draft sensor against schemas/sensor.json and writes .harness/sensors/\u003cid\u003e.json atomically."
+          },
+          "kind": "cli-command"
+        }
+      ],
+      "id": "detect-sensors",
+      "name": "Scaffold a project sensor harness",
+      "summary": "Phase A: synthesize a project's stack into .harness/stack.json (languages, components, log_shapes). Phase B: per inferred archetype, draft one sensor JSON per capability (lint, build, unit-test, e2e-test, run-project, fetch-logs, …) and persist each through write-sensor.go which validates against schemas/sensor.json before writing to .harness/sensors/\u003cid\u003e.json."
+    },
+    {
+      "archetype": "cli-tool",
+      "entry_points": [
+        {
+          "command": "detect-usecases",
+          "evidence": {
+            "file": "skills/detect-usecases/scripts/write-usecase.go",
+            "line_start": 36,
+            "rationale": "run() reads the draft, loads stack.json, calls usecase.ValidateAndPersist (schema + cross-check + evidence existence) and writes .harness/usecases/\u003cid\u003e.json."
+          },
+          "kind": "cli-command"
+        }
+      ],
+      "id": "detect-usecases",
+      "name": "Enumerate use cases per journey",
+      "summary": "Read .harness/stack.json (error stack_missing if absent), augment with purpose/archetypes/journeys when missing, then for each journey enumerate variations from input validation rules, code branches, pre-condition states, and conditionally-emitted side-effects. Persist one UseCase JSON per variation via write-usecase.go (schema + journey_id cross-check + evidence file existence)."
+    },
+    {
+      "archetype": "cli-tool",
+      "entry_points": [
+        {
+          "command": "create-sensor",
+          "evidence": {
+            "file": "skills/create-sensor/scripts/write-sensor.go",
+            "line_start": 32,
+            "rationale": "Validates the drafted sensor against schemas/sensor.json and writes .harness/sensors/\u003cid\u003e.json; companion catalog-sensors.go enumerates existing sensors for dep selection and write-fixture.go materializes referenced fixtures."
+          },
+          "kind": "cli-command"
+        }
+      ],
+      "id": "create-sensor",
+      "name": "Create one targeted assertion sensor",
+      "summary": "Take a free-text requirement (acceptance criterion / functional requirement / use case), run a clarification dialogue, catalog existing sensors as candidate dependencies, synthesize a fixture, and persist exactly one new sensor of kind=assertion to .harness/sensors/\u003cid\u003e.json via write-sensor.go."
+    },
+    {
+      "archetype": "cli-tool",
+      "entry_points": [
+        {
+          "command": "heal-sensor",
+          "evidence": {
+            "file": "skills/heal-sensor/scripts/diagnose.go",
+            "line_start": 30,
+            "rationale": "Step 1: deterministic input collector reads the failing Signal + sensor + project state and emits /tmp/heal-input.json."
+          },
+          "kind": "cli-command"
+        },
+        {
+          "command": "heal-sensor",
+          "evidence": {
+            "file": "skills/heal-sensor/scripts/apply-safe.go",
+            "line_start": 26,
+            "rationale": "Step 2: applies the allow-listed idempotent shell-side fixes (cp .env.example .env, mkdir, touch, set-env-in-file)."
+          },
+          "kind": "cli-command"
+        },
+        {
+          "command": "heal-sensor",
+          "evidence": {
+            "file": "skills/heal-sensor/scripts/apply-sensors.go",
+            "line_start": 29,
+            "rationale": "Step 3: persists patched/new sensors via lib/sensor.ValidateAndPersist into .harness/sensors/."
+          },
+          "kind": "cli-command"
+        },
+        {
+          "command": "heal-sensor",
+          "evidence": {
+            "file": "skills/heal-sensor/scripts/retry-original.go",
+            "line_start": 26,
+            "rationale": "Step 4: re-invokes the failing sensor exactly once after fixes have been applied."
+          },
+          "kind": "cli-command"
+        }
+      ],
+      "id": "heal-sensor",
+      "name": "Recover from setup-shaped sensor failures",
+      "summary": "After a /run-sensor failure with setup-shaped cause (missing env var, missing binary, absent .env, unavailable service), diagnose the failing Signal + sensor + project state, build a Setup Plan, apply allow-listed idempotent fixes (cp .env.example .env, mkdir, touch, set-env-in-file with chmod 600), persist patched/new sensors via lib/sensor.ValidateAndPersist, and retry the original sensor exactly once."
+    }
+  ],
   "languages": [
     {
       "name": "go",
@@ -136,5 +339,6 @@
       ]
     }
   ],
-  "version": "0.1.0"
+  "purpose": "Claude Code plugin that turns the user's project into a sensor harness — a set of versioned, JSON-described sensors invoked via slash commands so AI coding agents can observe, run, start, stop, tail, and recover regulatory checks while emitting standardized Signal JSONL for cross-sensor routing.",
+  "version": "0.2.0"
 }
