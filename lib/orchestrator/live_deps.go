@@ -838,7 +838,7 @@ func buildSimpleSignal(id, verdict, severity, kind, rationale string) map[string
 
 // validateOrFallback validates a signal and falls back to a minimal valid
 // emergency signal on failure. This ensures orchestrator-emitted signals
-// always conform to schemas/signal.json.
+// always conform to schemas/signal.yaml.
 func validateOrFallback(v *schema.Validator, sig map[string]interface{}, id string, stderr io.Writer) map[string]interface{} {
 	if v == nil {
 		return sig

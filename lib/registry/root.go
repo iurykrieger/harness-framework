@@ -227,7 +227,7 @@ func DiagnoseMetadata(res Result) map[string]interface{} {
 }
 
 // DiscoveryErrorSignal builds an error Signal describing a failed
-// registry-root discovery. The returned map satisfies signal.json
+// registry-root discovery. The returned map satisfies signal.yaml
 // (verdict=error, severity=high, all required envelope fields). The
 // helper is exported for the four registry-touching skills so each
 // emits the same shape.

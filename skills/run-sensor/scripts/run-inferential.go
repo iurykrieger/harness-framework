@@ -315,7 +315,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	// runner's signal handler, or any other caller-initiated cancellation),
 	// exec.CommandContext SIGKILLed the subprocess. Surface the flag on the
 	// aggregate so downstream agents can distinguish a clean failure from a
-	// forced shutdown. metadata is free-form per signal.json — adding a
+	// forced shutdown. metadata is free-form per signal.yaml — adding a
 	// boolean here does not affect schema validation.
 	if ctx.Err() != nil {
 		md, _ := sig["metadata"].(map[string]interface{})
