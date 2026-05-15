@@ -137,10 +137,28 @@ func Start(ctx context.Context, cfg StreamConfig) (*StreamHandle, error) {
 		}
 		cmd.Env = envList
 	}
-	// Place the subprocess in its own process group so Kill() can target
-	// the whole tree (-pgid). Mirrors what SpawnDetached does, scoped to
-	// the streaming path.
+	// Place the subprocess in its own process group so cancellation can
+	// target the whole tree (-pgid). Mirrors what SpawnDetached does,
+	// scoped to the streaming path.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// On ctx cancellation (parent timeout OR orchestrator cancelling
+	// because a live blocking dep died mid-run), SIGTERM the whole
+	// process group rather than only the head process. The default
+	// CommandContext cancel sends SIGKILL to cmd.Process alone, which
+	// leaves grandchildren (a sh wait-loop's curl, a docker compose's
+	// container, …) running and ignores the orchestrator's intent. The
+	// WaitDelay bound guarantees a SIGKILL fallback if the group ignores
+	// SIGTERM, so cancellation is bounded.
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if pgid, perr := syscall.Getpgid(cmd.Process.Pid); perr == nil {
+			return syscall.Kill(-pgid, syscall.SIGTERM)
+		}
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
+	cmd.WaitDelay = 5 * time.Second
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
