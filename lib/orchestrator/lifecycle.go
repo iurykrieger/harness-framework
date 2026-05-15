@@ -643,11 +643,11 @@ func buildLifecycleEvidence(prep, td []interface{}) []interface{} {
 // buildStderrEvidence returns evidence[] entries derived from the
 // subprocess's captured stderr tail. Called only when output=="single"
 // AND the aggregate verdict is fail/error AND stderr is non-empty.
-// Returns the last depRawLogTailLines (20) non-empty stderr lines as
-// excerpt entries with a shared rationale; the entries are appended to
-// any lifecycle evidence the aggregate already carries.
+// Returns the last rawLogTailLines non-empty stderr lines as excerpt
+// entries with a shared rationale; the entries are appended to any
+// lifecycle evidence the aggregate already carries.
 //
-// depRawLogTailLines is defined in lib/orchestrator/live_deps.go.
+// rawLogTailLines is defined in lib/orchestrator/live_deps.go.
 func buildStderrEvidence(output, verdict, stderrText string) []interface{} {
 	if output != "single" {
 		return nil
@@ -660,7 +660,7 @@ func buildStderrEvidence(output, verdict, stderrText string) []interface{} {
 	}
 	allLines := strings.Split(stderrText, "\n")
 	collected := []string{}
-	for i := len(allLines) - 1; i >= 0 && len(collected) < depRawLogTailLines; i-- {
+	for i := len(allLines) - 1; i >= 0 && len(collected) < rawLogTailLines; i-- {
 		line := strings.TrimRight(allLines[i], "\r")
 		if line == "" {
 			continue
