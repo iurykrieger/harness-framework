@@ -1,2 +1,0 @@
-lib/example/foo.go
-skills/example/scripts/bar.go

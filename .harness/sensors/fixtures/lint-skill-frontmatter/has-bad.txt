@@ -1,2 +1,0 @@
-BAD: skills/example-without-frontmatter/SKILL.md
-BAD: skills/example-missing-name/SKILL.md
