@@ -49,8 +49,9 @@ func TestValidateAndPersist_Happy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected: %v", err)
 	}
-	if !strings.HasSuffix(path, "create-user-with-email.yaml") {
-		t.Errorf("path = %q, want suffix create-user-with-email.yaml", path)
+	wantSuffix := filepath.Join("user-registration", "create-user-with-email.yaml")
+	if !strings.HasSuffix(path, wantSuffix) {
+		t.Errorf("path = %q, want suffix %q", path, wantSuffix)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("file not written: %v", err)
@@ -63,14 +64,13 @@ func TestValidateAndPersist_RejectsBadJourney(t *testing.T) {
 	projectRoot := projectRootWithEvidence(t)
 	body := usecasetest.CanonicalBody(t)
 
-	// Strip the matching journey so cross-check fails.
 	bad := &stack.Stack{Archetypes: []stack.Archetype{stack.ArchetypeHTTPAPI}}
 	if _, err := usecase.ValidateAndPersist(body, outDir, projectRoot, bad, schemasDir); err == nil {
 		t.Fatal("expected journey cross-check error")
 	}
-	files, _ := os.ReadDir(outDir)
-	if len(files) != 0 {
-		t.Errorf("expected nothing written on validation failure, got %d files", len(files))
+	entries, _ := os.ReadDir(outDir)
+	if len(entries) != 0 {
+		t.Errorf("expected nothing written on validation failure, got %d entries (subdir leak)", len(entries))
 	}
 }
 
@@ -82,6 +82,10 @@ func TestValidateAndPersist_RejectsMissingEvidence(t *testing.T) {
 	// projectRoot WITHOUT the evidence file
 	if _, err := usecase.ValidateAndPersist(body, outDir, t.TempDir(), minimalStack(), schemasDir); err == nil {
 		t.Fatal("expected evidence cross-check error")
+	}
+	entries, _ := os.ReadDir(outDir)
+	if len(entries) != 0 {
+		t.Errorf("expected nothing written on validation failure, got %d entries (subdir leak)", len(entries))
 	}
 }
 
@@ -107,7 +111,11 @@ func TestValidateAndPersist_OverwritesAtomically(t *testing.T) {
 	outDir := t.TempDir()
 	projectRoot := projectRootWithEvidence(t)
 
-	target := filepath.Join(outDir, "create-user-with-email.yaml")
+	journeyDir := filepath.Join(outDir, "user-registration")
+	if err := os.MkdirAll(journeyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(journeyDir, "create-user-with-email.yaml")
 	if err := os.WriteFile(target, []byte("STALE"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -122,5 +130,36 @@ func TestValidateAndPersist_OverwritesAtomically(t *testing.T) {
 	}
 	if strings.Contains(string(data), "STALE") {
 		t.Errorf("expected target to be overwritten")
+	}
+}
+
+func TestValidateAndPersist_IdempotentUnderJourneyDir(t *testing.T) {
+	schemasDir := schematest.RepoSchemasDir(t)
+	outDir := t.TempDir()
+	projectRoot := projectRootWithEvidence(t)
+	body := usecasetest.CanonicalBody(t)
+
+	first, err := usecase.ValidateAndPersist(body, outDir, projectRoot, minimalStack(), schemasDir)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	dataFirst, err := os.ReadFile(first)
+	if err != nil {
+		t.Fatalf("read first: %v", err)
+	}
+
+	second, err := usecase.ValidateAndPersist(body, outDir, projectRoot, minimalStack(), schemasDir)
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if first != second {
+		t.Errorf("paths differ: first=%q second=%q", first, second)
+	}
+	dataSecond, err := os.ReadFile(second)
+	if err != nil {
+		t.Fatalf("read second: %v", err)
+	}
+	if string(dataFirst) != string(dataSecond) {
+		t.Errorf("bytes differ between calls; idempotency broken")
 	}
 }

@@ -73,10 +73,15 @@ func ValidateAndPersist(
 	if !ok || id == "" {
 		return "", fmt.Errorf("usecase.id missing after validation")
 	}
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	journeyID, ok := doc["journey_id"].(string)
+	if !ok || journeyID == "" {
+		return "", fmt.Errorf("usecase.journey_id missing after validation")
+	}
+	journeyDir := filepath.Join(outDir, journeyID)
+	if err := os.MkdirAll(journeyDir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}
-	target := filepath.Join(outDir, id+".yaml")
+	target := filepath.Join(journeyDir, id+".yaml")
 	if err := writeCanonical(target, doc); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
