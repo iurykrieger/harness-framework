@@ -25,10 +25,12 @@ jobs:
       - name: Download modules
         run: go mod download
 
-      - name: Verify schemas parse as JSON
+      - name: Verify schemas parse as YAML
         run: |
-          python3 -c 'import json; json.load(open("schemas/sensor.json"))'
-          python3 -c 'import json; json.load(open("schemas/signal.json"))'
+          yq -r '.title' schemas/sensor.yaml > /dev/null
+          yq -r '.title' schemas/signal.yaml > /dev/null
+          yq -r '.title' schemas/stack.yaml > /dev/null
+          yq -r '.title' schemas/usecase.yaml > /dev/null
 
       - name: Vet (computational build tag)
         run: go vet -tags=run_computational ./...
@@ -89,23 +91,23 @@ jobs:
       - name: Download modules
         run: go mod download
 
-      - name: Validate every sensor JSON against schemas/sensor.json
+      - name: Validate every sensor YAML against schemas/sensor.yaml
         run: |
           set -euo pipefail
           tmp=$(mktemp -d)
-          for f in .harness/sensors/*.json; do
+          for f in .harness/sensors/*.yaml; do
             go run -tags=write_sensor ./skills/detect-sensors/scripts \
               --out="$tmp" --schemas-dir="$(pwd)/schemas" "$f" > /dev/null
           done
           rm -rf "$tmp"
 
-      - name: Validate .harness/stack.json against schemas/stack.json
+      - name: Validate .harness/stack.yaml against schemas/stack.yaml
         run: |
           set -euo pipefail
-          if [ -f .harness/stack.json ]; then
+          if [ -f .harness/stack.yaml ]; then
             tmp=$(mktemp -d)
             go run -tags=write_stack ./skills/detect-sensors/scripts \
-              --out="$tmp" --schemas-dir="$(pwd)/schemas" .harness/stack.json > /dev/null
+              --out="$tmp" --schemas-dir="$(pwd)/schemas" .harness/stack.yaml > /dev/null
             rm -rf "$tmp"
           fi
 
@@ -190,10 +192,10 @@ jobs:
             echo "$id|$verdict|$severity|$counts|$mode"
           }
 
-          for f in .harness/sensors/*.json; do
-            id=$(basename "$f" .json)
-            kind=$(jq -r .kind "$f")
-            blocking=$(jq -r '.execution.blocking // false' "$f")
+          for f in .harness/sensors/*.yaml; do
+            id=$(basename "$f" .yaml)
+            kind=$(yq -r '.kind' "$f")
+            blocking=$(yq -r '.execution.blocking // false' "$f")
 
             if [ "$kind" = "setup" ]; then
               echo "skip $id (kind=$kind — pulled in by orchestrator only as a dep)"
@@ -204,7 +206,7 @@ jobs:
             results+=("$row")
             verdict=$(echo "$row" | cut -d'|' -f2)
             if [ "$verdict" != "pass" ]; then
-              echo "::error file=.harness/sensors/$id.json::Sensor $id failed: $row"
+              echo "::error file=.harness/sensors/$id.yaml::Sensor $id failed: $row"
               fail=1
             fi
           done
