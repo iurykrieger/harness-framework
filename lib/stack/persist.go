@@ -7,11 +7,12 @@ import (
 	"path/filepath"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"sigs.k8s.io/yaml"
 )
 
 // ValidateAndPersist validates stackJSON against schemas/stack.json and,
-// on success, writes a canonicalised copy (2-space indent) to
-// <projectRoot>/.harness/stack.json. Returns the absolute path on success.
+// on success, writes a canonical YAML copy to
+// <projectRoot>/.harness/stack.yaml. Returns the absolute path on success.
 //
 // The function is idempotent: writing the same payload twice produces a
 // byte-identical file. It does NOT mutate stackJSON.
@@ -54,7 +55,7 @@ func ValidateAndPersist(stackJSON []byte, projectRoot string, schemasDir string)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}
-	target := filepath.Join(outDir, "stack.json")
+	target := filepath.Join(outDir, "stack.yaml")
 	if err := writeCanonical(target, m); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
@@ -62,14 +63,20 @@ func ValidateAndPersist(stackJSON []byte, projectRoot string, schemasDir string)
 }
 
 func writeCanonical(path string, v map[string]interface{}) error {
+	jsonBytes, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("marshal JSON: %w", err)
+	}
+	yamlBytes, err := yaml.JSONToYAML(jsonBytes)
+	if err != nil {
+		return fmt.Errorf("convert to YAML: %w", err)
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".persist-*")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
-	enc := json.NewEncoder(tmp)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
+	if _, err := tmp.Write(yamlBytes); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return err

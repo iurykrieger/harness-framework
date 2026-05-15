@@ -5,16 +5,22 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
 func loadGoldenTyped(t *testing.T) Stack {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join("testdata", "golden-stack.json"))
+	body, err := os.ReadFile(filepath.Join("testdata", "golden-stack.yaml"))
 	if err != nil {
 		t.Fatalf("read golden: %v", err)
 	}
+	jb, err := yaml.YAMLToJSON(body)
+	if err != nil {
+		t.Fatalf("yaml→json: %v", err)
+	}
 	var s Stack
-	if err := json.Unmarshal(body, &s); err != nil {
+	if err := json.Unmarshal(jb, &s); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	return s

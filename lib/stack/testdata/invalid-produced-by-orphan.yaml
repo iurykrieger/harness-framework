@@ -1,0 +1,18 @@
+components:
+- evidence:
+  - file: main.go
+    rationale: x
+  name: go.uber.org/zap
+  role: logger
+detected_at: "2026-05-12T10:00:00Z"
+detected_by: manual
+languages:
+- name: go
+  version: "1.25"
+log_shapes:
+- format: plain
+  id: ghost-shape
+  produced_by:
+  - does.not.exist/ghost
+  sample: ghost line
+version: 0.1.0
