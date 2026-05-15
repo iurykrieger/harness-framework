@@ -1,0 +1,102 @@
+{
+  "behavior": {
+    "business_rules": [
+      "Only execution.blocking=true sensors may be started this way.",
+      "On success, registry entry includes held_by:[{kind:manual, attached_at:…}] and signals_log_path."
+    ],
+    "summary": "Phase 0: validate sensor and confirm blocking. Phase 1: resolve+run dep graph (none here). Phase 2: prepare[] of root. Phase 3: spawn `sh -c \u003ccommand\u003e` detached (Setsid, stdout/stderr → raw.log) and spawn the watcher binary tailing raw.log into signals.log. Phase 4: write registry entry. Phase 5: emit started Signal."
+  },
+  "description": "Happy path: invoke /start-sensor on a sensor declaring execution.blocking=true that has no live registry entry and no requires[kind=sensor]. The script validates the JSON, runs prepare[] steps, fork+execs the command detached, spawns a watcher to tail raw.log into signals.log, writes the registry entry with held_by:[{kind:manual}], and emits a started Signal verdict=pass metadata.kind=started.",
+  "evidence": [
+    {
+      "file": "skills/start-sensor/scripts/start.go",
+      "line_start": 50,
+      "rationale": "runStart performs the lifecycle including registry write and started Signal emission."
+    },
+    {
+      "file": "lib/watcher/spawn.go",
+      "rationale": "Watcher process tails raw.log and parses lines into signals.log."
+    }
+  ],
+  "expected_outcome": {
+    "fixture": {
+      "exit_code": 0,
+      "registry_entry": {
+        "held_by": [
+          {
+            "attached_at": "*",
+            "kind": "manual"
+          }
+        ],
+        "pid": "*",
+        "sensor_id": "dev-server",
+        "signals_log_path": ".harness/runtime/dev-server/signals.log",
+        "watcher_pid": "*"
+      },
+      "stdout_last_line": {
+        "metadata": {
+          "kind": "started"
+        },
+        "sensor_id": "dev-server",
+        "verdict": "pass"
+      }
+    },
+    "invariants": [
+      "Subprocess is alive and detached (kill(pid,0) succeeds).",
+      "Watcher is alive (kill(watcher_pid,0) succeeds).",
+      "Registry entry exists with held_by containing kind=manual."
+    ],
+    "shape": "JSONL on stdout + filesystem side effects",
+    "side_effects": [
+      ".harness/runtime/\u003cid\u003e/raw.log created and being appended to.",
+      ".harness/runtime/\u003cid\u003e/signals.log created and being appended to.",
+      ".harness/runtime/running_sensors.json updated with new entry."
+    ],
+    "summary": "Stdout has one started Signal; the registry file gains a dev-server entry; raw.log + signals.log exist under .harness/runtime/dev-server/."
+  },
+  "id": "start-sensor-blocking-happy",
+  "journey_id": "start-sensor",
+  "name": "Start a blocking sensor with no deps and no live entry",
+  "regression_priority": "critical",
+  "tags": [
+    "happy-path",
+    "blocking",
+    "side-effects"
+  ],
+  "trigger": {
+    "fixture": {
+      "argv": [
+        "dev-server"
+      ],
+      "env": {
+        "CLAUDE_PLUGIN_ROOT": "/abs/plugin",
+        "HARNESS_REGISTRY_ROOT": "/abs/project"
+      },
+      "sensor_excerpt": {
+        "execution": {
+          "blocking": true,
+          "command": "npm run dev",
+          "graceful_timeout_ms": 5000,
+          "output_parsing": {
+            "patterns": [
+              {
+                "regex": "listening on",
+                "severity": "info",
+                "verdict": "pass"
+              }
+            ]
+          }
+        },
+        "output": "stream",
+        "type": "computational"
+      }
+    },
+    "preconditions": [
+      "No entry for dev-server in running_sensors.json",
+      "execution.blocking=true"
+    ],
+    "shape": "CLI invocation",
+    "summary": "Agent invokes the start-sensor script with a single bare sensor id."
+  },
+  "version": "1.0.0"
+}

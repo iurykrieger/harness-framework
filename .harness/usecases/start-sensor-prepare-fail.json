@@ -1,0 +1,80 @@
+{
+  "behavior": {
+    "business_rules": [
+      "Prepare is fail-fast.",
+      "On prepare failure: no detach, no registry write, no watcher."
+    ],
+    "summary": "Prepare runs fail-fast. The first non-pass step aborts the rest of the lifecycle (command does not run; watcher does not spawn; registry is not written). Teardown is NOT run for /start-sensor failures (only for /run-sensor)."
+  },
+  "description": "Lifecycle variation: when one of execution.prepare[] steps exits non-zero, /start-sensor short-circuits — it does NOT spawn the main command, NOT spawn a watcher, and NOT write the registry. It emits a failed Signal whose metadata captures the failing prepare step.",
+  "evidence": [
+    {
+      "file": "skills/start-sensor/scripts/start.go",
+      "rationale": "Phase 2 prepare[] of root before the detach; fail-fast short-circuit."
+    },
+    {
+      "file": "lib/subprocess/step.go",
+      "rationale": "Step execution helper used by prepare[]."
+    }
+  ],
+  "expected_outcome": {
+    "fixture": {
+      "exit_code": 1,
+      "stdout_last_line": {
+        "metadata": {
+          "kind": "failed",
+          "lifecycle": {
+            "prepare": [
+              {
+                "command": "test -f .env",
+                "exit_code": 1
+              }
+            ]
+          }
+        },
+        "sensor_id": "needs-prereq",
+        "verdict": "fail"
+      }
+    },
+    "invariants": [
+      "Main command was never spawned.",
+      "No watcher process exists.",
+      "Registry file is unchanged."
+    ],
+    "shape": "JSONL on stdout",
+    "summary": "Stdout has one failed Signal carrying the prepare step's stderr/exit info; exit code is non-zero."
+  },
+  "id": "start-sensor-prepare-fail",
+  "journey_id": "start-sensor",
+  "name": "Prepare step failure aborts before the detach",
+  "regression_priority": "high",
+  "tags": [
+    "error-handling",
+    "lifecycle",
+    "prepare"
+  ],
+  "trigger": {
+    "fixture": {
+      "argv": [
+        "needs-prereq"
+      ],
+      "sensor_excerpt": {
+        "execution": {
+          "blocking": true,
+          "command": "npm run dev",
+          "prepare": [
+            {
+              "command": "test -f .env"
+            }
+          ]
+        }
+      }
+    },
+    "preconditions": [
+      "The .env file is absent so `test -f .env` returns 1."
+    ],
+    "shape": "CLI invocation",
+    "summary": "Agent invokes /start-sensor on a sensor whose prepare[] includes a step that returns non-zero."
+  },
+  "version": "1.0.0"
+}
