@@ -67,13 +67,13 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 		return code
 	}
 
-	// Derive rootID from the sensor's JSON id field when an explicit project
+	// Derive rootID from the sensor's id field when an explicit project
 	// root is provided (out-of-tree path), so dep resolution uses the logical
 	// id rather than the filename. For in-tree sensors the filename and id are
 	// identical; falling back to the filename preserves existing behaviour.
 	rootID := StripSensorExt(filepath.Base(abs))
 	if explicitProjectRoot != "" {
-		if b, readErr := os.ReadFile(abs); readErr != nil {
+		if b, readErr := schema.ReadAsJSON(abs); readErr != nil {
 			fmt.Fprintln(stderr, "warn: read sensor for rootID:", readErr)
 		} else {
 			var m map[string]interface{}

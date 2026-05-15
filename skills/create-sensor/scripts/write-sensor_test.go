@@ -84,19 +84,19 @@ func TestRun_HappyPath(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "alpha.json")); err != nil {
-		t.Fatalf("alpha.json not written: %v", err)
+	if _, err := os.Stat(filepath.Join(outDir, "alpha.yaml")); err != nil {
+		t.Fatalf("alpha.yaml not written: %v", err)
 	}
 	if !strings.Contains(stdout.String(), `"verdict":"pass"`) {
 		t.Fatalf("missing pass signal: %s", stdout.String())
 	}
 	// Verify the absolute path is emitted on a second stdout line for backward compat with detect-sensors.
-	expectedPath := filepath.Join(outDir, "alpha.json")
+	expectedPath := filepath.Join(outDir, "alpha.yaml")
 	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
 	if len(lines) < 2 {
 		t.Fatalf("expected at least 2 stdout lines (signal + path), got %d: %q", len(lines), stdout.String())
 	}
-	if !strings.Contains(lines[len(lines)-1], "alpha.json") {
+	if !strings.Contains(lines[len(lines)-1], "alpha.yaml") {
 		t.Fatalf("last stdout line should be the sensor path; got %q", lines[len(lines)-1])
 	}
 	// And cross-reference: the path on the second line must point to the file that was written.
@@ -120,8 +120,8 @@ func TestRun_MissingFixture(t *testing.T) {
 	if !strings.Contains(stdout.String(), "missing_fixture") {
 		t.Fatalf("missing_fixture not in stdout: %s", stdout.String())
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "beta.json")); !os.IsNotExist(err) {
-		t.Fatalf("beta.json should not exist, err=%v", err)
+	if _, err := os.Stat(filepath.Join(outDir, "beta.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("beta.yaml should not exist, err=%v", err)
 	}
 }
 
@@ -131,8 +131,8 @@ func TestRun_SensorAlreadyExists(t *testing.T) {
 	outDir := filepath.Join(root, ".harness", "sensors")
 
 	// Pre-existing target file with stale content.
-	target := filepath.Join(outDir, "gamma.json")
-	if err := os.WriteFile(target, []byte(`{"id":"gamma"}`), 0o644); err != nil {
+	target := filepath.Join(outDir, "gamma.yaml")
+	if err := os.WriteFile(target, []byte(`id: gamma`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	draft := writeDraftWithFixture(t, root, "gamma", true)
@@ -147,7 +147,7 @@ func TestRun_SensorAlreadyExists(t *testing.T) {
 	}
 	// Verify the stale content survived.
 	body, _ := os.ReadFile(target)
-	if !strings.Contains(string(body), `"id":"gamma"`) || strings.Contains(string(body), `"smoke-comp"`) {
+	if !strings.Contains(string(body), `id: gamma`) || strings.Contains(string(body), `smoke-comp`) {
 		t.Fatalf("stale content should be untouched; got %s", body)
 	}
 }

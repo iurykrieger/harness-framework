@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
@@ -21,7 +23,7 @@ import (
 )
 
 // writeInferentialSensor writes an inferential sensor fixture to
-// <root>/sensors/<id>.json and returns the sensor id.
+// <root>/sensors/<id>.yaml and returns the sensor id.
 func writeInferentialSensor(t *testing.T, root, id, command string) string {
 	t.Helper()
 	s := map[string]interface{}{
@@ -64,8 +66,12 @@ func writeInferentialSensor(t *testing.T, root, id, command string) string {
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := json.Marshal(s)
-	if err := os.WriteFile(filepath.Join(sensorsDir, id+".json"), b, 0o644); err != nil {
+	jb, _ := json.Marshal(s)
+	b, err := yaml.JSONToYAML(jb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sensorsDir, id+".yaml"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -179,8 +185,12 @@ func TestRunInferential_RejectsComputational(t *testing.T) {
 			"golden_cases": []interface{}{map[string]interface{}{"fixture": "x", "expected_verdict": "pass", "expected_severity": "info"}},
 		},
 	}
-	b, _ := json.Marshal(s)
-	_ = os.WriteFile(filepath.Join(sensorsDir, "wrong.json"), b, 0o644)
+	jb, _ := json.Marshal(s)
+	b, err := yaml.JSONToYAML(jb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(sensorsDir, "wrong.yaml"), b, 0o644)
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"--schemas-dir", schemasDir, "wrong"}, root, &stdout, &stderr); code != 2 {
 		t.Fatalf("expected 2 (type mismatch), got %d", code)
@@ -192,14 +202,22 @@ func TestRunInferential_HonoursExitCodeMap(t *testing.T) {
 	root := t.TempDir()
 	id := writeInferentialSensor(t, root, "infr-ecmap", `printf 'PASS judgment\n'; exit 7`)
 	// Patch the sensor on disk to add an exit_code_map that maps 7 -> warn/medium.
-	sensorPath := filepath.Join(root, ".harness", "sensors", id+".json")
+	sensorPath := filepath.Join(root, ".harness", "sensors", id+".yaml")
 	b, _ := os.ReadFile(sensorPath)
+	jb, err := yaml.YAMLToJSON(b)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var s map[string]interface{}
-	_ = json.Unmarshal(b, &s)
+	_ = json.Unmarshal(jb, &s)
 	s["execution"].(map[string]interface{})["exit_code_map"] = []interface{}{
 		map[string]interface{}{"exit_code": 7, "verdict": "warn", "severity": "medium"},
 	}
-	nb, _ := json.Marshal(s)
+	njb, _ := json.Marshal(s)
+	nb, err := yaml.JSONToYAML(njb)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = os.WriteFile(sensorPath, nb, 0o644)
 
 	var stdout, stderr bytes.Buffer
@@ -226,10 +244,14 @@ func TestRunInferential_MissingRequiredEnvAborts(t *testing.T) {
 	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	id := writeInferentialSensor(t, root, "infr-env", `printf "should not run\n"; exit 0`)
-	sensorPath := filepath.Join(root, ".harness", "sensors", id+".json")
+	sensorPath := filepath.Join(root, ".harness", "sensors", id+".yaml")
 	b, _ := os.ReadFile(sensorPath)
+	jb, err := yaml.YAMLToJSON(b)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var s map[string]interface{}
-	_ = json.Unmarshal(b, &s)
+	_ = json.Unmarshal(jb, &s)
 	s["requires"] = []interface{}{
 		map[string]interface{}{
 			"kind":        "env",
@@ -237,7 +259,11 @@ func TestRunInferential_MissingRequiredEnvAborts(t *testing.T) {
 			"description": "intentionally unset",
 		},
 	}
-	nb, _ := json.Marshal(s)
+	njb, _ := json.Marshal(s)
+	nb, err := yaml.JSONToYAML(njb)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = os.WriteFile(sensorPath, nb, 0o644)
 
 	prev := sensor.LookupEnvFn
@@ -296,8 +322,12 @@ func TestRun_InferentialWithComputationalDep(t *testing.T) {
 	depJSON["id"] = "setup-x"
 	depExec := depJSON["execution"].(map[string]interface{})
 	depExec["command"] = "true"
-	depBytes, _ := json.MarshalIndent(depJSON, "", "  ")
-	if err := os.WriteFile(filepath.Join(sensorsDir, "setup-x.json"), depBytes, 0o644); err != nil {
+	depJSONBytes, _ := json.Marshal(depJSON)
+	depBytes, err := yaml.JSONToYAML(depJSONBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sensorsDir, "setup-x.yaml"), depBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -310,8 +340,12 @@ func TestRun_InferentialWithComputationalDep(t *testing.T) {
 	infExec := infJSON["execution"].(map[string]interface{})
 	infExec["user_prompt_template"] = "static prompt"
 	infExec["command"] = `echo '{"sensor_id":"inf-with-dep","version":"0.1.0","run_id":"r","started_at":"2026-05-08T00:00:00Z","finished_at":"2026-05-08T00:00:01Z","verdict":"pass","severity":"info","confidence":0.9,"evidence":[],"cost_actual":{"latency_ms":100}}'`
-	infBytes, _ := json.MarshalIndent(infJSON, "", "  ")
-	if err := os.WriteFile(filepath.Join(sensorsDir, "inf-with-dep.json"), infBytes, 0o644); err != nil {
+	infJSONBytes, _ := json.Marshal(infJSON)
+	infBytes, err := yaml.JSONToYAML(infJSONBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sensorsDir, "inf-with-dep.yaml"), infBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -435,8 +469,12 @@ func TestRunInferential_BlockingSensorRejected(t *testing.T) {
 			"calibration_date":     "2026-04-15",
 		},
 	}
-	b, _ := json.Marshal(s)
-	_ = os.WriteFile(filepath.Join(sensorsDir, "block-inf.json"), b, 0o644)
+	jb, _ := json.Marshal(s)
+	b, err := yaml.JSONToYAML(jb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(sensorsDir, "block-inf.yaml"), b, 0o644)
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"--schemas-dir", schemasDir, "block-inf"}, root, &stdout, &stderr)
@@ -495,7 +533,7 @@ func TestRunInferential_AcceptsAbsolutePath(t *testing.T) {
 	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
 	id := writeInferentialSensor(t, root, "infr-abspath", `printf 'PASS judgment\n'`)
-	absPath := filepath.Join(root, ".harness", "sensors", id+".json")
+	absPath := filepath.Join(root, ".harness", "sensors", id+".yaml")
 
 	// Sanity-check that the path is absolute (test would be meaningless otherwise).
 	if !filepath.IsAbs(absPath) {
@@ -549,7 +587,7 @@ func TestRunInferential_BlockingDep_AggregateLast(t *testing.T) {
 
 	// Blocking dep — same shape as lib/orchestrator/live_deps_test.go's
 	// writeBlockingDep, inlined here to avoid cross-package coupling.
-	_ = os.WriteFile(filepath.Join(sensorsDir, "blocking-tick.json"), []byte(`{
+	blockingDepJSON := []byte(`{
 "id": "blocking-tick", "version": "1.0.0",
 "name": "Blocking tick", "description": "blocking tick",
 "determinism": "high", "kind": "setup", "type": "computational",
@@ -563,23 +601,36 @@ func TestRunInferential_BlockingDep_AggregateLast(t *testing.T) {
   "exit_code_map": [{"exit_code":"*","verdict":"pass","severity":"info"}],
   "output_parsing": {"patterns":[{"regex":"^TICK$","verdict":"pass","severity":"info"}]}
 }
-}`), 0o644)
+}`)
+	blockingDepYAML, err := yaml.JSONToYAML(blockingDepJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(sensorsDir, "blocking-tick.yaml"), blockingDepYAML, 0o644)
 
 	// Inferential consumer that depends on the blocking dep. Use the
 	// same JSONL-emitting stub command pattern as TestRunInferential_Pass:
 	// printf a single line whose first token matches a `^PASS` pattern,
 	// then exit 0.
 	id := writeInferentialSensor(t, root, "infr-with-blocking", `printf 'PASS judgment-1\n'`)
-	// Adjust the sensor JSON to add the requires entry. writeInferentialSensor
+	// Adjust the sensor YAML to add the requires entry. writeInferentialSensor
 	// doesn't take deps, so re-read, mutate, re-write.
-	path := filepath.Join(sensorsDir, id+".json")
+	path := filepath.Join(sensorsDir, id+".yaml")
 	b, _ := os.ReadFile(path)
+	jb, err := yaml.YAMLToJSON(b)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var m map[string]interface{}
-	_ = json.Unmarshal(b, &m)
+	_ = json.Unmarshal(jb, &m)
 	m["requires"] = []interface{}{
 		map[string]interface{}{"kind": "sensor", "id": "blocking-tick"},
 	}
-	updated, _ := json.Marshal(m)
+	updatedJSON, _ := json.Marshal(m)
+	updated, err := yaml.JSONToYAML(updatedJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = os.WriteFile(path, updated, 0o644)
 
 	var out, errBuf bytes.Buffer

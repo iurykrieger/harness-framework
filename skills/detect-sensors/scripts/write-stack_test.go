@@ -16,7 +16,7 @@ func TestRun_Happy(t *testing.T) {
 		t.Fatal(err)
 	}
 	repoRoot := repoRootForTest(t)
-	payload := filepath.Join(repoRoot, "lib", "stack", "testdata", "golden-stack.json")
+	payload := filepath.Join(repoRoot, "lib", "stack", "testdata", "golden-stack.yaml")
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{
@@ -27,16 +27,16 @@ func TestRun_Happy(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, stderr.String())
 	}
-	got := filepath.Join(tmp, ".harness", "stack.json")
+	got := filepath.Join(tmp, ".harness", "stack.yaml")
 	if _, err := os.Stat(got); err != nil {
-		t.Fatalf("stack.json not on disk: %v", err)
+		t.Fatalf("stack.yaml not on disk: %v", err)
 	}
 }
 
 func TestRun_SchemaFail(t *testing.T) {
 	tmp := t.TempDir()
 	repoRoot := repoRootForTest(t)
-	payload := filepath.Join(repoRoot, "lib", "stack", "testdata", "invalid-missing-required.json")
+	payload := filepath.Join(repoRoot, "lib", "stack", "testdata", "invalid-missing-required.yaml")
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{
@@ -52,7 +52,7 @@ func TestRun_SchemaFail(t *testing.T) {
 func TestRun_ProducedByOrphan(t *testing.T) {
 	tmp := t.TempDir()
 	repoRoot := repoRootForTest(t)
-	payload := filepath.Join(repoRoot, "lib", "stack", "testdata", "invalid-produced-by-orphan.json")
+	payload := filepath.Join(repoRoot, "lib", "stack", "testdata", "invalid-produced-by-orphan.yaml")
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{
@@ -71,7 +71,7 @@ func TestRun_ProducedByOrphan(t *testing.T) {
 func TestRun_Idempotent(t *testing.T) {
 	tmp := t.TempDir()
 	repoRoot := repoRootForTest(t)
-	payload := filepath.Join(repoRoot, "lib", "stack", "testdata", "golden-stack.json")
+	payload := filepath.Join(repoRoot, "lib", "stack", "testdata", "golden-stack.yaml")
 	args := []string{
 		"--out=" + tmp,
 		"--schemas-dir=" + filepath.Join(repoRoot, "schemas"),
@@ -81,11 +81,11 @@ func TestRun_Idempotent(t *testing.T) {
 	if code := run(args, &sb1, &sb1); code != 0 {
 		t.Fatalf("first: code=%d, %s", code, sb1.String())
 	}
-	first, _ := os.ReadFile(filepath.Join(tmp, ".harness", "stack.json"))
+	first, _ := os.ReadFile(filepath.Join(tmp, ".harness", "stack.yaml"))
 	if code := run(args, &sb2, &sb2); code != 0 {
 		t.Fatalf("second: code=%d, %s", code, sb2.String())
 	}
-	second, _ := os.ReadFile(filepath.Join(tmp, ".harness", "stack.json"))
+	second, _ := os.ReadFile(filepath.Join(tmp, ".harness", "stack.yaml"))
 	if !bytes.Equal(first, second) {
 		t.Fatalf("not idempotent")
 	}

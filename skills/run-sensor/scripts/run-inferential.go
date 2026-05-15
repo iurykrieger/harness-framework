@@ -73,7 +73,7 @@ func main() {
 }
 
 // run is the testable entry point. projectRoot is the directory from which
-// sensor ids are resolved (sensors/<id>.json); pass os.Getwd() for production.
+// sensor ids are resolved (sensors/<id>.yaml); pass os.Getwd() for production.
 func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run-inferential", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -98,7 +98,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 
 	// sensor.Resolve accepts both bare ids and path-shaped inputs. After
 	// resolution we re-derive id and projectRoot from the canonical sensor
-	// location (<projectRoot>/.harness/sensors/<id>.json) so the rest of the
+	// location (<projectRoot>/.harness/sensors/<id>.yaml) so the rest of the
 	// runner — which threads (id, projectRoot) into orchestrator.Resolve,
 	// AttachLiveDep, etc. — works uniformly for both input shapes.
 	arg := rest[0]
@@ -116,7 +116,7 @@ func run(args []string, projectRoot string, stdout, stderr io.Writer) int {
 	}
 
 	var sensorJSON map[string]interface{}
-	if b, rerr := os.ReadFile(sensorAbsPath); rerr != nil {
+	if b, rerr := schema.ReadAsJSON(sensorAbsPath); rerr != nil {
 		fmt.Fprintln(stderr, "error: read:", rerr)
 		return 2
 	} else if jerr := json.Unmarshal(b, &sensorJSON); jerr != nil {

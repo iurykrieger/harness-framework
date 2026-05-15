@@ -18,6 +18,7 @@ import (
 
 	"github.com/iurykrieger/harness-framework/lib/heal"
 	"github.com/iurykrieger/harness-framework/lib/heal/rules"
+	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/transcript"
 )
@@ -127,7 +128,7 @@ func findFailingInvocation(entries []transcript.Entry, cwd string) (scanResult, 
 				}
 				originalRequestedID, _ = sigMap["sensor_id"].(string)
 				sigMap = depMap
-				sensorPath = filepath.Join(filepath.Dir(inv.SensorPath), failedDepID+".json")
+				sensorPath = filepath.Join(filepath.Dir(inv.SensorPath), failedDepID+".yaml")
 			default:
 				continue
 			}
@@ -235,13 +236,13 @@ func firstPositionalArg(parts []string) string {
 
 func resolveSensorTarget(arg, cwd string) string {
 	arg = strings.TrimPrefix(arg, "@")
-	if strings.ContainsAny(arg, "/\\") || strings.HasSuffix(arg, ".json") {
+	if strings.ContainsAny(arg, "/\\") || strings.HasSuffix(arg, ".yaml") || strings.HasSuffix(arg, ".yml") {
 		return arg
 	}
 	if cwd == "" {
 		return arg
 	}
-	return filepath.Join(cwd, ".harness", "sensors", arg+".json")
+	return filepath.Join(cwd, ".harness", "sensors", arg+".yaml")
 }
 
 func anyHealAfter(entries []transcript.Entry) bool {
@@ -301,7 +302,7 @@ func signalFromMap(m map[string]interface{}) heal.Signal {
 }
 
 func loadFailedSensorView(path string) (heal.FailedSensor, error) {
-	body, err := os.ReadFile(path)
+	body, err := schema.ReadAsJSON(path)
 	if err != nil {
 		return heal.FailedSensor{}, err
 	}

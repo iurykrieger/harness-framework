@@ -21,6 +21,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+
+	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -38,7 +40,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	body, err := os.ReadFile(sensorPath)
+	body, err := schema.ReadAsJSON(sensorPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "read sensor:", err)
 		return 2

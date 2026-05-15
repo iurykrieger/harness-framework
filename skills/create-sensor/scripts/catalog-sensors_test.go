@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
 // repoRoot returns the absolute path to the repo root, derived from this
@@ -48,17 +50,27 @@ func withProjectRoot(t *testing.T, mkSensorsDir bool) string {
 }
 
 // copyCanonical writes a copy of the canonical-computational sensor under
-// dstDir with the id field rewritten to newID.
+// dstDir with the id field rewritten to newID. Reads the canonical YAML,
+// converts to JSON for the id rewrite, then re-emits YAML so the
+// catalog (which globs *.yaml) finds it.
 func copyCanonical(t *testing.T, dstDir, newID string) string {
 	t.Helper()
-	src := filepath.Join(repoRoot(t), "lib", "sensor", "testdata", "canonical-computational.json")
+	src := filepath.Join(repoRoot(t), "lib", "sensor", "testdata", "canonical-computational.yaml")
 	body, err := os.ReadFile(src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rewritten := strings.Replace(string(body), `"smoke-comp"`, `"`+newID+`"`, 1)
-	dst := filepath.Join(dstDir, newID+".json")
-	if err := os.WriteFile(dst, []byte(rewritten), 0o644); err != nil {
+	jsonBody, err := yaml.YAMLToJSON(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := strings.Replace(string(jsonBody), `"smoke-comp"`, `"`+newID+`"`, 1)
+	yamlBody, err := yaml.JSONToYAML([]byte(rewritten))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dstDir, newID+".yaml")
+	if err := os.WriteFile(dst, yamlBody, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return dst
@@ -120,7 +132,7 @@ func TestRun_OneSensor(t *testing.T) {
 	if !strings.Contains(lines[0], `"blocking":false`) {
 		t.Fatalf("line missing blocking=false: %q", lines[0])
 	}
-	if !strings.Contains(lines[0], `"path":".harness/sensors/alpha.json"`) {
+	if !strings.Contains(lines[0], `"path":".harness/sensors/alpha.yaml"`) {
 		t.Fatalf("line missing expected path: %q", lines[0])
 	}
 }
@@ -148,10 +160,12 @@ func TestRun_MultipleSensors_SortedByID(t *testing.T) {
 	}
 }
 
-func TestRun_MalformedJSON_EmitsWarn(t *testing.T) {
+func TestRun_MalformedYAML_EmitsWarn(t *testing.T) {
 	dir := withProjectRoot(t, true)
 	copyCanonical(t, dir, "ok-sensor")
-	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("not-json"), 0o644); err != nil {
+	// Top-level YAML array — converts to a JSON array, which fails
+	// json.Unmarshal into map[string]interface{}.
+	if err := os.WriteFile(filepath.Join(dir, "broken.yaml"), []byte("- not-a-map\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
@@ -182,19 +196,27 @@ func TestRun_SchemaInvalid_EmitsWarn(t *testing.T) {
 	copyCanonical(t, dir, "valid")
 
 	// Build a schema-invalid sensor: canonical with "regulation" deleted.
-	src := filepath.Join(repoRoot(t), "lib", "sensor", "testdata", "canonical-computational.json")
+	src := filepath.Join(repoRoot(t), "lib", "sensor", "testdata", "canonical-computational.yaml")
 	body, err := os.ReadFile(src)
 	if err != nil {
 		t.Fatal(err)
 	}
+	jsonBody, err := yaml.YAMLToJSON(body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var m map[string]interface{}
-	if err := json.Unmarshal(body, &m); err != nil {
+	if err := json.Unmarshal(jsonBody, &m); err != nil {
 		t.Fatal(err)
 	}
 	m["id"] = "broken-schema"
 	delete(m, "regulation")
 	bad, _ := json.Marshal(m)
-	if err := os.WriteFile(filepath.Join(dir, "broken-schema.json"), bad, 0o644); err != nil {
+	badYAML, err := yaml.JSONToYAML(bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken-schema.yaml"), badYAML, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -222,13 +244,17 @@ func TestRun_BlockingDerivation(t *testing.T) {
 	dir := withProjectRoot(t, true)
 
 	// Build a schema-valid blocking + stream sensor.
-	src := filepath.Join(repoRoot(t), "lib", "sensor", "testdata", "canonical-computational.json")
+	src := filepath.Join(repoRoot(t), "lib", "sensor", "testdata", "canonical-computational.yaml")
 	body, err := os.ReadFile(src)
 	if err != nil {
 		t.Fatal(err)
 	}
+	jsonBody, err := yaml.YAMLToJSON(body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var m map[string]interface{}
-	if err := json.Unmarshal(body, &m); err != nil {
+	if err := json.Unmarshal(jsonBody, &m); err != nil {
 		t.Fatal(err)
 	}
 	m["id"] = "blocking-one"
@@ -247,7 +273,11 @@ func TestRun_BlockingDerivation(t *testing.T) {
 	}
 	delete(m["cost"].(map[string]interface{})["latency"].(map[string]interface{}), "timeout_ms")
 	out, _ := json.Marshal(m)
-	if err := os.WriteFile(filepath.Join(dir, "blocking-one.json"), out, 0o644); err != nil {
+	outYAML, err := yaml.JSONToYAML(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "blocking-one.yaml"), outYAML, 0o644); err != nil {
 		t.Fatal(err)
 	}
 

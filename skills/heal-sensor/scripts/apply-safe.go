@@ -21,6 +21,7 @@ import (
 	"os"
 
 	"github.com/iurykrieger/harness-framework/lib/heal"
+	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -40,7 +41,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	planBody, err := os.ReadFile(planPath)
+	planBody, err := schema.ReadAsJSON(planPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "read plan:", err)
 		return 2
@@ -50,7 +51,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "parse plan:", err)
 		return 2
 	}
-	sensorBody, err := os.ReadFile(sensorPath)
+	sensorBody, err := schema.ReadAsJSON(sensorPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "read sensor:", err)
 		return 2
