@@ -2,6 +2,13 @@ package orchestrator
 
 import "time"
 
+// depDeathPollInterval is how often runWithDepsImpl polls each live
+// blocking dep for subprocess death while the root sensor runs. Declared
+// here as a var so SetDepDeathPollInterval can shorten it from tests.
+// Production default mirrors healthGatePollInterval so the mid-run
+// observer matches the boot-time gate's responsiveness.
+var depDeathPollInterval = 100 * time.Millisecond
+
 // SetTunables overrides the package-internal timeouts used by the
 // health-gate and stop-blocking-dep paths. Intended ONLY for the
 // orchestratortest helper package and the orchestrator's own _test.go
@@ -31,4 +38,15 @@ func SetTunables(gateTimeout, gatePoll, drainTimeout time.Duration, gracefulMS i
 		watcherDrainTimeout = prevDrain
 		stopGracefulMS = prevGraceful
 	}
+}
+
+// SetDepDeathPollInterval overrides depDeathPollInterval and returns a
+// restore func. Test-only knob (the orchestrator's own _test.go files);
+// production code keeps the default.
+func SetDepDeathPollInterval(d time.Duration) func() {
+	prev := depDeathPollInterval
+	if d > 0 {
+		depDeathPollInterval = d
+	}
+	return func() { depDeathPollInterval = prev }
 }

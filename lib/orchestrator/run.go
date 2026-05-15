@@ -130,12 +130,73 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 	}
 
 	target := pre.Order[len(pre.Order)-1]
-	sig, code := RunOneWithRootCapture(ctx, target, projectRoot, schemasDir, v, root, stdout, stderr)
+
+	// Wrap ctx so a mid-run death of any live blocking dep can cancel
+	// the root sensor's subprocess instead of letting it spin until its
+	// own timeout. Without this, a dep that boots healthy but crashes
+	// while the dependent is wait-looping (issue #49) burns wall-clock
+	// until the dependent's own deadline; the death-watcher closes the
+	// gap by polling each LiveDep's registry entry and cancelling on the
+	// first observed death.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	deathCh := WatchLiveDepsForDeath(runCtx, projectRoot, pre.LiveStack, depDeathPollInterval)
+	var depDeath DepDeath
+	var depDeathSet bool
+	deathDone := make(chan struct{})
+	go func() {
+		defer close(deathDone)
+		select {
+		case d, ok := <-deathCh:
+			if ok {
+				depDeath = d
+				depDeathSet = true
+				cancelRun()
+			}
+		case <-runCtx.Done():
+			// Root finished on its own; drain the channel so the watcher
+			// goroutine inside WatchLiveDepsForDeath can exit cleanly.
+			<-deathCh
+		}
+	}()
+
+	sig, code := RunOneWithRootCapture(runCtx, target, projectRoot, schemasDir, v, root, stdout, stderr)
+	// Stop the watcher before reading depDeath. cancelRun unblocks
+	// WatchLiveDepsForDeath's ctx.Done branch and our local goroutine's
+	// runCtx.Done branch; <-deathDone ensures the goroutine has settled
+	// before we read depDeath* below (no data race).
+	cancelRun()
+	<-deathDone
+
+	if depDeathSet && sig != nil {
+		annotateCancelledByDep(sig, depDeath)
+	}
+
 	detachAll()
 	if sig != nil {
 		_ = json.NewEncoder(stdout).Encode(sig)
 	}
 	return code
+}
+
+// annotateCancelledByDep patches the root sensor's aggregate Signal to
+// reflect that it was cancelled because a live blocking dep died
+// mid-run. Forces verdict=error/severity=high (distinguishing this from
+// a natural fail/timeout) and records cancelled_by/cancellation_reason
+// under metadata so FirstFailedDep, heal-sensor, and reports can surface
+// the cause. terminated_externally is left intact: the orchestrator did
+// cancel the subprocess, but cancelled_by names the specific dep that
+// triggered the cancellation.
+func annotateCancelledByDep(sig map[string]interface{}, death DepDeath) {
+	sig["verdict"] = "error"
+	sig["severity"] = "high"
+	md, ok := sig["metadata"].(map[string]interface{})
+	if !ok || md == nil {
+		md = map[string]interface{}{}
+		sig["metadata"] = md
+	}
+	md["cancelled_by"] = death.DepID
+	md["cancellation_reason"] = death.Reason
 }
 
 // FirstFailedDep returns the Signal of the first dep id (in declaration
