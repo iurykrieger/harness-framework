@@ -14,7 +14,7 @@ func TestResolve_ByID(t *testing.T) {
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(sensorsDir, "watch-logs.json")
+	want := filepath.Join(sensorsDir, "watch-logs.yaml")
 	if err := os.WriteFile(want, []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestResolve_ByPath(t *testing.T) {
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(sensorsDir, "x.json")
+	target := filepath.Join(sensorsDir, "x.yaml")
 	if err := os.WriteFile(target, []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -43,8 +43,8 @@ func TestResolve_ByPath(t *testing.T) {
 		name string
 		arg  string
 	}{
-		{"@-prefix relative", "@sensors/x.json"},
-		{"relative", "sensors/x.json"},
+		{"@-prefix relative", "@sensors/x.yaml"},
+		{"relative", "sensors/x.yaml"},
 		{"absolute", target},
 	}
 	for _, tc := range cases {

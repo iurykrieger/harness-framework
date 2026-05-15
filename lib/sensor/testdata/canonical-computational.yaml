@@ -1,0 +1,35 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 64
+  latency:
+    p50_ms: 10
+    p95_ms: 100
+    timeout_ms: 5000
+description: fixture
+determinism: high
+execution:
+  command: "true"
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: 1
+    severity: high
+    verdict: fail
+id: smoke-comp
+kind: assertion
+name: smoke
+output: single
+phase: on-demand
+regulation: maintainability
+triggers:
+- "on": manual
+type: computational
+verification:
+  golden_cases:
+  - expected_severity: info
+    expected_verdict: pass
+    fixture: x
+version: 0.1.0

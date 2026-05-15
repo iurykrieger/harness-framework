@@ -11,6 +11,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
+	"sigs.k8s.io/yaml"
 )
 
 func newValidator(t *testing.T) *schema.Validator {
@@ -26,7 +27,11 @@ func writeSensorWithID(t *testing.T, dir, newID string) {
 	t.Helper()
 	body, _ := json.Marshal(sensortest.LoadComputational(t).AsMap())
 	rewritten := strings.Replace(string(body), `"smoke-comp"`, `"`+newID+`"`, 1)
-	if err := os.WriteFile(filepath.Join(dir, newID+".json"), []byte(rewritten), 0o644); err != nil {
+	yamlBody, err := yaml.JSONToYAML([]byte(rewritten))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, newID+".yaml"), yamlBody, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -96,10 +101,12 @@ func TestCatalog_MultipleSorted(t *testing.T) {
 	}
 }
 
-func TestCatalog_MalformedJSON_Warns(t *testing.T) {
+func TestCatalog_MalformedYAML_Warns(t *testing.T) {
 	dir := t.TempDir()
 	writeSensorWithID(t, dir, "ok")
-	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("not-json"), 0o644); err != nil {
+	// A scalar string is valid YAML syntactically but cannot decode into
+	// an object map, so the catalog should warn during parse.
+	if err := os.WriteFile(filepath.Join(dir, "broken.yaml"), []byte("not-an-object"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	out, warns, err := sensor.Catalog(dir, newValidator(t))
@@ -109,8 +116,8 @@ func TestCatalog_MalformedJSON_Warns(t *testing.T) {
 	if len(out) != 1 || out[0].ID != "ok" {
 		t.Fatalf("expected one valid 'ok' sensor; got %d", len(out))
 	}
-	if len(warns) != 1 || warns[0].File != "broken.json" {
-		t.Fatalf("expected one warn for broken.json; got %v", warns)
+	if len(warns) != 1 || warns[0].File != "broken.yaml" {
+		t.Fatalf("expected one warn for broken.yaml; got %v", warns)
 	}
 }
 
@@ -121,7 +128,11 @@ func TestCatalog_SchemaInvalid_Warns(t *testing.T) {
 	bad["id"] = "broken-schema"
 	delete(bad, "regulation")
 	body, _ := json.Marshal(bad)
-	if err := os.WriteFile(filepath.Join(dir, "broken-schema.json"), body, 0o644); err != nil {
+	yamlBody, err := yaml.JSONToYAML(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken-schema.yaml"), yamlBody, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	out, warns, err := sensor.Catalog(dir, newValidator(t))
@@ -131,8 +142,8 @@ func TestCatalog_SchemaInvalid_Warns(t *testing.T) {
 	if len(out) != 1 || out[0].ID != "valid" {
 		t.Fatalf("expected only 'valid' to survive; got %d entries", len(out))
 	}
-	if len(warns) != 1 || warns[0].File != "broken-schema.json" {
-		t.Fatalf("expected warn for broken-schema.json; got %v", warns)
+	if len(warns) != 1 || warns[0].File != "broken-schema.yaml" {
+		t.Fatalf("expected warn for broken-schema.yaml; got %v", warns)
 	}
 }
 
@@ -159,7 +170,11 @@ func TestCatalog_BlockingExposedOnExecution(t *testing.T) {
 	}
 	delete(m["cost"].(map[string]interface{})["latency"].(map[string]interface{}), "timeout_ms")
 	body, _ := json.Marshal(m)
-	if err := os.WriteFile(filepath.Join(dir, "blocking-one.json"), body, 0o644); err != nil {
+	yamlBody, err := yaml.JSONToYAML(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "blocking-one.yaml"), yamlBody, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	out, _, err := sensor.Catalog(dir, newValidator(t))
