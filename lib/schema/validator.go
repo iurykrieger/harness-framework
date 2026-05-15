@@ -1,7 +1,7 @@
 // Package schema compiles the harness sensor, signal, stack, and usecase
 // JSON Schemas (Draft 2020-12) and exposes a Validator that checks
 // instances against any of them. Schemas are loaded from a directory
-// containing sensor.json, signal.json, stack.json, and usecase.json;
+// containing sensor.yaml, signal.yaml, stack.yaml, and usecase.yaml;
 // cross-file $ref is resolved at compile time so callers do not need to
 // know about the underlying compiler.
 package schema
@@ -9,7 +9,6 @@ package schema
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -18,10 +17,10 @@ import (
 
 const (
 	schemaBaseURL = "https://harness-framework/schemas/"
-	sensorURL     = schemaBaseURL + "sensor.json"
-	signalURL     = schemaBaseURL + "signal.json"
-	stackURL      = schemaBaseURL + "stack.json"
-	usecaseURL    = schemaBaseURL + "usecase.json"
+	sensorURL     = schemaBaseURL + "sensor.yaml"
+	signalURL     = schemaBaseURL + "signal.yaml"
+	stackURL      = schemaBaseURL + "stack.yaml"
+	usecaseURL    = schemaBaseURL + "usecase.yaml"
 )
 
 // Target identifies which schema an instance is checked against.
@@ -43,24 +42,24 @@ type Validator struct {
 	usecase *jsonschema.Schema
 }
 
-// NewValidator loads sensor.json, signal.json, stack.json, and usecase.json
+// NewValidator loads sensor.yaml, signal.yaml, stack.yaml, and usecase.yaml
 // from schemasDir.
 func NewValidator(schemasDir string) (*Validator, error) {
-	sensorBytes, err := os.ReadFile(filepath.Join(schemasDir, "sensor.json"))
+	sensorBytes, err := ReadAsJSON(filepath.Join(schemasDir, "sensor.yaml"))
 	if err != nil {
-		return nil, fmt.Errorf("read sensor.json: %w", err)
+		return nil, fmt.Errorf("read sensor.yaml: %w", err)
 	}
-	signalBytes, err := os.ReadFile(filepath.Join(schemasDir, "signal.json"))
+	signalBytes, err := ReadAsJSON(filepath.Join(schemasDir, "signal.yaml"))
 	if err != nil {
-		return nil, fmt.Errorf("read signal.json: %w", err)
+		return nil, fmt.Errorf("read signal.yaml: %w", err)
 	}
-	stackBytes, err := os.ReadFile(filepath.Join(schemasDir, "stack.json"))
+	stackBytes, err := ReadAsJSON(filepath.Join(schemasDir, "stack.yaml"))
 	if err != nil {
-		return nil, fmt.Errorf("read stack.json: %w", err)
+		return nil, fmt.Errorf("read stack.yaml: %w", err)
 	}
-	usecaseBytes, err := os.ReadFile(filepath.Join(schemasDir, "usecase.json"))
+	usecaseBytes, err := ReadAsJSON(filepath.Join(schemasDir, "usecase.yaml"))
 	if err != nil {
-		return nil, fmt.Errorf("read usecase.json: %w", err)
+		return nil, fmt.Errorf("read usecase.yaml: %w", err)
 	}
 
 	c := jsonschema.NewCompiler()

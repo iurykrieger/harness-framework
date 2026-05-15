@@ -1,0 +1,323 @@
+$defs:
+  Archetype:
+    enum:
+    - http-api
+    - http-spa
+    - http-ssr
+    - queue-consumer
+    - queue-producer
+    - cli-tool
+    - library
+    - iac
+    - data-pipeline
+    - scheduler
+    - event-driven-service
+    - db-bound-service
+    type: string
+  Component:
+    additionalProperties: false
+    properties:
+      config_summary:
+        description: 'One paragraph describing how this component is configured in
+          the project, in enough detail that the LogShape it produces is unambiguous.
+          Example: ''zap.NewProductionConfig() with EncoderConfig.LevelKey overridden
+          to severity and TimeKey to ts_ms; sampling disabled.'''
+        type: string
+      evidence:
+        description: Where in the source this component is initialized or configured.
+          Multiple entries are fine when configuration is spread across files.
+        items:
+          $ref: '#/$defs/Evidence'
+        minItems: 1
+        type: array
+      name:
+        description: 'Library import path or canonical name. Examples: ''go.uber.org/zap'',
+          ''pino'', ''logback-classic'', ''github.com/go-chi/chi/middleware'', ''@nestjs/common.Logger''.'
+        type: string
+      role:
+        $ref: '#/$defs/Role'
+      version:
+        description: SemVer when extractable from the manifest; free-form when the
+          manifest doesn't pin (e.g. transitive dep, range).
+        type: string
+    required:
+    - role
+    - name
+    - evidence
+    type: object
+  EntryPoint:
+    additionalProperties: false
+    properties:
+      command:
+        type: string
+      evidence:
+        $ref: '#/$defs/Evidence'
+      kind:
+        $ref: '#/$defs/EntryPointKind'
+      method:
+        type: string
+      path:
+        type: string
+      schedule:
+        type: string
+      topic:
+        type: string
+    required:
+    - kind
+    - evidence
+    type: object
+  EntryPointKind:
+    enum:
+    - http-route
+    - queue-subscription
+    - cli-command
+    - scheduled-job
+    - event-handler
+    - grpc-method
+    type: string
+  Evidence:
+    additionalProperties: false
+    description: Pointer back into the project source justifying a component or shape
+      detection. Mirrors the shape of Signal.evidence so audit tooling can treat them
+      uniformly.
+    properties:
+      file:
+        description: Path relative to the project root.
+        type: string
+      line_end:
+        minimum: 1
+        type:
+        - integer
+        - "null"
+      line_start:
+        minimum: 1
+        type:
+        - integer
+        - "null"
+      rationale:
+        description: One sentence on what this evidence proves.
+        type: string
+    required:
+    - file
+    - rationale
+    type: object
+  Field:
+    additionalProperties: false
+    properties:
+      example_values:
+        description: 'Sample values observed or known to be emitted (e.g. [''DEBUG'',''INFO'',''WARN'',''ERROR'']
+          for severity, [''/v1/charges''] for path). Optional but strongly recommended
+          — these are the oracle values the regexes derived from this shape are expected
+          to match, and seed test cases for those patterns. NOTE: ''calibration''
+          is reserved in this codebase for the inferential-sensor sense (cost.tokens,
+          confidence_threshold) — do not conflate.'
+        items:
+          type: string
+        type: array
+      key:
+        description: Literal field key in the log line, e.g. 'level', 'severity',
+          'ts', 'request_id', 'dd.trace_id'. The literal key is what regex patterns
+          search for; meaning is the semantic label.
+        type: string
+      meaning:
+        $ref: '#/$defs/FieldMeaning'
+    required:
+    - key
+    - meaning
+    type: object
+  FieldMeaning:
+    description: Semantic role of the field, decoupled from its literal key. The same
+      meaning may be expressed as 'level', 'severity', or 'lvl' across libraries —
+      meaning=severity collapses them. Use 'other' as the escape hatch for project-specific
+      fields that don't fit the canonical set.
+    enum:
+    - severity
+    - message
+    - timestamp
+    - trace_id
+    - span_id
+    - status_code
+    - latency_ms
+    - method
+    - path
+    - user_id
+    - request_id
+    - service
+    - version
+    - other
+    type: string
+  Format:
+    description: Wire format of stdout lines of this shape. json = single-line JSON
+      object per line; logfmt = key=value k=v pairs per line; plain = unstructured
+      human text; stack-trace = multi-line panic/exception trace (one Signal per trace,
+      not per line); combined-log-format = Apache/Nginx-style positional access log.
+    enum:
+    - json
+    - logfmt
+    - plain
+    - stack-trace
+    - combined-log-format
+    type: string
+  Journey:
+    additionalProperties: false
+    properties:
+      archetype:
+        $ref: '#/$defs/Archetype'
+      entry_points:
+        items:
+          $ref: '#/$defs/EntryPoint'
+        minItems: 1
+        type: array
+      id:
+        pattern: ^[a-z][a-z0-9-]*$
+        type: string
+      name:
+        type: string
+      summary:
+        type: string
+    required:
+    - id
+    - name
+    - summary
+    - archetype
+    - entry_points
+    type: object
+  LogShape:
+    additionalProperties: false
+    properties:
+      fields:
+        description: Structured fields present in this shape. REQUIRED in practice
+          when format=json or format=logfmt — without it no regex can be derived;
+          omitted for format=plain (no keys), format=stack-trace (positional), and
+          format=combined-log-format (positional with implicit semantics).
+        items:
+          $ref: '#/$defs/Field'
+        type: array
+      format:
+        $ref: '#/$defs/Format'
+      id:
+        description: 'Kebab-case slug unique within the stack. Examples: ''zap-prod-json'',
+          ''chi-access-log'', ''panic-stack-trace'', ''pino-default''.'
+        pattern: ^[a-z][a-z0-9-]*$
+        type: string
+      produced_by:
+        description: Names of Components (matching components[].name verbatim) that
+          emit this shape. Multiple entries when the shape is a composition (e.g.
+          middleware framing + structured logger payload).
+        items:
+          type: string
+        minItems: 1
+        type: array
+      sample:
+        description: 'One real example line of this shape, exactly as it would appear
+          on stdout. Used as a golden reference: regex patterns drafted for this shape
+          MUST match the sample. For format=stack-trace, may contain embedded newlines.'
+        type: string
+      severity_values:
+        description: 'When any fields[].meaning=''severity'', the literal values the
+          project''s severity field actually emits. Examples: Zap default => [''DEBUG'',''INFO'',''WARN'',''ERROR'',''DPANIC'',''PANIC'',''FATAL''];
+          Pino numeric => [''10'',''20'',''30'',''40'',''50'',''60'']. Consumers use
+          this to map verdict ranges (e.g. ERROR/FATAL → fail, WARN → warn).'
+        items:
+          type: string
+        type: array
+    required:
+    - id
+    - produced_by
+    - format
+    - sample
+    type: object
+  Role:
+    description: Functional role this component plays. logger and log-encoder are
+      split because the same logger (e.g. Zap) with different encoders (JSON vs console)
+      produces different stdout shapes; the encoder is what determines the structured
+      fields of the emitted lines.
+    enum:
+    - http-server
+    - http-router
+    - http-middleware
+    - logger
+    - log-encoder
+    - tracer
+    - metrics
+    - queue-consumer
+    - queue-producer
+    - db-client
+    - rpc
+    - test-runner
+    type: string
+$id: https://harness-framework/schemas/stack.yaml
+$schema: https://json-schema.org/draft/2020-12/schema
+additionalProperties: false
+description: 'Describes the runtime-observable stack of a single project: languages,
+  components (libraries/frameworks the project actually uses), and the canonical shapes
+  of stdout lines those components emit. Produced by /detect-sensors as LLM-derived
+  judgment from the project''s manifests and initialization code; persisted at <project>/.harness/stack.json.
+  Sensors authored against this project — particularly those with output: stream —
+  derive execution.output_parsing.patterns[] from log_shapes[] rather than guessing.
+  References: Boeckeler, ''Harness Engineering'' (martinfowler.com); Lopopolo, ''Harness
+  engineering: leveraging Codex…'' (openai.com, 2026-02-11).'
+properties:
+  archetypes:
+    description: Closed-enum archetype labels. Multiple values valid for hybrid apps.
+    items:
+      $ref: '#/$defs/Archetype'
+    type: array
+  components:
+    items:
+      $ref: '#/$defs/Component'
+    minItems: 1
+    type: array
+  detected_at:
+    description: ISO-8601 timestamp of when this stack was last generated.
+    format: date-time
+    type: string
+  detected_by:
+    description: Identifier of the producer. For LLM-derived stacks, the model id
+      (e.g. 'anthropic/claude-opus-4-7'). For hand-written stacks, 'manual'.
+    type: string
+  journeys:
+    description: Aggregation layer that UseCases reference via journey_id.
+    items:
+      $ref: '#/$defs/Journey'
+    type: array
+  languages:
+    items:
+      additionalProperties: false
+      properties:
+        name:
+          description: 'Canonical lowercase name. Examples: ''go'', ''typescript'',
+            ''python'', ''java'', ''ruby'', ''rust'', ''kotlin'', ''csharp''.'
+          type: string
+        version:
+          description: Version reported by the project's manifest (e.g. go.mod's 'go
+            1.25', package.json engines.node, pyproject's requires-python).
+          type: string
+      required:
+      - name
+      type: object
+    minItems: 1
+    type: array
+  log_shapes:
+    items:
+      $ref: '#/$defs/LogShape'
+    minItems: 1
+    type: array
+  purpose:
+    description: One-sentence declarative description of what the application does
+      in the world.
+    type: string
+  version:
+    description: SemVer of this stack snapshot. Bump on contract changes (components
+      added/removed, log_shapes restructured, severity_values changed).
+    pattern: ^\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$
+    type: string
+required:
+- version
+- detected_at
+- detected_by
+- languages
+- components
+- log_shapes
+title: Stack
+type: object
