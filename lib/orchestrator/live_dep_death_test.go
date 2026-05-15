@@ -53,7 +53,7 @@ func writeMidRunConsumer(t *testing.T, root, id, depID string, slowSeconds int) 
   "exit_code_map": [{"exit_code":0,"verdict":"pass","severity":"info"},{"exit_code":"*","verdict":"fail","severity":"high"}]
 }
 }`, id, depID, slowSeconds*1000+5000, slowSeconds)
-	if err := os.WriteFile(filepath.Join(dir, id+".json"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

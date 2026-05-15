@@ -1,2 +1,0 @@
-{"id": "fixture-broken", "version": 0.1.0,   // intentional syntax error: bare comment + unquoted version
-  "missing_close_brace": true
