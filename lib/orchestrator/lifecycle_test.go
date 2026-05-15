@@ -581,6 +581,78 @@ func loadSensorForTest(path string) (Sensor, error) {
 	return Sensor{ID: id, Path: path, JSON: j}, nil
 }
 
+// TestRunOne_SingleOutputFailure_PopulatesEvidenceFromStderr verifies
+// that a single-output sensor exiting non-zero with stderr matching a
+// curated heal pattern has at least one evidence[].excerpt carrying
+// that stderr text. Enables the subprocess-failed rule to fire for
+// standalone failing sensors.
+func TestRunOne_SingleOutputFailure_PopulatesEvidenceFromStderr(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".harness", "sensors")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{
+"id": "build-fails",
+"version": "1.0.0",
+"name": "Build fails",
+"description": "Standalone sensor that emits a 'failed to solve' line on stderr and exits 1.",
+"determinism": "high",
+"kind": "assertion",
+"type": "computational",
+"output": "single",
+"regulation": "behaviour",
+"phase": "on-demand",
+"triggers": [{"on": "manual"}],
+"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"cost": {
+  "class": "cheap",
+  "compute": {"cpu":"low","memory_mb":32},
+  "latency": {"p50_ms":10,"p95_ms":50,"timeout_ms":2000}
+},
+"execution": {
+  "command": "echo 'failed to solve: process did not complete successfully: exit code: 1' 1>&2; exit 1",
+  "exit_code_map": [{"exit_code":0,"verdict":"pass","severity":"info"},{"exit_code":"*","verdict":"fail","severity":"high"}]
+}
+}`)
+	if err := os.WriteFile(filepath.Join(dir, "build-fails.json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sensorPath := filepath.Join(dir, "build-fails.json")
+	s, err := loadSensorForTest(sensorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schemasDir := schematest.RepoSchemasDir(t)
+	v, _ := schema.NewValidator(schemasDir)
+	var stdout, stderr bytes.Buffer
+	sig, code := RunOne(context.Background(), s, root, schemasDir, v, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("RunOne exit code = %d, want 0 (aggregate is fail; RunOne itself succeeds)", code)
+	}
+	if got, _ := sig["verdict"].(string); got != "fail" {
+		t.Fatalf("verdict = %q, want fail", got)
+	}
+
+	ev, _ := sig["evidence"].([]interface{})
+	foundFailedToSolve := false
+	for _, raw := range ev {
+		e, _ := raw.(map[string]interface{})
+		if e == nil {
+			continue
+		}
+		excerpt, _ := e["excerpt"].(string)
+		if strings.Contains(excerpt, "failed to solve:") {
+			foundFailedToSolve = true
+			break
+		}
+	}
+	if !foundFailedToSolve {
+		t.Fatalf("evidence does not contain stderr tail; got %+v", ev)
+	}
+}
+
 // The aggregate Signal emitted on stdout is valid JSON and the LAST line.
 func TestRunOne_OutputIsValidJSON(t *testing.T) {
 	schemasDir := schematest.RepoSchemasDir(t)

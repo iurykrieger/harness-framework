@@ -15,17 +15,18 @@ type RunningSensors struct {
 
 // RunningSensorEntry is one live blocking sensor's state.
 type RunningSensorEntry struct {
-	SensorID       string          `json:"sensor_id"`
-	RunID          string          `json:"run_id"`
-	Blocking       bool            `json:"blocking"`
-	PID            int             `json:"pid"`
-	PGID           int             `json:"pgid"`
-	WatcherPID     int             `json:"watcher_pid"`
-	StartedAt      string          `json:"started_at"`
-	Command        string          `json:"command"`
-	LogDir         string          `json:"log_dir"`
-	HeldBy         []HeldByEntry   `json:"held_by"`
-	SubprocessExit *SubprocessExit `json:"subprocess_exit,omitempty"`
+	SensorID          string          `json:"sensor_id"`
+	RunID             string          `json:"run_id"`
+	Blocking          bool            `json:"blocking"`
+	PID               int             `json:"pid"`
+	PGID              int             `json:"pgid"`
+	WatcherPID        int             `json:"watcher_pid"`
+	StartedAt         string          `json:"started_at"`
+	Command           string          `json:"command"`
+	LogDir            string          `json:"log_dir"`
+	GracefulTimeoutMS int             `json:"graceful_timeout_ms,omitempty"`
+	HeldBy            []HeldByEntry   `json:"held_by"`
+	SubprocessExit    *SubprocessExit `json:"subprocess_exit,omitempty"`
 }
 
 // HeldByEntry is a discriminated record: kind=manual carries only

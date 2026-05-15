@@ -5,8 +5,8 @@
 // metadata.heal_hint contract (consumed by rule_heal_hint.go):
 //
 //	heal_hint := <shape> ":" <detail>
-//	shape     := "missing-env" | "binary-not-found" | "env-file-absent" | "service-unavailable" | "missing-context"
-//	detail    := opaque string (var name, binary name, path, service)
+//	shape     := "missing-env" | "binary-not-found" | "env-file-absent" | "service-unavailable" | "missing-context" | "subprocess-failed"
+//	detail    := opaque string (var name, binary name, path, service, stderr excerpt)
 //
 // Adding a shape is a versioned plugin change; deleting one is a
 // breaking change.
@@ -36,6 +36,11 @@ var stderrPatterns = []stderrPattern{
 	{re: regexp.MustCompile(`permission denied:.*\.env\b`), shape: ShapeEnvFileAbsent},
 	{re: regexp.MustCompile(`connection refused.*\b(postgres|mysql|redis|kafka)\b`), shape: ShapeServiceUnavailable},
 	{re: regexp.MustCompile(`\bcommand not found\b`), shape: ShapeBinaryNotFound},
+	// subprocess-failed: build/toolchain failures with no auto-apply remediation.
+	{re: regexp.MustCompile(`failed to solve:`), shape: ShapeSubprocessFailed},
+	{re: regexp.MustCompile(`did not complete successfully: exit code: \d+`), shape: ShapeSubprocessFailed},
+	{re: regexp.MustCompile(`cannot load module .* listed in go\.work`), shape: ShapeSubprocessFailed},
+	{re: regexp.MustCompile(`COPY failed:`), shape: ShapeSubprocessFailed},
 }
 
 // stderrCapturingPatterns holds patterns whose first capture group is
