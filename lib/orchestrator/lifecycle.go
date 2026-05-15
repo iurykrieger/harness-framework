@@ -80,6 +80,7 @@ func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v
 	var aggVerdict, aggSeverity string
 	var commandRun string
 	var elapsedMS int
+	var stderrExcerpt string
 
 	if prepFailed {
 		// Skip command. Build degraded aggregate.
@@ -150,6 +151,7 @@ func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v
 		if hint, ok := buildHealHint(output, aggVerdict, res.StderrExcerpt); ok {
 			aggregateMD["heal_hint"] = hint
 		}
+		stderrExcerpt = res.StderrExcerpt
 	}
 
 	// Phase 3: teardown (best-effort, runs regardless of prepare/command outcome).
@@ -195,7 +197,7 @@ func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v
 		"verdict":     aggVerdict,
 		"severity":    aggSeverity,
 		"confidence":  1.0,
-		"evidence":    buildLifecycleEvidence(prepResults, tdResults),
+		"evidence":    appendStderrEvidence(buildLifecycleEvidence(prepResults, tdResults), output, aggVerdict, stderrExcerpt),
 		"cost_actual": map[string]interface{}{"latency_ms": elapsedMS},
 		"metadata":    aggregateMD,
 	}
@@ -296,6 +298,7 @@ func runOneWithPersistenceImpl(
 	// clears runDir to "" so the post-Run signals.log append is skipped.
 	var runID string
 	var runDir string
+	var stderrExcerpt string
 
 	if prepFailed {
 		aggVerdict, aggSeverity = "error", "high"
@@ -442,6 +445,7 @@ func runOneWithPersistenceImpl(
 			if hint, ok := buildHealHint(output, aggVerdict, res.StderrExcerpt); ok {
 				aggregateMD["heal_hint"] = hint
 			}
+			stderrExcerpt = res.StderrExcerpt
 		}
 	}
 
@@ -484,7 +488,7 @@ func runOneWithPersistenceImpl(
 		"verdict":     aggVerdict,
 		"severity":    aggSeverity,
 		"confidence":  1.0,
-		"evidence":    buildLifecycleEvidence(prepResults, tdResults),
+		"evidence":    appendStderrEvidence(buildLifecycleEvidence(prepResults, tdResults), output, aggVerdict, stderrExcerpt),
 		"cost_actual": map[string]interface{}{"latency_ms": elapsedMS},
 		"metadata":    aggregateMD,
 	}
@@ -634,6 +638,54 @@ func buildLifecycleEvidence(prep, td []interface{}) []interface{} {
 		}
 	}
 	return out
+}
+
+// buildStderrEvidence returns evidence[] entries derived from the
+// subprocess's captured stderr tail. Called only when output=="single"
+// AND the aggregate verdict is fail/error AND stderr is non-empty.
+// Returns the last rawLogTailLines non-empty stderr lines as excerpt
+// entries with a shared rationale; the entries are appended to any
+// lifecycle evidence the aggregate already carries.
+//
+// rawLogTailLines is defined in lib/orchestrator/live_deps.go.
+func buildStderrEvidence(output, verdict, stderrText string) []interface{} {
+	if output != "single" {
+		return nil
+	}
+	if verdict != "fail" && verdict != "error" {
+		return nil
+	}
+	if stderrText == "" {
+		return nil
+	}
+	allLines := strings.Split(stderrText, "\n")
+	collected := []string{}
+	for i := len(allLines) - 1; i >= 0 && len(collected) < rawLogTailLines; i-- {
+		line := strings.TrimRight(allLines[i], "\r")
+		if line == "" {
+			continue
+		}
+		collected = append([]string{line}, collected...)
+	}
+	out := make([]interface{}, 0, len(collected))
+	for _, line := range collected {
+		out = append(out, map[string]interface{}{
+			"rationale": "subprocess stderr/stdout tail",
+			"excerpt":   line,
+		})
+	}
+	return out
+}
+
+// appendStderrEvidence concatenates lifecycle evidence with stderr-tail
+// evidence for single-output failures. Returns the lifecycle evidence
+// unchanged when buildStderrEvidence has nothing to add.
+func appendStderrEvidence(lifecycleEvidence []interface{}, output, verdict, stderrText string) []interface{} {
+	extra := buildStderrEvidence(output, verdict, stderrText)
+	if len(extra) == 0 {
+		return lifecycleEvidence
+	}
+	return append(lifecycleEvidence, extra...)
 }
 
 // buildHealHint synthesises a metadata.heal_hint = "<shape>:<excerpt>"

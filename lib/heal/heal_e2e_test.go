@@ -197,6 +197,40 @@ func signalFromMap(m map[string]interface{}) heal.Signal {
 	return s
 }
 
+// TestClassify_SubprocessFailed_FromCascadeDepAggregate verifies the
+// full pipeline: a Signal of the shape produced by stopBlockingDep
+// (verdict=fail, metadata.heal_hint=subprocess-failed:..., evidence
+// excerpts) is classified by ClassifyWith into a Result whose Rule is
+// "subprocess-failed".
+func TestClassify_SubprocessFailed_FromCascadeDepAggregate(t *testing.T) {
+	exitCode := 1
+	signal := heal.Signal{
+		Verdict:  "fail",
+		Severity: "high",
+		Evidence: []heal.SignalEvidence{
+			{
+				Rationale: `blocking dep "run-project-charge-api" stderr/stdout tail`,
+				Excerpt:   `failed to solve: process "/bin/sh -c go work sync" did not complete successfully: exit code: 1`,
+			},
+		},
+		Metadata: heal.SignalMetadata{
+			ExitCode: &exitCode,
+			HealHint: `subprocess-failed:failed to solve: process "/bin/sh -c go work sync" did not complete successfully: exit code: 1`,
+		},
+	}
+
+	res, ok := heal.ClassifyWith(rules.Registered(), signal, heal.FailedSensor{ID: "run-project-charge-api"})
+	if !ok {
+		t.Fatal("classify returned ok=false")
+	}
+	if res.Rule != "subprocess-failed" {
+		t.Errorf("rule=%q, want subprocess-failed", res.Rule)
+	}
+	if res.Shape != heal.ShapeSubprocessFailed {
+		t.Errorf("shape=%q, want subprocess-failed", res.Shape)
+	}
+}
+
 func mustLoadFailedView(t *testing.T, path string) heal.FailedSensor {
 	t.Helper()
 	body, err := os.ReadFile(path)

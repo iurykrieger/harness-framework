@@ -1,0 +1,61 @@
+{
+  "behavior": {
+    "business_rules": [
+      "start-sensor is for blocking sensors; non-blocking sensors use /run-sensor."
+    ],
+    "summary": "After schema validation, the script reads execution.blocking; if not true, it returns exit code 2 with a failed Signal carrying metadata.kind=failed metadata.cause=not_blocking."
+  },
+  "description": "Validation variation: /start-sensor refuses a sensor whose execution.blocking is missing or false and emits a failed Signal whose remediation directs the agent to /run-sensor. Exit code is 2.",
+  "evidence": [
+    {
+      "file": "skills/start-sensor/scripts/start.go",
+      "line_start": 89,
+      "rationale": "Explicit `if !blocking` check after schema validation."
+    }
+  ],
+  "expected_outcome": {
+    "fixture": {
+      "exit_code": 2,
+      "stdout_last_line": {
+        "metadata": {
+          "cause": "not_blocking",
+          "kind": "failed"
+        },
+        "sensor_id": "go-vet",
+        "verdict": "fail"
+      }
+    },
+    "invariants": [
+      "No registry entry written.",
+      "No watcher started.",
+      "Subprocess never spawned."
+    ],
+    "shape": "JSONL on stdout",
+    "summary": "Stdout has one failed Signal; no subprocess is spawned; exit code is 2."
+  },
+  "id": "start-sensor-rejects-non-blocking",
+  "journey_id": "start-sensor",
+  "name": "Reject /start-sensor when execution.blocking is not true",
+  "regression_priority": "high",
+  "tags": [
+    "validation",
+    "rejection"
+  ],
+  "trigger": {
+    "fixture": {
+      "argv": [
+        "go-vet"
+      ],
+      "sensor_excerpt": {
+        "execution": {
+          "command": "go vet ./..."
+        },
+        "output": "stream",
+        "type": "computational"
+      }
+    },
+    "shape": "CLI invocation",
+    "summary": "Agent invokes /start-sensor on a non-blocking sensor."
+  },
+  "version": "1.0.0"
+}

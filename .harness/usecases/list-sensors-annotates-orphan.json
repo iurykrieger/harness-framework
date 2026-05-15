@@ -1,0 +1,79 @@
+{
+  "behavior": {
+    "business_rules": [
+      "Orphans are reported, not pruned (cleanup is /stop-sensor's responsibility).",
+      "Verdict remains pass even when orphans are present."
+    ],
+    "summary": "For each entry: run kill(pid,0), record pid_alive; run kill(watcher_pid,0), record watcher_alive; for each holder of kind=sensor, look up its pid and annotate pid_alive. State is `running` if subprocess pid_alive else `orphan`."
+  },
+  "description": "Liveness check: for each registry entry, /list-sensors validates pid with kill(pid,0). When the subprocess pid is dead, the entry is annotated with pid_alive=false and state=orphan (rather than `running`). Holders of kind=sensor are also annotated with their own pid_alive flag.",
+  "evidence": [
+    {
+      "file": "skills/list-sensors/scripts/list.go",
+      "rationale": "Annotation pass calls kill(pid,0) per entry and folds the result into state."
+    }
+  ],
+  "expected_outcome": {
+    "fixture": {
+      "exit_code": 0,
+      "stdout_last_line": {
+        "metadata": {
+          "entries": [
+            {
+              "held_by": [
+                {
+                  "kind": "manual"
+                }
+              ],
+              "pid": 99999,
+              "pid_alive": false,
+              "sensor_id": "dev-server",
+              "state": "orphan",
+              "watcher_alive": false,
+              "watcher_pid": 99998
+            }
+          ],
+          "kind": "list"
+        },
+        "verdict": "pass"
+      }
+    },
+    "invariants": [
+      "state is `orphan` iff pid_alive is false.",
+      "Each entry includes both pid and pid_alive."
+    ],
+    "shape": "JSONL on stdout",
+    "summary": "Stdout has one list Signal whose entries include the orphan annotation."
+  },
+  "id": "list-sensors-annotates-orphan",
+  "journey_id": "list-sensors",
+  "name": "Annotate entries whose subprocess pid is dead with state=orphan",
+  "regression_priority": "high",
+  "tags": [
+    "liveness",
+    "orphan",
+    "diagnostic"
+  ],
+  "trigger": {
+    "fixture": {
+      "argv": [],
+      "registry_state": {
+        "dev-server": {
+          "held_by": [
+            {
+              "kind": "manual"
+            }
+          ],
+          "pid": 99999,
+          "watcher_pid": 99998
+        }
+      }
+    },
+    "preconditions": [
+      "kill(99999, 0) returns ESRCH because the process is gone."
+    ],
+    "shape": "CLI invocation",
+    "summary": "Agent invokes /list-sensors when a registry entry's subprocess pid no longer exists in the OS (crashed without cleanup)."
+  },
+  "version": "1.0.0"
+}

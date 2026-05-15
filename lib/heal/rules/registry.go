@@ -19,6 +19,7 @@ func Registered() []heal.Rule {
 	return []heal.Rule{
 		missingEnv{},
 		missingContext{},
+		subprocessFailed{}, // before healHint: claims subprocess-failed shape exclusively
 		healHint{},
 		exitCode127{},
 		prepareTemplateCopy{},
