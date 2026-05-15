@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
-// LoadUseCaseFile reads, parses, and schema-validates a usecase JSON file
+// LoadUseCaseFile reads, parses, and schema-validates a usecase YAML file
 // at path. Returns the decoded map, the resolved absolute path, and an
 // exit code: 0 success, 1 schema validation failure, 2 I/O or parse failure.
 func LoadUseCaseFile(path, schemasDir string, stderr io.Writer) (map[string]interface{}, string, int) {
@@ -27,7 +26,7 @@ func LoadUseCaseFile(path, schemasDir string, stderr io.Writer) (map[string]inte
 	if code != 0 {
 		return nil, "", code
 	}
-	body, err := os.ReadFile(abs)
+	body, err := schema.ReadAsJSON(abs)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: read:", err)
 		return nil, "", 2

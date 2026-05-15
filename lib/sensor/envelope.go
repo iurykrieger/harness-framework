@@ -75,7 +75,7 @@ func NewUUIDv4() string {
 // caller supplies the rationale (free-form explanation) and remediation
 // instructions (imperative text the next agent turn should act on).
 //
-// The returned map already conforms to schemas/signal.json — callers should
+// The returned map already conforms to schemas/signal.yaml — callers should
 // still validate before emitting, in case envelope fields are malformed.
 func BuildErrorSignal(env Envelope, outputMode, rationale, remediation string) map[string]interface{} {
 	finished := NowFn().Format("2006-01-02T15:04:05Z")

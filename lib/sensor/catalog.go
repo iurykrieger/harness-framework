@@ -42,7 +42,7 @@ func Catalog(sensorsDir string, v *schema.Validator) ([]*Sensor, []CatalogWarn, 
 
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
 			continue
 		}
 		names = append(names, e.Name())
@@ -53,7 +53,7 @@ func Catalog(sensorsDir string, v *schema.Validator) ([]*Sensor, []CatalogWarn, 
 	var warns []CatalogWarn
 	for _, name := range names {
 		fpath := filepath.Join(sensorsDir, name)
-		body, err := os.ReadFile(fpath)
+		body, err := schema.ReadAsJSON(fpath)
 		if err != nil {
 			warns = append(warns, CatalogWarn{File: name, Reason: fmt.Sprintf("read %s: %v", fpath, err)})
 			continue

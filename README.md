@@ -30,11 +30,11 @@ Inside any project where you want a harness:
 /stop-sensor <sensor-id>
 ```
 
-All commands resolve sensors as `sensors/<id>.json` under the user's project root.
+All commands resolve sensors as `sensors/<id>.yaml` under the user's project root.
 
 ## Architecture
 
-See [`CLAUDE.md`](./CLAUDE.md) for the full architecture, schema overview, and project rules. The two schemas (`schemas/sensor.json` and `schemas/signal.json`) are the source of truth for sensor definitions and signal output.
+See [`CLAUDE.md`](./CLAUDE.md) for the full architecture, schema overview, and project rules. The two schemas (`schemas/sensor.yaml` and `schemas/signal.yaml`) are the source of truth for sensor definitions and signal output.
 
 ## Invocation contract
 
@@ -47,6 +47,25 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
 ```
 
 The `-C` flag isolates the plugin's Go module from your project's `go.mod`/`go.work`. The env vars preserve the project root for sensor discovery and subprocess cwd. See `CLAUDE.md` for the full explanation.
+
+## Upgrading from a JSON-era version
+
+This plugin moved sensors, use cases, and the stack manifest from JSON to YAML. On upgrade, downstream projects must:
+
+```bash
+rm -f .harness/stack.json
+rm -f .harness/sensors/*.json
+rm -f .harness/usecases/*.json
+```
+
+then re-run:
+
+- `/detect-sensors`
+- `/detect-usecases`
+
+Both commands are idempotent regenerators — they will produce fresh YAML artifacts. No data is migrated; the framework treats `*.json` files in those directories as foreign content.
+
+Runtime state (`.harness/runtime/running_sensors.json`, `.harness/runtime/auto-issues.json`), the streaming protocol (`signals.log`, runner stdout JSONL, hook IO), and the plugin manifest (`.claude-plugin/plugin.json`) remain JSON and require no action.
 
 ## License
 

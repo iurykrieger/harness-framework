@@ -26,7 +26,7 @@ func TestHealE2E_MissingEnvFile_HealAndRetry(t *testing.T) {
 	}
 	root := setupFixtureProject(t)
 	sensorID := "run-needs-env"
-	sensorPath := filepath.Join(root, ".harness", "sensors", sensorID+".json")
+	sensorPath := filepath.Join(root, ".harness", "sensors", sensorID+".yaml")
 	bin := buildRunSensor(t, root)
 
 	// 1) First run: must fail with .env missing.
@@ -98,14 +98,14 @@ func setupFixtureProject(t *testing.T) string {
 		},
 	}
 	body, _ := json.Marshal(s)
-	os.WriteFile(filepath.Join(root, ".harness", "sensors", "run-needs-env.json"), body, 0o644)
+	os.WriteFile(filepath.Join(root, ".harness", "sensors", "run-needs-env.yaml"), body, 0o644)
 	return root
 }
 
 // buildRunSensor compiles the run-computational binary into the
 // fixture project so we can exec it with cmd.Dir = root (where the
 // runner's os.Getwd() must equal the projectRoot for ResolveByID to
-// find .harness/sensors/<id>.json). Returns the absolute path to the binary.
+// find .harness/sensors/<id>.yaml). Returns the absolute path to the binary.
 func buildRunSensor(t *testing.T, root string) string {
 	t.Helper()
 	bin := filepath.Join(root, "run-sensor")
@@ -124,7 +124,7 @@ func runSensor(t *testing.T, root, bin, sensorID string) (string, string) {
 	cmd.Dir = root // projectRoot for ResolveByID; schema discovery walks up to repo root.
 	// Pin HARNESS_REGISTRY_ROOT to the fixture project. Otherwise an outer
 	// harness invocation leaks its own root into the child and the runner
-	// looks for run-needs-env.json in the wrong place.
+	// looks for run-needs-env.yaml in the wrong place.
 	cmd.Env = append(os.Environ(),
 		"HARNESS_FIXTURE_ROOT="+root,
 		"HARNESS_REGISTRY_ROOT="+root,

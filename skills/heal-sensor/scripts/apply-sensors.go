@@ -23,6 +23,7 @@ import (
 	"os"
 
 	"github.com/iurykrieger/harness-framework/lib/heal"
+	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 )
 
@@ -43,7 +44,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	planBody, err := os.ReadFile(planPath)
+	planBody, err := schema.ReadAsJSON(planPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "read plan:", err)
 		return 2

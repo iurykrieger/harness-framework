@@ -2,7 +2,7 @@ package signal
 
 import "encoding/json"
 
-// Signal is the typed view of a signal.json instance. Mirrors the schema
+// Signal is the typed view of a signal.yaml instance. Mirrors the schema
 // shape one-to-one with JSON tags. Optional fields use pointers or
 // omitempty so absence is distinguishable from zero.
 type Signal struct {
@@ -47,7 +47,7 @@ type CostActual struct {
 	Model        *string `json:"model,omitempty"`
 }
 
-// Verdict is the enum from signal.json::$defs/Verdict.
+// Verdict is the enum from signal.yaml::$defs/Verdict.
 type Verdict string
 
 const (
@@ -57,7 +57,7 @@ const (
 	VerdictError Verdict = "error"
 )
 
-// Severity is the enum from signal.json::$defs/Severity.
+// Severity is the enum from signal.yaml::$defs/Severity.
 type Severity string
 
 const (

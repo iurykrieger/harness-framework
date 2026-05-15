@@ -1,0 +1,60 @@
+components:
+- config_summary: zap.NewProductionConfig() with EncoderConfig.LevelKey overridden
+    to severity and TimeKey to ts_ms.
+  evidence:
+  - file: cmd/server/main.go
+    line_end: 50
+    line_start: 42
+    rationale: zap.NewProductionConfig() call site
+  name: go.uber.org/zap
+  role: logger
+  version: 1.27.0
+- config_summary: middleware.Logger registered before all routes.
+  evidence:
+  - file: cmd/server/main.go
+    line_end: 65
+    line_start: 65
+    rationale: r.Use(middleware.Logger)
+  name: github.com/go-chi/chi/middleware
+  role: http-middleware
+  version: 5.0.0
+detected_at: "2026-05-12T10:00:00Z"
+detected_by: manual
+languages:
+- name: go
+  version: "1.25"
+log_shapes:
+- fields:
+  - example_values:
+    - DEBUG
+    - INFO
+    - WARN
+    - ERROR
+    key: severity
+    meaning: severity
+  - key: ts_ms
+    meaning: timestamp
+  - key: msg
+    meaning: message
+  - key: caller
+    meaning: other
+  format: json
+  id: zap-prod-json
+  produced_by:
+  - go.uber.org/zap
+  sample: '{"severity":"INFO","ts_ms":1700000000000,"msg":"server listening","caller":"main.go:80"}'
+  severity_values:
+  - DEBUG
+  - INFO
+  - WARN
+  - ERROR
+  - DPANIC
+  - PANIC
+  - FATAL
+- format: combined-log-format
+  id: chi-access-log
+  produced_by:
+  - github.com/go-chi/chi/middleware
+  sample: 127.0.0.1 - - [12/May/2026:10:00:00 +0000] "GET /health HTTP/1.1" 200 12
+    "-" "curl/8.0"
+version: 0.1.0

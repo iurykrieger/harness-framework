@@ -1,11 +1,11 @@
 ---
 name: create-sensor
-description: Use when the user invokes /create-sensor or asks to create a single sensor that validates a specific acceptance criterion, functional requirement, or use case. Takes a free-text requirement as input, runs an interactive clarification dialogue, composes existing sensors as dependencies, synthesizes fixtures, and persists one new assertion sensor to <project>/.harness/sensors/<id>.json via the schema validator. Distinct from /detect-sensors, which sweeps the whole project; /create-sensor produces exactly one targeted sensor per invocation.
+description: Use when the user invokes /create-sensor or asks to create a single sensor that validates a specific acceptance criterion, functional requirement, or use case. Takes a free-text requirement as input, runs an interactive clarification dialogue, composes existing sensors as dependencies, synthesizes fixtures, and persists one new assertion sensor to <project>/.harness/sensors/<id>.yaml via the schema validator. Distinct from /detect-sensors, which sweeps the whole project; /create-sensor produces exactly one targeted sensor per invocation.
 ---
 
 # create-sensor
 
-Take a single requirement (acceptance criterion, functional requirement, use case) as a free-text prompt and produce one targeted assertion sensor that validates it deterministically. Compose existing sensors as dependencies when relevant. Persist the result to `<project>/.harness/sensors/<id>.json` after schema validation.
+Take a single requirement (acceptance criterion, functional requirement, use case) as a free-text prompt and produce one targeted assertion sensor that validates it deterministically. Compose existing sensors as dependencies when relevant. Persist the result to `<project>/.harness/sensors/<id>.yaml` after schema validation.
 
 This skill produces **exactly one sensor per invocation** and only of kind `assertion`. For project-wide bootstrapping or for `observation` / `setup` sensors, refer the user to `/detect-sensors`.
 
@@ -25,7 +25,7 @@ Block until the user replies.
 
 ### Phase 1: Parse invocation
 
-Read the user-supplied requirement string into a working draft. Do not start drafting JSON yet — Phase 2's catalog data feeds the draft.
+Read the user-supplied requirement string into a working draft. Do not start drafting YAML yet — Phase 2's catalog data feeds the draft.
 
 ### Phase 2: Catalog existing sensors + read stack
 
@@ -39,7 +39,7 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
 
 Each stdout line is either a sensor digest (`{id, kind, type, output, blocking, description, path}`) or a `verdict=warn` Signal envelope describing a malformed entry that was skipped. Surface the warns to the user inline if any appeared so they know to clean up later, then proceed with the valid digests.
 
-If `<projectRoot>/.harness/stack.json` exists, read it as additional context. The stack's `components[]` and `log_shapes[]` are not consumed by assertion sensors directly, but they help reason about which logger / HTTP framework the project uses when the requirement implies log observation as part of the check. When the file is absent or schema-invalid, ignore it.
+If `<projectRoot>/.harness/stack.yaml` exists, read it as additional context. The stack's `components[]` and `log_shapes[]` are not consumed by assertion sensors directly, but they help reason about which logger / HTTP framework the project uses when the requirement implies log observation as part of the check. When the file is absent or schema-invalid, ignore it.
 
 ### Phase 3: Classify
 
@@ -51,7 +51,7 @@ Decide the three discriminators:
 
 ### Phase 4: Draft v0
 
-Produce a first-pass JSON in memory containing:
+Produce a first-pass YAML in memory containing:
 
 - `id` — kebab-case prefixed `assert-`. Derive from the requirement (e.g. `"POST /users/:id returns 200"` → `assert-post-users-id-200`).
 - `version: "0.1.0"`.
@@ -88,7 +88,7 @@ After each user reply, update the in-memory draft and re-evaluate remaining gaps
 
 ### Phase 6: Fixture synthesis
 
-Each `golden_case` needs a real fixture file on disk before `write-sensor.go` will persist the JSON.
+Each `golden_case` needs a real fixture file on disk before `write-sensor.go` will persist the sensor.
 
 For each verdict the sensor declares:
 
@@ -112,7 +112,7 @@ The output is a Signal envelope on stdout. On `verdict=error`, surface the ratio
 
 ### Phase 7: Persist + report
 
-Serialize the draft to a temp file (use `mktemp` or write to `/tmp/create-sensor-draft-<id>.json`), then invoke `write-sensor.go`:
+Serialize the draft to a temp file (use `mktemp` or write to `/tmp/create-sensor-draft-<id>.yaml`), then invoke `write-sensor.go`:
 
 ```bash
 HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
@@ -120,14 +120,14 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   ./skills/create-sensor/scripts \
   --out "${HARNESS_REGISTRY_ROOT}/.harness/sensors" \
   --schemas-dir "${CLAUDE_PLUGIN_ROOT}/schemas" \
-  /tmp/create-sensor-draft-<id>.json
+  /tmp/create-sensor-draft-<id>.yaml
 ```
 
 Outcomes:
 
 - **`verdict=pass`** — sensor persisted. The script emits two stdout lines: the JSON Signal envelope first, then the absolute path of the written sensor file on a separate line. Parse the first line as JSON; the second line is a plain string (useful for confirming the write location). Emit a final summary to the user:
 
-  > Created sensor `<id>` at `.harness/sensors/<id>.json`.
+  > Created sensor `<id>` at `.harness/sensors/<id>.yaml`.
   > Dependencies wired: `<dep-id-1>` (via `requires[kind=sensor]`, blocking), `<dep-id-2>` (via `requires[kind=sensor]`, one-shot).
   > Fixtures: `pass.txt`, `fail-404.txt`.
   > Next: run `/run-sensor <id>` to exercise the sensor.
@@ -138,7 +138,7 @@ Outcomes:
 
 - **`verdict=error, metadata.kind=missing_fixture`** — one of the fixture files Phase 6 was supposed to write is absent. Re-run Phase 6 for the missing file before retrying.
 
-- **`verdict=error, metadata.kind=read_draft`** — the draft temp file was unreadable or contained invalid JSON. Re-serialize the in-memory draft to a fresh temp file and retry Phase 7. If the problem persists, surface the error message to the user.
+- **`verdict=error, metadata.kind=read_draft`** — the draft temp file was unreadable or contained invalid YAML/JSON. Re-serialize the in-memory draft to a fresh temp file and retry Phase 7. If the problem persists, surface the error message to the user.
 
 - **`verdict=error, metadata.kind=persist_failed`** — `ValidateAndPersist` failed for a non-schema reason (disk full, missing parent directory, permission denied on `.harness/sensors/`). Surface the rationale to the user verbatim — this is an environment issue the user must resolve; the skill cannot recover automatically.
 

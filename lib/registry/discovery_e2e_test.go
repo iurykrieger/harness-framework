@@ -130,7 +130,7 @@ func makeScratchDir(t *testing.T) string {
 	return dir
 }
 
-// makeProject scaffolds <parent>/proj/.harness/sensors/<id>.json containing a
+// makeProject scaffolds <parent>/proj/.harness/sensors/<id>.yaml containing a
 // trivial blocking sensor. Returns the project root path.
 func makeProject(t *testing.T, parent, id, command string) string {
 	t.Helper()
@@ -178,7 +178,7 @@ func makeProject(t *testing.T, parent, id, command string) string {
 		},
 	}
 	body, _ := json.MarshalIndent(sensor, "", "  ")
-	if err := os.WriteFile(filepath.Join(proj, ".harness", "sensors", id+".json"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(proj, ".harness", "sensors", id+".yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return proj
@@ -572,7 +572,7 @@ func TestSensorCwd(t *testing.T) {
 			"golden_cases": [{"fixture": "sensors/fixtures/cwd-probe/pass.txt", "expected_verdict": "pass", "expected_severity": "info"}]
 		}
 	}`
-	if err := os.WriteFile(filepath.Join(proj, ".harness", "sensors", "cwd-probe.json"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(proj, ".harness", "sensors", "cwd-probe.yaml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/usecase/usecasetest"
 )
@@ -23,7 +25,7 @@ func writeDraftAt(t *testing.T, dir string, doc []byte) string {
 	return p
 }
 
-func writeStackJSON(t *testing.T, projectRoot string) {
+func writeStackYAML(t *testing.T, projectRoot string) {
 	t.Helper()
 	harness := filepath.Join(projectRoot, ".harness")
 	if err := os.MkdirAll(harness, 0o755); err != nil {
@@ -50,7 +52,11 @@ func writeStackJSON(t *testing.T, projectRoot string) {
     }]
   }]
 }`)
-	if err := os.WriteFile(filepath.Join(harness, "stack.json"), body, 0o644); err != nil {
+	yamlBody, err := yaml.JSONToYAML(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(harness, "stack.yaml"), yamlBody, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -68,7 +74,7 @@ func writeEvidenceFile(t *testing.T, projectRoot string) {
 
 func TestRun_Happy(t *testing.T) {
 	projectRoot := t.TempDir()
-	writeStackJSON(t, projectRoot)
+	writeStackYAML(t, projectRoot)
 	writeEvidenceFile(t, projectRoot)
 	schemasDir := schematest.RepoSchemasDir(t)
 	out := filepath.Join(projectRoot, ".harness", "usecases")
@@ -84,8 +90,8 @@ func TestRun_Happy(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
 	}
-	expected := filepath.Join(out, "create-user-with-email.json")
-	if !strings.Contains(stdout.String(), "create-user-with-email.json") {
+	expected := filepath.Join(out, "create-user-with-email.yaml")
+	if !strings.Contains(stdout.String(), "create-user-with-email.yaml") {
 		t.Fatalf("stdout %q missing expected filename", stdout.String())
 	}
 	if _, err := os.Stat(expected); err != nil {
@@ -94,7 +100,7 @@ func TestRun_Happy(t *testing.T) {
 }
 
 func TestRun_StackMissing(t *testing.T) {
-	projectRoot := t.TempDir() // NO .harness/stack.json
+	projectRoot := t.TempDir() // NO .harness/stack.yaml
 	schemasDir := schematest.RepoSchemasDir(t)
 	out := filepath.Join(projectRoot, ".harness", "usecases")
 	draft := writeDraftAt(t, t.TempDir(), usecasetest.CanonicalBody(t))
@@ -116,7 +122,7 @@ func TestRun_StackMissing(t *testing.T) {
 
 func TestRun_SchemaViolation(t *testing.T) {
 	projectRoot := t.TempDir()
-	writeStackJSON(t, projectRoot)
+	writeStackYAML(t, projectRoot)
 	writeEvidenceFile(t, projectRoot)
 	schemasDir := schematest.RepoSchemasDir(t)
 	out := filepath.Join(projectRoot, ".harness", "usecases")
@@ -143,7 +149,7 @@ func TestRun_SchemaViolation(t *testing.T) {
 
 func TestRun_JourneyOrphan(t *testing.T) {
 	projectRoot := t.TempDir()
-	writeStackJSON(t, projectRoot) // declares journey "user-registration"
+	writeStackYAML(t, projectRoot) // declares journey "user-registration"
 	writeEvidenceFile(t, projectRoot)
 	schemasDir := schematest.RepoSchemasDir(t)
 	out := filepath.Join(projectRoot, ".harness", "usecases")
@@ -171,7 +177,7 @@ func TestRun_JourneyOrphan(t *testing.T) {
 
 func TestRun_EvidenceMissing(t *testing.T) {
 	projectRoot := t.TempDir()
-	writeStackJSON(t, projectRoot)
+	writeStackYAML(t, projectRoot)
 	// do NOT writeEvidenceFile
 	schemasDir := schematest.RepoSchemasDir(t)
 	out := filepath.Join(projectRoot, ".harness", "usecases")

@@ -1,13 +1,13 @@
 //go:build write_sensor
 
-// Command write-sensor reads a draft sensor JSON file and persists it
-// via lib/sensor.ValidateAndPersist (validate against schemas + atomic
-// write). Thin CLI wrapper around the shared primitive.
+// Command write-sensor reads a draft sensor file (JSON or YAML) and
+// persists it via lib/sensor.ValidateAndPersist (validate against schemas
+// + atomic YAML write). Thin CLI wrapper around the shared primitive.
 //
 // Usage:
 //
 //	go run -tags=write_sensor ./skills/detect-sensors/scripts \
-//	  --out=<dir> [--schemas-dir=<dir>] <draft-sensor.json>
+//	  --out=<dir> [--schemas-dir=<dir>] <draft-sensor>
 //
 // Exit codes: 0 sensor written, 1 schema validation failed,
 // 2 usage or I/O error.
@@ -44,12 +44,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: write-sensor --out=DIR [--schemas-dir=DIR] <draft-sensor.json>")
+		fmt.Fprintln(stderr, "usage: write-sensor --out=DIR [--schemas-dir=DIR] <draft-sensor>")
 		return 2
 	}
 	draftPath := fs.Arg(0)
 
-	body, err := os.ReadFile(draftPath)
+	body, err := schema.ReadAsJSON(draftPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: read:", err)
 		return 2

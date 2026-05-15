@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
@@ -38,7 +40,7 @@ func TestRun_ValidComputationalSensor(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
-	expected := filepath.Join(outDir, "smoke-comp.json")
+	expected := filepath.Join(outDir, "smoke-comp.yaml")
 	if !strings.Contains(stdout.String(), expected) {
 		t.Fatalf("stdout=%q want path containing %q", stdout.String(), expected)
 	}
@@ -46,8 +48,12 @@ func TestRun_ValidComputationalSensor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("written file missing: %v", err)
 	}
+	jsonBytes, err := yaml.YAMLToJSON(data)
+	if err != nil {
+		t.Fatalf("written YAML invalid: %v", err)
+	}
 	var s map[string]interface{}
-	if err := json.Unmarshal(data, &s); err != nil {
+	if err := json.Unmarshal(jsonBytes, &s); err != nil {
 		t.Fatalf("written JSON invalid: %v", err)
 	}
 	if s["id"] != "smoke-comp" {
@@ -65,7 +71,7 @@ func TestRun_ValidInferentialSensor(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "smoke-inf.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(outDir, "smoke-inf.yaml")); err != nil {
 		t.Fatalf("inferential sensor not written: %v", err)
 	}
 }
@@ -154,7 +160,7 @@ func TestRun_OutDirCreatedIfMissing(t *testing.T) {
 	if code := run([]string{"--out", out, "--schemas-dir", schemasDir, draft}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
-	if _, err := os.Stat(filepath.Join(out, "smoke-comp.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(out, "smoke-comp.yaml")); err != nil {
 		t.Fatalf("expected nested out dir to be created: %v", err)
 	}
 }
@@ -163,7 +169,7 @@ func TestRun_OverwritesExistingFile(t *testing.T) {
 	schemasDir := schematest.RepoSchemasDir(t)
 	outDir := t.TempDir()
 	// Pre-existing file at the target path with stale content.
-	target := filepath.Join(outDir, "smoke-comp.json")
+	target := filepath.Join(outDir, "smoke-comp.yaml")
 	if err := os.WriteFile(target, []byte("STALE"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -178,6 +184,6 @@ func TestRun_OverwritesExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bytes.Contains(data, []byte("STALE")) {
-		t.Fatal("expected target to be overwritten with canonical sensor JSON")
+		t.Fatal("expected target to be overwritten with canonical sensor YAML")
 	}
 }

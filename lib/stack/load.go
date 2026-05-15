@@ -7,13 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
 )
 
-// LoadStackFile reads, parses, and schema-validates a stack JSON file at
+// LoadStackFile reads, parses, and schema-validates a stack YAML file at
 // path. Returns the decoded map, the resolved absolute path, and an exit
 // code: 0 success, 1 schema validation failure, 2 I/O or parse failure.
 func LoadStackFile(path, schemasDir string, stderr io.Writer) (map[string]interface{}, string, int) {
@@ -30,7 +29,7 @@ func LoadStackFile(path, schemasDir string, stderr io.Writer) (map[string]interf
 	if code != 0 {
 		return nil, "", code
 	}
-	body, err := os.ReadFile(abs)
+	body, err := schema.ReadAsJSON(abs)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: read:", err)
 		return nil, "", 2

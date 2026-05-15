@@ -1,0 +1,72 @@
+behavior:
+  business_rules:
+  - Pattern-matched lines emit one Signal each before the aggregate.
+  - Aggregate verdict is fail because both the exit code map and the stream rank fail.
+  summary: Each matched line is wrapped into an individual Signal (verdict=fail, severity=high)
+    and printed to stdout in order. After the subprocess exits, the runner emits one
+    aggregate Signal whose verdict is the worse of exit_code_map[1] and the highest-rank
+    stream verdict; the aggregate is the LAST JSONL line.
+description: 'Error variation: invoke /run-sensor on a sensor with type=computational
+  + output=stream whose command exits non-zero AND emits one or more lines matching
+  a pattern with verdict=fail. The runner emits one individual Signal per matched
+  line and one final aggregate Signal whose verdict=fail (worst of exit_code_map[exitCode]
+  and stream).'
+evidence:
+- file: skills/run-sensor/scripts/run-computational.go
+  line_start: 55
+  rationale: Computational runner that feeds matched lines as individual Signals plus
+    the aggregate.
+- file: lib/signal/aggregate.go
+  rationale: 'Aggregation: max(exit_code_map[exit], stream).'
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_jsonl:
+    - sensor_id: go-vet-stream
+      severity: high
+      verdict: fail
+    - sensor_id: go-vet-stream
+      severity: high
+      verdict: fail
+    - sensor_id: go-vet-stream
+      severity: high
+      verdict: fail
+  invariants:
+  - Aggregate verdict is fail (worst rank wins).
+  - Aggregate is the last JSONL line on stdout.
+  shape: JSONL on stdout; final line is the aggregate Signal
+  summary: 'Stdout is three JSONL lines: two individual Signals followed by the aggregate.'
+id: run-sensor-computational-stream-fail
+journey_id: run-sensor
+name: Run a computational stream sensor whose stream emits fail-ranked lines
+regression_priority: critical
+tags:
+- error-handling
+- stream
+- computational
+trigger:
+  fixture:
+    argv:
+    - go-vet-stream
+    sensor_excerpt:
+      execution:
+        command: go vet ./...
+        exit_code_map:
+        - exit_code: 1
+          severity: high
+          verdict: fail
+        output_parsing:
+          patterns:
+          - regex: '^(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+): (?P<msg>.+)$'
+            severity: high
+            verdict: fail
+      output: stream
+      type: computational
+    subprocess_exit_code: 1
+    subprocess_stdout:
+    - 'lib/sensor/validate.go:42:9: undefined: foo'
+    - 'lib/signal/builder.go:18:2: missing return statement'
+  shape: CLI invocation
+  summary: Agent invokes run-computational on a sensor whose subprocess emits compiler-diagnostic-shaped
+    lines.
+version: 1.0.0

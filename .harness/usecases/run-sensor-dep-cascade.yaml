@@ -1,0 +1,67 @@
+behavior:
+  business_rules:
+  - Dependents of a failed dep never run.
+  - Each non-runnable dependent emits a cascade Signal with metadata.kind=cascade.
+  - Exit code is 1 (root did not run).
+  summary: DAG resolution discovers B first. After B's aggregate emits with verdict=fail,
+    the orchestrator detects FirstFailedDep, marks A as cascade, and never spawns
+    A's command. The runner emits A's cascade Signal as the LAST JSONL line.
+description: When sensor A declares requires[kind=sensor]=[B] and B's aggregate Signal
+  verdict resolves to fail, A's command is never spawned. Instead, the runner emits
+  a `cascade` Signal for A whose metadata.kind=cascade carries the failing dep id,
+  plus B's actual aggregate earlier in the stream.
+evidence:
+- file: lib/orchestrator/run.go
+  rationale: FirstFailedDep + BuildCascadeSignal short-circuits dependents.
+- file: skills/run-sensor/scripts/run-computational.go
+  rationale: Runner wires orchestrator failure handling to exit code 1 for cascade.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    stdout_jsonl:
+    - sensor_id: b-always-fails
+      severity: high
+      verdict: fail
+    - metadata:
+        failed_dep: b-always-fails
+        kind: cascade
+      sensor_id: a-needs-b
+      verdict: fail
+  invariants:
+  - A's command was never spawned (no `exit 1` from A's process).
+  - A's cascade Signal references B in metadata.failed_dep.
+  - A's signal is the last line.
+  shape: JSONL on stdout
+  summary: 'Stdout is two JSONL lines: B''s aggregate (verdict=fail), then A''s cascade
+    Signal as the last line.'
+id: run-sensor-dep-cascade
+journey_id: run-sensor
+name: Cascade dependents when a dep sensor fails
+regression_priority: high
+tags:
+- error-handling
+- deps
+- cascade
+trigger:
+  fixture:
+    argv:
+    - a-needs-b
+    sensor_a:
+      output: single
+      requires:
+      - id: b-always-fails
+        kind: sensor
+      type: computational
+    sensor_b:
+      execution:
+        command: exit 1
+        exit_code_map:
+        - exit_code: 1
+          severity: high
+          verdict: fail
+      output: single
+      type: computational
+  shape: CLI invocation
+  summary: Agent invokes run-computational on sensor A whose requires[kind=sensor]
+    includes B; B fails.
+version: 1.0.0

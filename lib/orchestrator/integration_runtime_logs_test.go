@@ -75,7 +75,7 @@ func TestRunSensor_ConcurrentRunsCoexist(t *testing.T) {
     }]
   }
 }`
-	if err := os.WriteFile(filepath.Join(sensorsDir, "echo.json"), []byte(sensorJSON), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sensorsDir, "echo.yaml"), []byte(sensorJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -214,10 +214,10 @@ func TestRunWithDepsRoot_DepSignalsPopulated(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "blocking-boom.json"), depBody, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "blocking-boom.yaml"), depBody, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "uses-boom.json"), consumerBody, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "uses-boom.yaml"), consumerBody, 0o644); err != nil {
 		t.Fatal(err)
 	}
 

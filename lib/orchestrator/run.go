@@ -18,7 +18,7 @@ import (
 // failed. The aggregate Signal of the requested sensor is the LAST line
 // on stdout (contract preserved from the prior streaming-sensors design).
 //
-// sensorPath is typically located at <projectRoot>/.harness/sensors/<id>.json.
+// sensorPath is typically located at <projectRoot>/.harness/sensors/<id>.yaml.
 // When an explicit project root is supplied (via RunWithDepsRoot or the
 // explicitProjectRoot parameter of runWithDepsImpl), callers may pass an
 // arbitrary absolute path outside the project tree; the logical sensor id is
@@ -53,7 +53,7 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 		fmt.Fprintln(stderr, "error: abs path:", err)
 		return 2
 	}
-	// Sensor files live at <projectRoot>/.harness/sensors/<id>.json, so the
+	// Sensor files live at <projectRoot>/.harness/sensors/<id>.yaml, so the
 	// project root is three Dir() calls above the abs sensor path.
 	// When the caller supplies an explicit project root (e.g. for out-of-tree
 	// sensor paths), use it instead.
@@ -67,13 +67,13 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 		return code
 	}
 
-	// Derive rootID from the sensor's JSON id field when an explicit project
+	// Derive rootID from the sensor's id field when an explicit project
 	// root is provided (out-of-tree path), so dep resolution uses the logical
 	// id rather than the filename. For in-tree sensors the filename and id are
 	// identical; falling back to the filename preserves existing behaviour.
-	rootID := StripJSONExt(filepath.Base(abs))
+	rootID := StripSensorExt(filepath.Base(abs))
 	if explicitProjectRoot != "" {
-		if b, readErr := os.ReadFile(abs); readErr != nil {
+		if b, readErr := schema.ReadAsJSON(abs); readErr != nil {
 			fmt.Fprintln(stderr, "warn: read sensor for rootID:", readErr)
 		} else {
 			var m map[string]interface{}
@@ -90,7 +90,7 @@ func runWithDepsImpl(ctx context.Context, sensorPath, schemasDir string, root *r
 	// finds the file directly). Fix up the root sensor's ID in the resolved
 	// order and in any cascade Signal so they carry the logical id rather than
 	// the abs path — schema validation and cascade Signals depend on the
-	// logical id matching sensor.json's ^[a-z][a-z0-9-]*$ constraint.
+	// logical id matching sensor.yaml's ^[a-z][a-z0-9-]*$ constraint.
 	if rootID != abs {
 		if len(pre.Order) > 0 && pre.Order[len(pre.Order)-1].ID == abs {
 			pre.Order[len(pre.Order)-1].ID = rootID
@@ -216,11 +216,11 @@ func FirstFailedDep(s Sensor, signals map[string]map[string]interface{}) map[str
 	return nil
 }
 
-// StripJSONExt removes a trailing ".json" extension from a filename. It is
-// the inverse of sensor.Resolve's "<id>.json" filename convention and is
+// StripSensorExt removes a trailing ".yaml" extension from a filename. It is
+// the inverse of sensor.Resolve's "<id>.yaml" filename convention and is
 // exported so runner scripts can derive a sensor id from its on-disk path.
-func StripJSONExt(name string) string {
-	if len(name) > 5 && name[len(name)-5:] == ".json" {
+func StripSensorExt(name string) string {
+	if len(name) > 5 && name[len(name)-5:] == ".yaml" {
 		return name[:len(name)-5]
 	}
 	return name

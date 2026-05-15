@@ -24,7 +24,7 @@ func TestRunOneWithRootCapture_DoesNotEmitAggregate(t *testing.T) {
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.WriteFile(filepath.Join(sensorsDir, "echo.json"), []byte(`{
+	_ = os.WriteFile(filepath.Join(sensorsDir, "echo.yaml"), []byte(`{
 		"id": "echo", "version": "0.0.0", "kind": "observation",
 		"type": "computational", "output": "single",
 		"cost": {"compute": "low", "latency": {"timeout_ms": 5000}},
@@ -39,7 +39,7 @@ func TestRunOneWithRootCapture_DoesNotEmitAggregate(t *testing.T) {
 	rt := registry.NewRoot(proj)
 
 	// Build orchestrator.Sensor directly from the file the test wrote.
-	sensorJSON := mustLoadJSON(t, filepath.Join(sensorsDir, "echo.json"))
+	sensorJSON := mustLoadJSON(t, filepath.Join(sensorsDir, "echo.yaml"))
 	s := orchestrator.Sensor{ID: "echo", JSON: sensorJSON}
 
 	var stdout, stderr bytes.Buffer

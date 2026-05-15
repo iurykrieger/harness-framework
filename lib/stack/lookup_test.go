@@ -15,8 +15,8 @@ func TestLookup_StackPresent(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".harness"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body, _ := os.ReadFile(filepath.Join("testdata", "golden-stack.json"))
-	if err := os.WriteFile(filepath.Join(root, ".harness", "stack.json"), body, 0o644); err != nil {
+	body, _ := os.ReadFile(filepath.Join("testdata", "golden-stack.yaml"))
+	if err := os.WriteFile(filepath.Join(root, ".harness", "stack.yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -28,7 +28,7 @@ func TestLookup_StackPresent(t *testing.T) {
 	if !res.Exists {
 		t.Fatalf("Exists=false, want true")
 	}
-	wantPath := filepath.Join(root, ".harness", "stack.json")
+	wantPath := filepath.Join(root, ".harness", "stack.yaml")
 	if res.Path != wantPath {
 		t.Fatalf("Path = %q, want %q", res.Path, wantPath)
 	}
@@ -50,7 +50,7 @@ func TestLookup_StackAbsent(t *testing.T) {
 	if res.Exists {
 		t.Fatalf("Exists=true, want false")
 	}
-	wantPath := filepath.Join(root, ".harness", "stack.json")
+	wantPath := filepath.Join(root, ".harness", "stack.yaml")
 	if res.Path != wantPath {
 		t.Fatalf("Path = %q, want %q", res.Path, wantPath)
 	}

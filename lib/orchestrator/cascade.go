@@ -44,7 +44,7 @@ func BuildCascadeSignal(skipped Sensor, failedDepSignal map[string]interface{}) 
 		"evidence": []interface{}{
 			map[string]interface{}{
 				"rationale": rationale,
-				"file":      filepath.Join(".harness", "sensors", failedID+".json"),
+				"file":      filepath.Join(".harness", "sensors", failedID+".yaml"),
 			},
 		},
 		"cost_actual": map[string]interface{}{"latency_ms": 0},

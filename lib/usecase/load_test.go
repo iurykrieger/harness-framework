@@ -13,12 +13,12 @@ func TestLoadUseCaseFile(t *testing.T) {
 		wantCode   int
 		wantSubstr string
 	}{
-		{name: "canonical", fixture: "canonical-usecase.json", wantCode: 0},
-		{name: "missing journey_id", fixture: "invalid-missing-journey-id.json", wantCode: 1, wantSubstr: "journey_id"},
-		{name: "empty evidence", fixture: "invalid-empty-evidence.json", wantCode: 1, wantSubstr: "evidence"},
-		{name: "bad id pattern", fixture: "invalid-bad-id-pattern.json", wantCode: 1, wantSubstr: "id"},
-		{name: "bad version", fixture: "invalid-bad-version-format.json", wantCode: 1, wantSubstr: "version"},
-		{name: "missing trigger fixture", fixture: "invalid-missing-trigger-fixture.json", wantCode: 1, wantSubstr: "fixture"},
+		{name: "canonical", fixture: "canonical-usecase.yaml", wantCode: 0},
+		{name: "missing journey_id", fixture: "invalid-missing-journey-id.yaml", wantCode: 1, wantSubstr: "journey_id"},
+		{name: "empty evidence", fixture: "invalid-empty-evidence.yaml", wantCode: 1, wantSubstr: "evidence"},
+		{name: "bad id pattern", fixture: "invalid-bad-id-pattern.yaml", wantCode: 1, wantSubstr: "id"},
+		{name: "bad version", fixture: "invalid-bad-version-format.yaml", wantCode: 1, wantSubstr: "version"},
+		{name: "missing trigger fixture", fixture: "invalid-missing-trigger-fixture.yaml", wantCode: 1, wantSubstr: "fixture"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

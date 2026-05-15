@@ -1,6 +1,6 @@
 package stack
 
-// Stack is the typed view of a stack.json file. Mirrors the schema
+// Stack is the typed view of a stack.yaml file. Mirrors the schema
 // shape one-to-one with JSON tags. Optional fields use pointers or
 // nullable slices so absence is distinguishable from zero.
 type Stack struct {
@@ -51,7 +51,7 @@ type Field struct {
 	ExampleValues []string     `json:"example_values,omitempty"`
 }
 
-// Role is the enum from $defs/Role in stack.json.
+// Role is the enum from $defs/Role in stack.yaml.
 type Role string
 
 const (
@@ -100,7 +100,7 @@ const (
 	MeaningOther      FieldMeaning = "other"
 )
 
-// Archetype is the enum from $defs/Archetype in stack.json.
+// Archetype is the enum from $defs/Archetype in stack.yaml.
 type Archetype string
 
 const (

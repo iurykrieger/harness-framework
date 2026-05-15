@@ -1,0 +1,51 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 64
+  latency:
+    p50_ms: 100
+    p95_ms: 500
+    timeout_ms: 5000
+description: 'Smoke test for the orchestrator: depends on setup-touch-file, runs prepare
+  to verify the sentinel exists, runs the main command (which echoes a known string),
+  then teardown removes the sentinel. Auto-detected via /detect-sensors.'
+determinism: high
+execution:
+  command: echo SMOKE_OK
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+  output_parsing:
+    patterns:
+    - regex: SMOKE_OK
+      severity: info
+      verdict: pass
+  teardown:
+  - command: rm -f /tmp/harness-smoke-sentinel
+    timeout_ms: 1000
+id: run-with-deps-smoke
+kind: observation
+name: 'Smoke: run-project-style sensor with deps and teardown'
+output: stream
+phase: on-demand
+regulation: behaviour
+requires:
+- id: setup-touch-file
+  kind: sensor
+- command: test -f /tmp/harness-smoke-sentinel
+  kind: step
+  timeout_ms: 1000
+triggers:
+- "on": manual
+type: computational
+verification:
+  golden_cases:
+  - expected_severity: info
+    expected_verdict: pass
+    fixture: sensors/fixtures/run-with-deps-smoke/clean.txt
+version: 0.1.1

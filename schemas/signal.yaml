@@ -1,0 +1,160 @@
+$defs:
+  Severity:
+    description: Impact level of the observation. info is the default for verdict=pass.
+    enum:
+    - info
+    - low
+    - medium
+    - high
+    - critical
+    type: string
+  Verdict:
+    description: pass = no issue observed; warn = advisory, non-blocking; fail = the
+      observation found a problem in the system under test; error = the sensor itself
+      could not run (timeout, crash, malformed output). 'fail' and 'error' MUST not
+      be conflated.
+    enum:
+    - pass
+    - warn
+    - fail
+    - error
+    type: string
+$id: https://harness-framework/schemas/signal.yaml
+$schema: https://json-schema.org/draft/2020-12/schema
+additionalProperties: false
+description: 'Standardized output emitted by any sensor in the harness. Cross-sensor
+  uniformity lets the harness route, retry, and chain feedback regardless of the sensor''s
+  underlying execution type (computational or inferential). Reference: Boeckeler,
+  ''Harness Engineering'' (martinfowler.com); Lopopolo, ''Harness engineering: leveraging
+  Codex…'' (openai.com, 2026-02-11).'
+properties:
+  confidence:
+    description: MUST be 1.0 for computational sensors. Calibrated against a labelled
+      fixture set for inferential sensors.
+    maximum: 1
+    minimum: 0
+    type: number
+  cost_actual:
+    additionalProperties: false
+    properties:
+      input_tokens:
+        minimum: 0
+        type:
+        - integer
+        - "null"
+      latency_ms:
+        minimum: 0
+        type: integer
+      model:
+        type:
+        - string
+        - "null"
+      output_tokens:
+        minimum: 0
+        type:
+        - integer
+        - "null"
+    required:
+    - latency_ms
+    type: object
+  evidence:
+    description: Concrete observations supporting the verdict. Empty array allowed
+      for verdict=pass.
+    items:
+      additionalProperties: false
+      properties:
+        excerpt:
+          type: string
+        file:
+          type: string
+        line_end:
+          minimum: 1
+          type:
+          - integer
+          - "null"
+        line_start:
+          minimum: 1
+          type:
+          - integer
+          - "null"
+        rationale:
+          type: string
+      required:
+      - rationale
+      type: object
+    type: array
+  finished_at:
+    format: date-time
+    type: string
+  metadata:
+    description: Sensor-specific free-form data. Not interpreted by the harness.
+    type: object
+  remediation:
+    additionalProperties: false
+    description: LLM-consumable self-correction guidance. The instructions field is
+      the highest-leverage one — write it as imperative prompt-injection for the next
+      agent turn. Optional for verdict=pass; strongly encouraged for warn/fail.
+    properties:
+      instructions:
+        description: Imperative, agent-addressed text. Tell the agent exactly what
+          to change and why.
+        type: string
+      references:
+        items:
+          description: Doc paths or URLs supporting the remediation.
+          type: string
+        type: array
+      suggested_edits:
+        items:
+          additionalProperties: false
+          properties:
+            file:
+              type: string
+            patch:
+              description: Unified diff or full replacement.
+              type: string
+          required:
+          - file
+          - patch
+          type: object
+        type: array
+    type: object
+  run_id:
+    description: Unique identifier of this invocation; runners may use a `<pid>-<short-uuid8>`
+      composite or a plain UUID/ULID.
+    type: string
+  score:
+    description: Optional graded value for sensors that emit a continuous signal (e.g.
+      similarity, risk, anomaly score).
+    maximum: 1
+    minimum: 0
+    type:
+    - number
+    - "null"
+  sensor_id:
+    description: Stable id of the sensor that produced this signal. MUST equal the
+      id field in the sensor's definition (sensor.yaml).
+    type: string
+  severity:
+    $ref: '#/$defs/Severity'
+  started_at:
+    format: date-time
+    type: string
+  verdict:
+    $ref: '#/$defs/Verdict'
+  version:
+    description: SemVer of the sensor at the moment of execution.
+    type: string
+required:
+- sensor_id
+- version
+- run_id
+- started_at
+- finished_at
+- verdict
+- severity
+- confidence
+- evidence
+- cost_actual
+title: Signal
+type: object

@@ -20,7 +20,7 @@ func RepoSchemasDir(t *testing.T) string {
 	// .../lib/schema/schematest/repodir.go -> 3 levels up to repo root.
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", ".."))
 	dir := filepath.Join(repoRoot, "schemas")
-	if _, err := os.Stat(filepath.Join(dir, "sensor.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "sensor.yaml")); err != nil {
 		t.Fatalf("schemas dir not where expected (%s): %v", dir, err)
 	}
 	return dir

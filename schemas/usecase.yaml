@@ -1,0 +1,136 @@
+$defs:
+  Behavior:
+    additionalProperties: false
+    properties:
+      business_rules:
+        items:
+          type: string
+        type: array
+      summary:
+        type: string
+    required:
+    - summary
+    type: object
+  Evidence:
+    additionalProperties: false
+    properties:
+      file:
+        type: string
+      line_end:
+        minimum: 1
+        type:
+        - integer
+        - "null"
+      line_start:
+        minimum: 1
+        type:
+        - integer
+        - "null"
+      rationale:
+        type: string
+    required:
+    - file
+    - rationale
+    type: object
+  ExpectedOutcome:
+    additionalProperties: false
+    properties:
+      fixture:
+        description: Concrete example output.
+      invariants:
+        items:
+          type: string
+        type: array
+      shape:
+        type: string
+      side_effects:
+        items:
+          type: string
+        type: array
+      summary:
+        type: string
+    required:
+    - summary
+    - shape
+    - fixture
+    type: object
+  Trigger:
+    additionalProperties: false
+    properties:
+      fixture:
+        description: Concrete example input. Free shape; depends on the trigger kind.
+      preconditions:
+        items:
+          type: string
+        type: array
+      shape:
+        type: string
+      summary:
+        type: string
+    required:
+    - summary
+    - shape
+    - fixture
+    type: object
+$id: https://harness-framework/schemas/usecase.yaml
+$schema: https://json-schema.org/draft/2020-12/schema
+additionalProperties: false
+description: 'An observable journey variation of the project: one concrete input shape,
+  one expected behavior, one expected outcome. Produced by /detect-usecases; consumed
+  by /create-sensor to synthesize deterministic regression sensors.'
+properties:
+  behavior:
+    $ref: '#/$defs/Behavior'
+  blind_spots:
+    items:
+      type: string
+    type: array
+  description:
+    type: string
+  evidence:
+    items:
+      $ref: '#/$defs/Evidence'
+    minItems: 1
+    type: array
+  expected_outcome:
+    $ref: '#/$defs/ExpectedOutcome'
+  id:
+    pattern: ^[a-z][a-z0-9-]*$
+    type: string
+  journey_id:
+    pattern: ^[a-z][a-z0-9-]*$
+    type: string
+  name:
+    type: string
+  references:
+    items:
+      type: string
+    type: array
+  regression_priority:
+    enum:
+    - critical
+    - high
+    - medium
+    - low
+    type: string
+  tags:
+    items:
+      type: string
+    type: array
+  trigger:
+    $ref: '#/$defs/Trigger'
+  version:
+    pattern: ^\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$
+    type: string
+required:
+- id
+- version
+- name
+- description
+- journey_id
+- trigger
+- behavior
+- expected_outcome
+- evidence
+title: UseCase
+type: object

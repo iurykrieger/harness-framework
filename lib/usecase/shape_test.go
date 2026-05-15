@@ -7,10 +7,12 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
 func TestUseCase_RoundTrip(t *testing.T) {
-	body := readTestdata(t, "canonical-usecase.json")
+	body := readTestdata(t, "canonical-usecase.yaml")
 	var uc UseCase
 	if err := json.Unmarshal(body, &uc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -68,5 +70,9 @@ func readTestdata(t *testing.T, name string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return b
+	jb, err := yaml.YAMLToJSON(b)
+	if err != nil {
+		t.Fatalf("yaml→json: %v", err)
+	}
+	return jb
 }

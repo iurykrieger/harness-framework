@@ -9,13 +9,13 @@ import (
 	"strings"
 )
 
-// idRegex matches the sensor.id shape required by schemas/sensor.json.
+// idRegex matches the sensor.id shape required by schemas/sensor.yaml.
 var idRegex = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // Resolve returns the canonical absolute path for a sensor identified by
-// a bare id ("my-sensor"), a prefixed path ("@.harness/sensors/my.json"),
+// a bare id ("my-sensor"), a prefixed path ("@.harness/sensors/my.yaml"),
 // or a relative/absolute path. When idOrPath matches the id regex, it is
-// resolved as <baseDir>/.harness/sensors/<id>.json; otherwise it is
+// resolved as <baseDir>/.harness/sensors/<id>.yaml; otherwise it is
 // treated as a path (with @ removed, and relative paths resolved against
 // baseDir).
 //
@@ -35,13 +35,13 @@ func Resolve(idOrPath, baseDir string) (string, error) {
 }
 
 // resolveInDir is the internal helper used by the orchestrator: assumes that
-// sensorRoot is already the directory containing <id>.json (does not append
+// sensorRoot is already the directory containing <id>.yaml (does not append
 // ".harness/sensors/" automatically).
 func resolveInDir(id, sensorRoot string) (string, error) {
 	if strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") {
 		return "", fmt.Errorf("invalid sensor id %q (no path separators)", id)
 	}
-	path := filepath.Join(sensorRoot, id+".json")
+	path := filepath.Join(sensorRoot, id+".yaml")
 	if _, err := os.Stat(path); err != nil {
 		return "", fmt.Errorf("sensor %q not found at %s: %w", id, path, err)
 	}
@@ -72,5 +72,5 @@ func resolvePath(arg, baseDir string) (string, error) {
 func looksLikePath(s string) bool {
 	return strings.HasPrefix(s, "@") ||
 		strings.ContainsAny(s, "/\\") ||
-		strings.HasSuffix(s, ".json")
+		strings.HasSuffix(s, ".yaml") || strings.HasSuffix(s, ".yml")
 }

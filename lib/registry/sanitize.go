@@ -136,7 +136,7 @@ func SanitizeAll(rs *RunningSensors) []SanitizeReport {
 // the four registry-touching skills when SanitizeAll returns non-empty
 // reports. The Signal carries DiagnoseMetadata fields plus the
 // migration report list under metadata.reports, and is structured to
-// pass signal.json validation.
+// pass signal.yaml validation.
 //
 // sensorID is the skill name ("list-sensors", "tail-sensor",
 // "stop-sensor", "start-sensor") — same convention as DiscoveryErrorSignal.

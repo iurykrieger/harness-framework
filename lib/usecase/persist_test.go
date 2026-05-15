@@ -49,8 +49,8 @@ func TestValidateAndPersist_Happy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected: %v", err)
 	}
-	if !strings.HasSuffix(path, "create-user-with-email.json") {
-		t.Errorf("path = %q, want suffix create-user-with-email.json", path)
+	if !strings.HasSuffix(path, "create-user-with-email.yaml") {
+		t.Errorf("path = %q, want suffix create-user-with-email.yaml", path)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("file not written: %v", err)
@@ -107,7 +107,7 @@ func TestValidateAndPersist_OverwritesAtomically(t *testing.T) {
 	outDir := t.TempDir()
 	projectRoot := projectRootWithEvidence(t)
 
-	target := filepath.Join(outDir, "create-user-with-email.json")
+	target := filepath.Join(outDir, "create-user-with-email.yaml")
 	if err := os.WriteFile(target, []byte("STALE"), 0o644); err != nil {
 		t.Fatal(err)
 	}

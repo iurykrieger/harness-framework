@@ -1,0 +1,18 @@
+behavior:
+  summary: x
+description: x
+evidence:
+- file: x.go
+  rationale: x
+expected_outcome:
+  fixture: {}
+  shape: x
+  summary: x
+id: x
+journey_id: "y"
+name: x
+trigger:
+  fixture: {}
+  shape: x
+  summary: x
+version: v1

@@ -60,7 +60,7 @@ type AttachResult struct {
 }
 
 // RunWithDepsRoot is the id-resolving variant of RunWithDeps. The
-// requested sensor is identified by id (resolved to <root>/.harness/sensors/<id>.json),
+// requested sensor is identified by id (resolved to <root>/.harness/sensors/<id>.yaml),
 // schemasDir is resolved by the schema package's discovery if empty.
 // All blocking deps along the chain are started/attached before the
 // requested sensor runs and stopped/detached after.
@@ -838,7 +838,7 @@ func buildSimpleSignal(id, verdict, severity, kind, rationale string) map[string
 
 // validateOrFallback validates a signal and falls back to a minimal valid
 // emergency signal on failure. This ensures orchestrator-emitted signals
-// always conform to schemas/signal.json.
+// always conform to schemas/signal.yaml.
 func validateOrFallback(v *schema.Validator, sig map[string]interface{}, id string, stderr io.Writer) map[string]interface{} {
 	if v == nil {
 		return sig

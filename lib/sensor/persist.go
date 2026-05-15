@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"sigs.k8s.io/yaml"
 )
 
 // PersistOpts is the single options struct accepted by ValidateAndPersist.
@@ -17,7 +18,7 @@ import (
 // fixture pre-check. /create-sensor sets RejectIfExists and
 // RequireFixturesOnDisk to get strict authoring semantics.
 type PersistOpts struct {
-	// OutDir is the directory where <id>.json will be written. Required.
+	// OutDir is the directory where <id>.yaml will be written. Required.
 	OutDir string
 
 	// SchemasDir is the schemas/ directory. When empty, the schema library
@@ -26,7 +27,7 @@ type PersistOpts struct {
 
 	// RejectIfExists causes ValidateAndPersist to return a
 	// *SensorAlreadyExistsError instead of overwriting when
-	// <OutDir>/<id>.json already exists on disk.
+	// <OutDir>/<id>.yaml already exists on disk.
 	RejectIfExists bool
 
 	// RequireFixturesOnDisk causes ValidateAndPersist to stat every
@@ -41,7 +42,7 @@ type PersistOpts struct {
 }
 
 // SensorAlreadyExistsError is returned when RejectIfExists is set and the
-// target <id>.json already exists.
+// target <id>.yaml already exists.
 type SensorAlreadyExistsError struct {
 	Path string
 }
@@ -61,8 +62,8 @@ func (e *MissingFixtureError) Error() string {
 	return fmt.Sprintf("fixture %q not found at %s", e.Rel, e.Full)
 }
 
-// ValidateAndPersist is the single entrypoint for writing a sensor JSON
-// to <OutDir>/<id>.json after schema validation. Behavior is governed by
+// ValidateAndPersist is the single entrypoint for writing a sensor file
+// to <OutDir>/<id>.yaml after schema validation. Behavior is governed by
 // opts; see PersistOpts. Used by every skill that authors sensors
 // (/detect-sensors, /create-sensor, /heal-sensor).
 //
@@ -98,7 +99,7 @@ func ValidateAndPersist(sensorJSON []byte, opts PersistOpts) (string, error) {
 	// validation so the caller gets a structural rejection without paying
 	// the cost of a full schema parse when the answer is going to be no.
 	if opts.RejectIfExists && id != "" {
-		target := filepath.Join(opts.OutDir, id+".json")
+		target := filepath.Join(opts.OutDir, id+".yaml")
 		if _, err := os.Stat(target); err == nil {
 			abs, _ := filepath.Abs(target)
 			return "", &SensorAlreadyExistsError{Path: abs}
@@ -133,7 +134,7 @@ func ValidateAndPersist(sensorJSON []byte, opts PersistOpts) (string, error) {
 	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}
-	target := filepath.Join(opts.OutDir, id+".json")
+	target := filepath.Join(opts.OutDir, id+".yaml")
 	if err := writeCanonical(target, sensorMap); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
@@ -171,19 +172,29 @@ func checkFixturesOnDisk(sensorMap map[string]interface{}, projectRoot string) e
 }
 
 func writeCanonical(path string, sensor map[string]interface{}) error {
+	jsonBytes, err := json.Marshal(sensor)
+	if err != nil {
+		return fmt.Errorf("marshal JSON: %w", err)
+	}
+	yamlBytes, err := yaml.JSONToYAML(jsonBytes)
+	if err != nil {
+		return fmt.Errorf("convert to YAML: %w", err)
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".persist-*")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
-	enc := json.NewEncoder(tmp)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(sensor); err != nil {
+	if _, err := tmp.Write(yamlBytes); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
 		os.Remove(tmpPath)
 		return err
 	}

@@ -1,0 +1,46 @@
+behavior:
+  business_rules:
+  - /list-sensors warns rather than errors — empty list is a soft default.
+  - Diagnostic metadata is always present so the agent can see where lookup landed.
+  summary: After registry.Lookup resolves the project root, the script attempts to
+    read running_sensors.json. If absent, it emits a warn Signal carrying metadata.registry_path
+    metadata.registry_source metadata.registry_exists=false metadata.entries=[].
+description: 'Discovery variation: /list-sensors with no running_sensors.json file
+  on disk emits a warn Signal whose metadata.registry_exists=false; this typically
+  indicates a wrong cwd or that no /start-sensor has ever run in this project.'
+evidence:
+- file: skills/list-sensors/scripts/list.go
+  rationale: Registry-absent branch emits the warn Signal.
+- file: lib/registry/root.go
+  rationale: Lookup walks HARNESS_REGISTRY_ROOT → walk-up for .harness/.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_last_line:
+      metadata:
+        entries: []
+        kind: list
+        registry_exists: false
+        registry_path: /abs/project/.harness/runtime/running_sensors.json
+        registry_source: walk_up
+      verdict: warn
+  invariants:
+  - metadata.registry_exists is false.
+  - metadata.registry_source is `env` or `walk_up`.
+  - Verdict is warn.
+  shape: JSONL on stdout
+  summary: Stdout has one warn Signal with diagnostic metadata fields.
+id: list-sensors-file-absent-warn
+journey_id: list-sensors
+name: Warn when registry file is absent (wrong cwd or never-started)
+regression_priority: medium
+tags:
+- discovery
+- warn
+trigger:
+  fixture:
+    argv: []
+    registry_path_on_disk: false
+  shape: CLI invocation
+  summary: Agent invokes /list-sensors from a project root that has no .harness/runtime/running_sensors.json.
+version: 1.0.0

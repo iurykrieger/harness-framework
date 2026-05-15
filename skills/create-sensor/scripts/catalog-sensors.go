@@ -74,7 +74,7 @@ func digest(s *sensor.Sensor) map[string]interface{} {
 		"output":      s.Output,
 		"blocking":    s.Execution.Blocking,
 		"description": s.Description,
-		"path":        path.Join(".harness", "sensors", s.ID+".json"),
+		"path":        path.Join(".harness", "sensors", s.ID+".yaml"),
 	}
 }
 

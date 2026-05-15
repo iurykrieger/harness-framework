@@ -14,8 +14,8 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
-// writeSensorWithDeps writes a sensor JSON file to dir/.harness/sensors/<id>.json,
-// matching the <projectRoot>/.harness/sensors/<id>.json layout that RunDeps expects.
+// writeSensorWithDeps writes a sensor YAML file to dir/.harness/sensors/<id>.yaml,
+// matching the <projectRoot>/.harness/sensors/<id>.yaml layout that RunDeps expects.
 func writeSensorWithDeps(t *testing.T, projectRoot, id string, depsOn []string, command string) {
 	t.Helper()
 	sensorsDir := filepath.Join(projectRoot, ".harness", "sensors")
@@ -34,7 +34,7 @@ func writeSensorWithDeps(t *testing.T, projectRoot, id string, depsOn []string, 
 	exec := s["execution"].(map[string]interface{})
 	exec["command"] = command
 	b, _ := json.MarshalIndent(s, "", "  ")
-	if err := os.WriteFile(filepath.Join(sensorsDir, id+".json"), b, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sensorsDir, id+".yaml"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -46,7 +46,7 @@ func TestRunWithDeps_ChainPasses(t *testing.T) {
 	writeSensorWithDeps(t, root, "use-a", []string{"setup-a"}, "true")
 
 	var out, errBuf bytes.Buffer
-	code := RunWithDeps(context.Background(), filepath.Join(root, ".harness", "sensors", "use-a.json"), schemasDir, &out, &errBuf)
+	code := RunWithDeps(context.Background(), filepath.Join(root, ".harness", "sensors", "use-a.yaml"), schemasDir, &out, &errBuf)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
 	}
@@ -68,7 +68,7 @@ func TestRunWithDeps_CascadesOnDepFail(t *testing.T) {
 	writeSensorWithDeps(t, root, "use-it", []string{"setup-fail"}, "true")
 
 	var out, errBuf bytes.Buffer
-	code := RunWithDeps(context.Background(), filepath.Join(root, ".harness", "sensors", "use-it.json"), schemasDir, &out, &errBuf)
+	code := RunWithDeps(context.Background(), filepath.Join(root, ".harness", "sensors", "use-it.yaml"), schemasDir, &out, &errBuf)
 	// Cascade on a dep failure now returns exit 1 (dep ran but root was skipped).
 	if code != 1 {
 		t.Fatalf("exit=%d stderr=%s; want 1 (cascade)", code, errBuf.String())
@@ -99,7 +99,7 @@ func TestRunWithDeps_CycleAborts(t *testing.T) {
 	writeSensorWithDeps(t, root, "b", []string{"a"}, "true")
 
 	var out, errBuf bytes.Buffer
-	code := RunWithDeps(context.Background(), filepath.Join(root, ".harness", "sensors", "a.json"), schemasDir, &out, &errBuf)
+	code := RunWithDeps(context.Background(), filepath.Join(root, ".harness", "sensors", "a.yaml"), schemasDir, &out, &errBuf)
 	if code != 1 {
 		t.Fatalf("expected exit=1 for cycle, got %d", code)
 	}
@@ -132,13 +132,13 @@ func TestRunWithDepsRoot_CascadeSkip_DoesNotTouchRegistryOrDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Dep fails (exit 1).
-	_ = os.WriteFile(filepath.Join(sensorsDir, "dep.json"), []byte(`{
+	_ = os.WriteFile(filepath.Join(sensorsDir, "dep.yaml"), []byte(`{
       "id": "dep", "version": "0.0.0", "kind": "observation",
       "type": "computational", "output": "single",
       "cost": {"compute": "low"},
       "execution": {"command": "exit 1", "exit_code_map": [{"exit_code": 1, "verdict": "fail", "severity": "high"}]}
     }`), 0o644)
-	_ = os.WriteFile(filepath.Join(sensorsDir, "target.json"), []byte(`{
+	_ = os.WriteFile(filepath.Join(sensorsDir, "target.yaml"), []byte(`{
       "id": "target", "version": "0.0.0", "kind": "observation",
       "type": "computational", "output": "single",
       "cost": {"compute": "low"},

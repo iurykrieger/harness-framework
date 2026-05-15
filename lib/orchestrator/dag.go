@@ -9,9 +9,9 @@ package orchestrator
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 
+	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 )
 
@@ -49,7 +49,7 @@ func loadRecursive(id, projectRoot string, sensors map[string]Sensor, deps map[s
 	if err != nil {
 		return err
 	}
-	b, err := os.ReadFile(path)
+	b, err := schema.ReadAsJSON(path)
 	if err != nil {
 		return fmt.Errorf("read sensor %q: %w", id, err)
 	}

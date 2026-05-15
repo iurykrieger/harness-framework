@@ -1,0 +1,37 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 32
+  latency:
+    p50_ms: 50
+    p95_ms: 200
+    timeout_ms: 5000
+description: Idempotent setup that creates /tmp/harness-smoke-sentinel; downstream
+  sensors verify it exists. Auto-detected via /detect-sensors as a smoke fixture for
+  the dependency runner.
+determinism: high
+execution:
+  command: touch /tmp/harness-smoke-sentinel
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+id: setup-touch-file
+kind: setup
+name: 'Setup: touch sentinel file'
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": agent-request
+type: computational
+verification:
+  golden_cases:
+  - expected_severity: info
+    expected_verdict: pass
+    fixture: sensors/fixtures/setup-touch-file/clean.txt
+version: 0.1.0

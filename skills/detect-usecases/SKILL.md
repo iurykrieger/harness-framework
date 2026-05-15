@@ -1,11 +1,11 @@
 ---
 name: detect-usecases
-description: Use when the user invokes /detect-usecases or asks to scan a project for its use cases and persist them under .harness/usecases/. Reads .harness/stack.json (errors out if absent — /detect-sensors must run first), augments it with purpose/archetypes/journeys when those fields are missing, then enumerates variations per journey from validation schemas, code branches, pre-condition states, conditionally-emitted events, and the project's tests/OpenAPI as oracle. Drafts one UseCase JSON per variation and persists each via skills/detect-usecases/scripts/write-usecase.go.
+description: Use when the user invokes /detect-usecases or asks to scan a project for its use cases and persist them under .harness/usecases/. Reads .harness/stack.yaml (errors out if absent — /detect-sensors must run first), augments it with purpose/archetypes/journeys when those fields are missing, then enumerates variations per journey from validation schemas, code branches, pre-condition states, conditionally-emitted events, and the project's tests/OpenAPI as oracle. Drafts one UseCase YAML per variation and persists each via skills/detect-usecases/scripts/write-usecase.go.
 ---
 
 # detect-usecases
 
-Scan a project, identify the journeys that compose its purpose, enumerate the variations within each journey, and persist one descriptive `UseCase` per variation as JSON under `<project>/.harness/usecases/`. Each `UseCase` carries trigger/behavior/expected_outcome as narrative prose plus a concrete fixture; a future `/create-sensor` skill reads the persisted UseCases and synthesizes deterministic regression sensors.
+Scan a project, identify the journeys that compose its purpose, enumerate the variations within each journey, and persist one descriptive `UseCase` per variation as YAML under `<project>/.harness/usecases/`. Each `UseCase` carries trigger/behavior/expected_outcome as narrative prose plus a concrete fixture; a future `/create-sensor` skill reads the persisted UseCases and synthesizes deterministic regression sensors.
 
 ## Invocation
 
@@ -23,15 +23,15 @@ Optional flags:
 
 ### Phase 0 — Stack precheck
 
-Read `<project>/.harness/stack.json`.
+Read `<project>/.harness/stack.yaml`.
 
-- File absent → abort with `verdict=error`, `metadata.kind=stack_missing`. Remediation: *"Run /detect-sensors first to produce .harness/stack.json"*.
+- File absent → abort with `verdict=error`, `metadata.kind=stack_missing`. Remediation: *"Run /detect-sensors first to produce .harness/stack.yaml"*.
 - File present, no `purpose`/`archetypes`/`journeys` → continue to Phase 0.5.
 - File present and all three fields populated → continue to Phase 1.
 
 ### Phase 0.5 — Stack augmentation (when needed)
 
-Infer the three top-level fields and persist the augmented `stack.json` via the existing `stack.ValidateAndPersist` primitive.
+Infer the three top-level fields and persist the augmented `stack.yaml` via the existing `stack.ValidateAndPersist` primitive.
 
 1. **Purpose** — triangulate `languages` + `components` + top-level docs (`README.md`, `CLAUDE.md`, `AGENTS.md`). One declarative sentence.
 2. **Archetypes** — derive from component roles:
@@ -82,10 +82,10 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   --out=<project>/.harness/usecases \
   --project-root=<project> \
   --schemas-dir=<plugin>/schemas \
-  /tmp/<draft-name>.json
+  /tmp/<draft-name>.yaml
 ```
 
-The script reads `<project>/.harness/stack.json`, validates the draft against `schemas/usecase.json`, cross-checks `journey_id` against `stack.journeys[].id`, verifies every `evidence[].file` exists, then writes canonical JSON to `<out>/<id>.json` atomically.
+The script reads `<project>/.harness/stack.yaml`, validates the draft against `schemas/usecase.yaml`, cross-checks `journey_id` against `stack.journeys[].id`, verifies every `evidence[].file` exists, then writes canonical YAML to `<out>/<id>.yaml` atomically.
 
 Exit codes:
 - `0` — written.
@@ -100,11 +100,11 @@ Surface a grouped list per journey:
 Generated 14 use cases at /repo/.harness/usecases/:
 
 journey: user-registration (5 use cases)
-  - create-user-with-email.json                 — critical · happy-path
-  - create-user-duplicate-email-conflict.json   — high · error-handling
-  - create-user-invalid-email-format.json       — medium · validation
-  - create-user-missing-password.json           — medium · validation
-  - create-user-with-disposable-email.json      — low · edge-case
+  - create-user-with-email.yaml                 — critical · happy-path
+  - create-user-duplicate-email-conflict.yaml   — high · error-handling
+  - create-user-invalid-email-format.yaml       — medium · validation
+  - create-user-missing-password.yaml           — medium · validation
+  - create-user-with-disposable-email.yaml      — low · edge-case
 
 journey: user-login (4 use cases)
   - ...
@@ -122,7 +122,7 @@ The skill never refuses to produce UseCases for lack of tests or docs. When the 
 
 ## Safety notes
 
-- The script never executes the implementation code. It only validates JSON and writes files.
-- Existing files at `<out>/<id>.json` are overwritten atomically by `os.Create` + `os.Rename`. Commit `.harness/usecases/` before re-running so diffs are reviewable.
+- The script never executes the implementation code. It only validates the draft and writes files.
+- Existing files at `<out>/<id>.yaml` are overwritten atomically by `os.Create` + `os.Rename`. Commit `.harness/usecases/` before re-running so diffs are reviewable.
 - Drafts staged in `/tmp/` are the user's to clean up; the script does not touch them.
 - Schemas are resolved by walking up from cwd; invoke from inside the harness-framework checkout (or pass `--schemas-dir=<plugin>/schemas`) so the validator sees the right contract.

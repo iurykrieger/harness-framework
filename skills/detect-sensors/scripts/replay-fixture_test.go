@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
@@ -23,23 +25,27 @@ func uniqueSensorID(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
 
-// writeProjectSensor materializes a computational sensor JSON at the
-// canonical <root>/.harness/sensors/<id>.json location and returns its
+// writeProjectSensor materializes a computational sensor YAML at the
+// canonical <root>/.harness/sensors/<id>.yaml location and returns its
 // absolute path. The orchestrator persists runtime under
 // <root>/.harness/runtime/<id>/<run-id>/ when invoked against this path.
 func writeProjectSensor(t *testing.T, root, id string) string {
 	t.Helper()
 	s := sensortest.LoadComputational(t).AsMap()
 	s["id"] = id
-	body, err := json.Marshal(s)
+	jsonBody, err := json.Marshal(s)
 	if err != nil {
 		t.Fatalf("marshal sensor: %v", err)
+	}
+	body, err := yaml.JSONToYAML(jsonBody)
+	if err != nil {
+		t.Fatalf("convert sensor to YAML: %v", err)
 	}
 	dir := filepath.Join(root, ".harness", "sensors")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir sensors: %v", err)
 	}
-	path := filepath.Join(dir, id+".json")
+	path := filepath.Join(dir, id+".yaml")
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatalf("write sensor: %v", err)
 	}
