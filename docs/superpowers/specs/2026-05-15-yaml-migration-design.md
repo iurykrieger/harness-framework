@@ -196,7 +196,7 @@ The rewrite is mechanical; the substance of each skill is unaffected.
 
 Existing sensors use patterns like `^FAIL\s+(.+)$`, `(?i)error:`, `^\[\d{4}-\d{2}-\d{2}T[\d:.Z+-]+\]`, and similar. `sigs.k8s.io/yaml.Marshal` (and `yaml.JSONToYAML` upstream) quotes scalars containing colons, leading whitespace, special tokens, or characters that would otherwise be misinterpreted by the YAML parser, falling back to literal block scalars only when necessary. The risk is a corner case where a regex round-trips through marshal → unmarshal with a semantic difference (e.g. a trailing newline introduced by block-scalar style, or whitespace collapsed by folded-scalar style).
 
-**Mitigation**: `lib/sensor/persist_test.go` gains a table-driven test covering every regex pattern currently used in the in-repo sensors plus a representative sample of edge cases — patterns containing `:`, `#`, `&`, `*`, `!`, `|`, `>`, leading/trailing whitespace, embedded newlines, and Unicode. Each table row asserts that `Unmarshal(Marshal(p)) == p` byte-for-byte. The test acts as a regression net for the library upgrade.
+**Mitigation**: `lib/sensor/persist_test.go` gains a table-driven test covering every regex pattern currently used in the in-repo sensors plus a representative sample of edge cases — patterns containing `:`, `#`, `&`, `*`, `!`, `|`, `>`, leading/trailing whitespace, embedded newlines, and Unicode. Each table row asserts the **full production round-trip path** `yaml.YAMLToJSON(yaml.JSONToYAML(jsonInput)) == jsonInput` byte-for-byte (this is what `Persist` followed by `Load` exercises in real use), not just an in-memory Go `Marshal`/`Unmarshal` pair. The test acts as a regression net for the library upgrade.
 
 ### Schema `$ref` resolution
 
@@ -241,6 +241,7 @@ Some IDE plugins and CI lint configs target `*.json` for schema-aware autocomple
   - `LoadFromFile` accepts a YAML file and produces the same struct as the JSON era did (parametric: same test cases, same expected structs, different input encoding).
   - `Persist` writes YAML that the loader round-trips losslessly.
   - `Persist` emits canonical form: alphabetized keys, no trailing whitespace, terminating newline.
+  - `Persist` emits canonical YAML regardless of draft input style — feeding the writer the same logical sensor as (a) inline JSON, (b) flow-style YAML, and (c) block-style YAML must produce three byte-identical files on disk.
   - `Persist` is atomic: a mid-write interruption (simulated by erroring inside the `Rename` step) leaves the original file intact.
   - Glob-based listing helpers find `*.yaml` and ignore `*.json` left over in the directory (deterministic upgrade behavior).
 
@@ -298,7 +299,13 @@ Each milestone is a potential PR boundary. The ordering keeps the test suite pas
 6. **Update skill writers**: `write-sensor.go`, `write-stack.go`, `write-usecase.go` change their output filename suffix and rely on `lib.Persist` for the format. Update their `_test.go`.
 7. **Update `/heal-sensor`** persist paths if they bypass `lib.Persist` for any reason (they should not, but verify).
 8. **Documentation**: `CLAUDE.md` rewrites; SKILL.md code fences switched; `README.md` gains the "Upgrading" section.
-9. **Repo `.harness/`**: re-run `/detect-sensors` and `/detect-usecases` on this repo so the committed `.harness/` reflects YAML artifacts. Commit the result.
+9. **Repo `.harness/`**: clean the JSON-era artifacts and regenerate as YAML.
+   ```
+   rm -f .harness/stack.json
+   rm -f .harness/sensors/*.json
+   rm -f .harness/usecases/*.json
+   ```
+   Then re-run `/detect-sensors` and `/detect-usecases` on this repo so the committed `.harness/` reflects YAML artifacts. Commit the result.
 
 Milestones 1 and 2 can land together; 3, 4, and 5 are independent and can be parallel PRs if convenient (each touches its own `lib/` package and its own testdata). 6 depends on 3–5. 7 is a verification step. 8 lands with the user-visible changes (any of 3–6 is the natural moment). 9 is the final commit.
 
