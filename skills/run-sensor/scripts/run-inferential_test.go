@@ -121,6 +121,60 @@ func TestRunInferential_Pass(t *testing.T) {
 	}
 }
 
+// TestRunInferential_InjectsHarnessPromptIntoEnv verifies that the runner
+// renders execution.user_prompt_template against --slot bindings and
+// exposes the result to the subprocess as the HARNESS_PROMPT env var.
+// The sensor's command echoes $HARNESS_PROMPT on a PASS line; the
+// pattern-matched individual's metadata.line should carry the rendered
+// prompt body. This is the load-bearing contract for inferential
+// sensors invoking an LLM CLI: the subprocess needs the prompt without
+// the runner having to inline it into the command string.
+func TestRunInferential_InjectsHarnessPromptIntoEnv(t *testing.T) {
+	schemasDir := schematest.RepoSchemasDir(t)
+	root := t.TempDir()
+	// writeInferentialSensor's default template is "Compare {{a}} to {{b}}.";
+	// with a=foo() and b=bar() the rendered prompt is "Compare foo() to bar().".
+	// The command echoes the env var on a PASS-prefixed line, which the
+	// declared pattern (^PASS) captures into metadata.line.
+	id := writeInferentialSensor(t, root, "infr-prompt-env",
+		`printf 'PASS prompt=%s\n' "$HARNESS_PROMPT"`)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"--schemas-dir", schemasDir,
+		"--slot", "a=foo()",
+		"--slot", "b=bar()",
+		id,
+	}, root, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	lines := parseJSONL(t, stdout.String())
+	if len(lines) < 2 {
+		t.Fatalf("expected >=1 individual + aggregate, got %d:\n%s", len(lines), stdout.String())
+	}
+	// The first matched individual's metadata.line should contain the
+	// rendered prompt. The aggregate (last line) is also inspected to
+	// confirm a PASS verdict crossed with exit_code=0 stays pass.
+	wantPrompt := "Compare foo() to bar()."
+	found := false
+	for _, sig := range lines[:len(lines)-1] {
+		md, _ := sig["metadata"].(map[string]interface{})
+		line, _ := md["line"].(string)
+		if strings.Contains(line, wantPrompt) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("HARNESS_PROMPT was not injected into subprocess env;\nexpected an individual metadata.line containing %q\nstdout:\n%s",
+			wantPrompt, stdout.String())
+	}
+	agg := lines[len(lines)-1]
+	if agg["verdict"] != "pass" {
+		t.Fatalf("aggregate verdict=%v, want pass", agg["verdict"])
+	}
+}
+
 func TestRunInferential_CalibrationDowngrade(t *testing.T) {
 	schemasDir := schematest.RepoSchemasDir(t)
 	root := t.TempDir()
