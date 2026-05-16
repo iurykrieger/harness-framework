@@ -33,6 +33,11 @@ type Sensor struct {
 	// never leaks it back into YAML. The engine threads it into
 	// step.ExecContext.Fixtures.
 	Fixtures map[string]string `json:"-"`
+
+	// Warnings carries non-fatal advisory diagnostics produced by
+	// cross-field validation (lib/sensor/validate.go). Runtime-only;
+	// absent from the on-disk schema and never serialized.
+	Warnings []string `json:"-"`
 }
 
 type Cost struct {
