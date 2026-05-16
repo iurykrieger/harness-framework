@@ -63,6 +63,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		"documents":     readDocuments(root),
 		"templates":     listTemplates(root),
 	}
+	// When the aggregate signal carries metadata.steps[], localize the
+	// failure to the last step whose verdict is fail or error. Fail-fast
+	// guarantees there is at most one such entry. Surface it as
+	// failing_step so prompt rendering can scope edits to that step.
+	// Aggregates from legacy command:-shape sensors omit metadata.steps[]
+	// and this block is a no-op.
+	if step := failingStep(signalBody); step != nil {
+		out["failing_step"] = step
+	}
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(out); err != nil {
@@ -114,4 +123,28 @@ func truncate(s string, n int) string {
 		return s[:n]
 	}
 	return s
+}
+
+// failingStep returns the entry of metadata.steps[] that decided the
+// aggregate verdict — the last step whose verdict is "fail" or "error".
+// Fail-fast guarantees at most one such entry. Returns nil when the
+// signal omits metadata.steps[] (legacy command:-shape aggregates) or
+// when no step verdict is fail/error.
+func failingStep(signalBody []byte) map[string]interface{} {
+	var sig struct {
+		Metadata struct {
+			Steps []map[string]interface{} `json:"steps"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(signalBody, &sig); err != nil {
+		return nil
+	}
+	steps := sig.Metadata.Steps
+	for i := len(steps) - 1; i >= 0; i-- {
+		v, _ := steps[i]["verdict"].(string)
+		if v == "fail" || v == "error" {
+			return steps[i]
+		}
+	}
+	return nil
 }

@@ -65,3 +65,125 @@ func TestDiagnose_SignalUnreadable(t *testing.T) {
 		t.Fatalf("expected 2, got %d", code)
 	}
 }
+
+// TestDiagnose_FailingStepFromMetadataSteps verifies that when the
+// aggregate signal carries metadata.steps[], the diagnostic output
+// surfaces a failing_step entry pointing at the last fail/error step.
+// Fail-fast guarantees the LAST entry is the one that decided the
+// verdict.
+func TestDiagnose_FailingStepFromMetadataSteps(t *testing.T) {
+	dir := t.TempDir()
+	signal := writeFile(t, dir, "signal.json", `{
+		"sensor_id":"x",
+		"verdict":"fail",
+		"metadata":{
+			"kind":"aggregate",
+			"steps":[
+				{"id":"create","type":"http","verdict":"pass"},
+				{"id":"gate","type":"assert","verdict":"fail","stderr_excerpt":"value missing"}
+			]
+		}
+	}`)
+	sensor := writeFile(t, dir, "sensor.json", `{"id":"x"}`)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--signal", signal, "--sensor", sensor, "--root", dir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("stdout not JSON: %v", err)
+	}
+	fs, ok := out["failing_step"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected failing_step in output; got %v", out)
+	}
+	if fs["id"] != "gate" {
+		t.Errorf("failing_step.id = %v (want gate)", fs["id"])
+	}
+	if fs["verdict"] != "fail" {
+		t.Errorf("failing_step.verdict = %v (want fail)", fs["verdict"])
+	}
+	if fs["type"] != "assert" {
+		t.Errorf("failing_step.type = %v (want assert)", fs["type"])
+	}
+}
+
+// TestDiagnose_FailingStepPicksLastFailOrError ensures the LAST
+// fail/error entry wins when multiple are present (defensive — in
+// practice fail-fast stops at the first).
+func TestDiagnose_FailingStepPicksLastFailOrError(t *testing.T) {
+	dir := t.TempDir()
+	signal := writeFile(t, dir, "signal.json", `{
+		"sensor_id":"x",
+		"verdict":"error",
+		"metadata":{
+			"kind":"aggregate",
+			"steps":[
+				{"id":"a","type":"shell","verdict":"fail"},
+				{"id":"b","type":"shell","verdict":"error"}
+			]
+		}
+	}`)
+	sensor := writeFile(t, dir, "sensor.json", `{"id":"x"}`)
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--signal", signal, "--sensor", sensor, "--root", dir}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	var out map[string]interface{}
+	_ = json.Unmarshal(stdout.Bytes(), &out)
+	fs, _ := out["failing_step"].(map[string]interface{})
+	if fs == nil || fs["id"] != "b" {
+		t.Errorf("expected failing_step.id=b, got %v", fs)
+	}
+}
+
+// TestDiagnose_NoFailingStepWhenLegacyShape verifies that a
+// command:-shape aggregate (no metadata.steps[]) produces no
+// failing_step entry — legacy behavior unchanged.
+func TestDiagnose_NoFailingStepWhenLegacyShape(t *testing.T) {
+	dir := t.TempDir()
+	signal := writeFile(t, dir, "signal.json", `{"sensor_id":"x","verdict":"fail","metadata":{"kind":"aggregate"}}`)
+	sensor := writeFile(t, dir, "sensor.json", `{"id":"x"}`)
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--signal", signal, "--sensor", sensor, "--root", dir}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	var out map[string]interface{}
+	_ = json.Unmarshal(stdout.Bytes(), &out)
+	if _, ok := out["failing_step"]; ok {
+		t.Errorf("legacy-shape signal should not produce failing_step; got %v", out["failing_step"])
+	}
+}
+
+// TestDiagnose_NoFailingStepWhenAllPass verifies that when every step
+// passes (or warns), no failing_step is emitted — only fail/error
+// entries qualify.
+func TestDiagnose_NoFailingStepWhenAllPass(t *testing.T) {
+	dir := t.TempDir()
+	signal := writeFile(t, dir, "signal.json", `{
+		"sensor_id":"x",
+		"verdict":"warn",
+		"metadata":{
+			"kind":"aggregate",
+			"steps":[
+				{"id":"a","type":"shell","verdict":"pass"},
+				{"id":"b","type":"shell","verdict":"warn"}
+			]
+		}
+	}`)
+	sensor := writeFile(t, dir, "sensor.json", `{"id":"x"}`)
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--signal", signal, "--sensor", sensor, "--root", dir}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	var out map[string]interface{}
+	_ = json.Unmarshal(stdout.Bytes(), &out)
+	if _, ok := out["failing_step"]; ok {
+		t.Errorf("warn-only signal should not produce failing_step; got %v", out["failing_step"])
+	}
+}
