@@ -42,6 +42,7 @@ func Run(ctx context.Context, s *sensor.Sensor, subrun step.SubrunFunc, env map[
 		Fixtures: s.Fixtures,
 		Env:      env,
 		Steps:    map[string]*step.StepResult{},
+		Cwd:      s.Cwd,
 	}
 	var out []map[string]interface{}
 	perStepDetails := []map[string]interface{}{}
@@ -55,11 +56,19 @@ func Run(ctx context.Context, s *sensor.Sensor, subrun step.SubrunFunc, env map[
 		res := instance.Execute(ctx, ec)
 		ec.Steps[cfg.ID] = res
 		out = append(out, res.Signals...)
-		perStepDetails = append(perStepDetails, map[string]interface{}{
+		detail := map[string]interface{}{
 			"id":      cfg.ID,
 			"type":    cfg.Type,
 			"verdict": string(res.Verdict),
-		})
+		}
+		// Surface captured stderr for shell steps so consumers (the
+		// orchestrator's wrapper aggregate) can derive heal_hint and
+		// stderr-tail evidence the same way the legacy single-command
+		// pipeline did. Other step types do not produce stderr.
+		if res.Stderr != "" {
+			detail["stderr_excerpt"] = res.Stderr
+		}
+		perStepDetails = append(perStepDetails, detail)
 		runningVerdict = worst(runningVerdict, res.Verdict)
 		if res.Verdict == signal.VerdictFail || res.Verdict == signal.VerdictError {
 			break

@@ -97,6 +97,7 @@ func (s *Step) Execute(ctx context.Context, ec *step.ExecContext) *step.StepResu
 		Stdout:   &jsonlSink,
 		Stderr:   &errSink,
 		RunDir:   runDir,
+		Dir:      ec.Cwd,
 	}
 	handle, err := subprocess.Start(ctx, cfg)
 	if err != nil {
@@ -108,6 +109,7 @@ func (s *Step) Execute(ctx context.Context, ec *step.ExecContext) *step.StepResu
 	if raw, rerr := os.ReadFile(filepath.Join(runDir, "raw.log")); rerr == nil {
 		res.Stdout = string(raw)
 	}
+	res.Stderr = sr.StderrExcerpt
 	res.Signals = sr.Individuals
 
 	// Map exit code to verdict, then fold the worst pattern verdict.

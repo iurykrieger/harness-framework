@@ -39,11 +39,11 @@ func Load(path string, v *schema.Validator) (*Sensor, error) {
 	if err := json.Unmarshal(body, &s); err != nil {
 		return nil, fmt.Errorf("decode %s: %w", path, err)
 	}
-	normalizeCommandShortcut(&s)
+	NormalizeCommandShortcut(&s)
 	return &s, nil
 }
 
-// normalizeCommandShortcut promotes the legacy execution.command field
+// NormalizeCommandShortcut promotes the legacy execution.command field
 // into a single-element execution.steps[] in memory. This is a pure
 // in-memory convenience for the engine; the on-disk YAML is untouched.
 //
@@ -52,7 +52,11 @@ func Load(path string, v *schema.Validator) (*Sensor, error) {
 // per-entry severity) into a map[string]Verdict by dropping severity and
 // stringifying the exit code; downstream consumers that need severity
 // must consult Execution.ExitCodeMap directly.
-func normalizeCommandShortcut(s *Sensor) {
+//
+// Callers that build a *Sensor without going through Load (e.g. tests
+// that synthesize a Sensor by JSON round-trip in lib/orchestrator's
+// exec bridge) must call this to apply the same shape normalization.
+func NormalizeCommandShortcut(s *Sensor) {
 	if s.Execution.Command == "" || len(s.Execution.Steps) > 0 {
 		return
 	}

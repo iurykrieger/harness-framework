@@ -24,10 +24,13 @@ import (
 // Fixtures maps fixture names to absolute paths on disk. Env is the sealed
 // environment snapshot (no live os.Environ access). Steps holds the result
 // of every previously executed step in the current run, keyed by step ID.
+// Cwd is the working directory subprocess-spawning steps should inherit;
+// when empty the spawned process inherits the orchestrator's own cwd.
 type ExecContext struct {
 	Fixtures map[string]string
 	Env      map[string]string
 	Steps    map[string]*StepResult
+	Cwd      string
 }
 
 // StepResult is the outcome of a single Step.Execute call.
@@ -37,14 +40,16 @@ type ExecContext struct {
 // internal precondition (rendering, fixture resolution, output extraction)
 // failed before the step produced observable behavior. Outputs is the
 // declared step.outputs (post-extraction). Stdout is the verbatim stdout for
-// step types that produce it (shell). Response is populated only by the
-// http step. Signals is the list of individual signals produced by parse:
+// step types that produce it (shell); Stderr is the captured stderr tail
+// (subprocess-bounded excerpt). Response is populated only by the http
+// step. Signals is the list of individual signals produced by parse:
 // patterns during streaming.
 type StepResult struct {
 	Verdict  signal.Verdict
 	Status   string
 	Outputs  map[string]string
 	Stdout   string
+	Stderr   string
 	Response *HttpResponse
 	Signals  []map[string]interface{}
 	Err      error

@@ -34,6 +34,13 @@ type Sensor struct {
 	// step.ExecContext.Fixtures.
 	Fixtures map[string]string `json:"-"`
 
+	// Cwd is the working directory subprocess-spawning steps inherit for
+	// this sensor run. Populated by the caller (orchestrator / runner)
+	// from the resolved project root; absent from the on-disk schema and
+	// therefore tagged `json:"-"`. The engine threads it into
+	// step.ExecContext.Cwd.
+	Cwd string `json:"-"`
+
 	// Warnings carries non-fatal advisory diagnostics produced by
 	// cross-field validation (lib/sensor/validate.go). Runtime-only;
 	// absent from the on-disk schema and never serialized.

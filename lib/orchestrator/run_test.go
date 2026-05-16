@@ -125,6 +125,87 @@ func decode(t *testing.T, s string) map[string]interface{} {
 	return m
 }
 
+// TestRunWithDeps_StepsShapeAggregate exercises a sensor authored with
+// the typed-execution shape (execution.steps[]) rather than the legacy
+// command shortcut. The engine is invoked end-to-end; the orchestrator's
+// wrapped aggregate must carry metadata.kind="aggregate" plus
+// metadata.steps[] (one entry per executed step with id/type/verdict)
+// so /heal-sensor can attribute failures to specific steps.
+func TestRunWithDeps_StepsShapeAggregate(t *testing.T) {
+	schemasDir := schematest.RepoSchemasDir(t)
+	root := t.TempDir()
+	sensorsDir := filepath.Join(root, ".harness", "sensors")
+	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{
+      "id": "two-step",
+      "version": "0.0.0",
+      "name": "two step",
+      "description": "fixture exercising the typed steps[] shape",
+      "kind": "observation",
+      "type": "computational",
+      "regulation": "maintainability",
+      "phase": "on-demand",
+      "determinism": "high",
+      "output": "single",
+      "triggers": [{"on": "manual"}],
+      "cost": {
+        "class": "cheap",
+        "compute": {"cpu": "low", "memory_mb": 32},
+        "latency": {"p50_ms": 10, "p95_ms": 50, "timeout_ms": 5000}
+      },
+      "execution": {
+        "steps": [
+          {"id": "first", "type": "shell", "run": "echo first"},
+          {"id": "second", "type": "shell", "run": "echo second"}
+        ]
+      },
+      "verification": {
+        "golden_cases": [
+          {"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}
+        ]
+      }
+    }`)
+	if err := os.WriteFile(filepath.Join(sensorsDir, "two-step.yaml"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errBuf bytes.Buffer
+	code := RunWithDeps(context.Background(), filepath.Join(sensorsDir, "two-step.yaml"), schemasDir, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errBuf.String())
+	}
+
+	lines := splitJSONL(out.String())
+	if len(lines) == 0 {
+		t.Fatalf("no signals emitted; stderr=%s", errBuf.String())
+	}
+	agg := decode(t, lines[len(lines)-1])
+	if agg["verdict"] != "pass" {
+		t.Fatalf("aggregate verdict=%v, want pass; stderr=%s", agg["verdict"], errBuf.String())
+	}
+	md, _ := agg["metadata"].(map[string]interface{})
+	if md["kind"] != "aggregate" {
+		t.Errorf("metadata.kind=%v, want aggregate", md["kind"])
+	}
+	steps, _ := md["steps"].([]interface{})
+	if len(steps) != 2 {
+		t.Fatalf("metadata.steps length=%d, want 2; metadata=%+v", len(steps), md)
+	}
+	first, _ := steps[0].(map[string]interface{})
+	second, _ := steps[1].(map[string]interface{})
+	if first["id"] != "first" || second["id"] != "second" {
+		t.Errorf("step ids = %v / %v", first["id"], second["id"])
+	}
+	if first["type"] != "shell" || second["type"] != "shell" {
+		t.Errorf("step types = %v / %v", first["type"], second["type"])
+	}
+	if first["verdict"] != "pass" || second["verdict"] != "pass" {
+		t.Errorf("step verdicts = %v / %v", first["verdict"], second["verdict"])
+	}
+}
+
 func TestRunWithDepsRoot_CascadeSkip_DoesNotTouchRegistryOrDir(t *testing.T) {
 	proj := t.TempDir()
 	sensorsDir := filepath.Join(proj, ".harness", "sensors")
