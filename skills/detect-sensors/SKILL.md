@@ -386,20 +386,20 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   ./skills/run-sensor/scripts @.harness/sensors/<id>.yaml | tail -n 1 \
   | jq -c '{verdict, severity, counts: .metadata.counts, individuals: (.evidence|length)}'
 
-# 2) Replay each fail/warn fixture to prove the unhappy paths.
-#    The Go script preserves sensor.id and routes the run through the
-#    orchestrator with the project's real registry root, so each replay
-#    lands at .harness/runtime/<sensor-id>/<run-id>/ alongside any other
-#    valid run of that sensor.
-go run -tags=replay_fixture ./skills/detect-sensors/scripts \
-  --sensor=.harness/sensors/<id>.yaml --fixture=.harness/sensors/fixtures/<group>/<case>.txt \
-  | tail -n 1 | jq -c '{verdict, severity, individuals: (.evidence|length)}'
+# 2) Drive every golden_cases[] entry through the standard runner and
+#    compare the aggregate verdict/severity against the case's
+#    expected_verdict / expected_severity. run-golden picks
+#    run-computational or run-inferential based on sensor.type and
+#    exits 1 on the first mismatch.
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_golden \
+  ./skills/detect-sensors/scripts --sensor=.harness/sensors/<id>.yaml
 ```
 
 For each sensor, both must hold:
 
 - Happy path on the live repo: aggregate `verdict` matches reality (clean repo → `pass`; dirty repo → `fail`/`warn`). Empty `evidence` is acceptable iff the underlying tool is genuinely silent on success (vet, build, schema parsers); for tools that emit per-test output (Go test with `-v`, jest, pytest -v), `counts` MUST show non-zero in the relevant bucket.
-- Each `golden_cases[]` entry: replay must produce the declared `expected_verdict` and `expected_severity`. If a replay disagrees, EITHER the patterns are wrong (most common) OR `expected_verdict` is wrong — fix one and re-replay until both agree.
+- Each `golden_cases[]` entry: `run-golden` invokes the sensor for real and the aggregate Signal's `verdict` / `severity` MUST match `expected_verdict` / `expected_severity`. On mismatch, surface to the author for editing — either the sensor's behavior is wrong (fix `execution.command`, `exit_code_map`, `output_parsing.patterns`) or the expectation is wrong (fix `golden_cases[].expected_*`).
 
 If iteration changes `output`, `execution`, or `verification`, bump the sensor `version` (e.g. `0.1.0` → `0.2.0`) and re-persist via the validator. The version stamp is the audit trail of which shape was actually verified.
 
