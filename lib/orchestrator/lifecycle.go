@@ -48,14 +48,19 @@ const healHintExcerptCap = 120
 // Returns (signal, exitCode). exitCode is 0 unless schema validation
 // fails (1) or input is malformed (2).
 func RunOne(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator, stdout, stderr io.Writer) (map[string]interface{}, int) {
-	return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, true)
+	return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, true, nil, nil)
 }
 
 // runOneImpl is the shared body of RunOne. When emitAggregate is false the
 // final aggregate Signal (and any preflight-failed Signal) is returned to
 // the caller but not written to stdout — the caller is responsible for
 // emitting it at the moment that preserves its ordering constraints.
-func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator, stdout, stderr io.Writer, emitAggregate bool) (map[string]interface{}, int) {
+//
+// fxOverride and envOverride carry per-sub-run overrides resolved from a
+// parent sensor step's with: block; both are nil for top-level invocations.
+// Override entries win on key collision over project-discovered fixtures
+// and the sealed env snapshot.
+func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator, stdout, stderr io.Writer, emitAggregate bool, fxOverride, envOverride map[string]string) (map[string]interface{}, int) {
 	envelope, err := sensor.BuildEnvelope(s.JSON)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: envelope:", err)
@@ -100,7 +105,7 @@ func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v
 			aggVerdict, aggSeverity = "error", "high"
 		} else {
 			start := sensor.NowFn()
-			engineRes := runViaEngine(ctx, typed, projectRoot, schemasDir, v, nil, stdout)
+			engineRes := runViaEngine(ctx, typed, projectRoot, schemasDir, v, nil, stdout, fxOverride, envOverride)
 			elapsedMS = int(sensor.NowFn().Sub(start) / time.Millisecond)
 			aggVerdict = engineRes.Verdict
 			aggSeverity = engineRes.Severity
@@ -209,9 +214,9 @@ func RunOneWithRoot(
 	root *registry.Root, stdout, stderr io.Writer,
 ) (map[string]interface{}, int) {
 	if root == nil {
-		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, true)
+		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, true, nil, nil)
 	}
-	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, true)
+	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, true, nil, nil)
 }
 
 // RunOneWithRootCapture is RunOneWithRoot with the final aggregate
@@ -230,9 +235,30 @@ func RunOneWithRootCapture(
 	root *registry.Root, stdout, stderr io.Writer,
 ) (map[string]interface{}, int) {
 	if root == nil {
-		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, false)
+		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, false, nil, nil)
 	}
-	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, false)
+	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, false, nil, nil)
+}
+
+// RunOneWithRootCaptureOverride is RunOneWithRootCapture extended with
+// per-sub-run fixture and env overrides. Intended for the engine's
+// SubrunFunc indirection: a parent sensor step's with: { fixture: ... }
+// entries are merged into the child's fixture pool, and with: { foo: val }
+// scalars are merged into the child's sealed env snapshot, before the
+// child's engine runs. Caller-supplied entries win on key collision over
+// project-discovered fixtures and the inherited shell environment.
+//
+// Both override maps may be nil; in that case the behavior is identical
+// to RunOneWithRootCapture.
+func RunOneWithRootCaptureOverride(
+	ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator,
+	root *registry.Root, stdout, stderr io.Writer,
+	fxOverride, envOverride map[string]string,
+) (map[string]interface{}, int) {
+	if root == nil {
+		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, false, fxOverride, envOverride)
+	}
+	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, false, fxOverride, envOverride)
 }
 
 // runOneWithPersistenceImpl mirrors runOneImpl but persists a <run-id>/
@@ -244,6 +270,7 @@ func RunOneWithRootCapture(
 func runOneWithPersistenceImpl(
 	ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator,
 	root registry.Root, stdout, stderr io.Writer, emitAggregate bool,
+	fxOverride, envOverride map[string]string,
 ) (map[string]interface{}, int) {
 	envelope, err := sensor.BuildEnvelope(s.JSON)
 	if err != nil {
@@ -365,7 +392,7 @@ func runOneWithPersistenceImpl(
 			}()
 
 			start := sensor.NowFn()
-			engineRes := runViaEngine(ctx, typed, projectRoot, schemasDir, v, &root, stdout)
+			engineRes := runViaEngine(ctx, typed, projectRoot, schemasDir, v, &root, stdout, fxOverride, envOverride)
 			elapsedMS = int(sensor.NowFn().Sub(start) / time.Millisecond)
 			aggVerdict = engineRes.Verdict
 			aggSeverity = engineRes.Severity

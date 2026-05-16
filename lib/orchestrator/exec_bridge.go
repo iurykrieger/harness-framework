@@ -118,6 +118,11 @@ func projectTypedSensor(j map[string]interface{}) (*sensor.Sensor, error) {
 // projectRoot is used for both fixture discovery and as the typed
 // sensor's runtime Cwd, which the shell step inherits as the
 // subprocess working directory (step.ExecContext.Cwd → StreamConfig.Dir).
+//
+// fxOverride and envOverride carry per-sub-run overrides resolved from a
+// parent sensor step's with: block. Both are merged after the
+// project-discovered pool and the sealed env snapshot, so caller-supplied
+// entries win on key collision. Either map may be nil for top-level runs.
 func runViaEngine(
 	ctx context.Context,
 	typed *sensor.Sensor,
@@ -125,6 +130,7 @@ func runViaEngine(
 	v *schema.Validator,
 	root *registry.Root,
 	stdout io.Writer,
+	fxOverride, envOverride map[string]string,
 ) execPhaseResult {
 	// Fixture pool. A missing .harness/fixtures/ directory yields an
 	// empty pool with no error; an oversized fixture returns an error
@@ -137,10 +143,27 @@ func runViaEngine(
 			EngineError: fmt.Errorf("fixture.Discover: %w", ferr),
 		}
 	}
+	// Merge fixture override on top of the discovered pool: caller-supplied
+	// entries (i.e. parent step's with: { foo: { fixture: name } }) win when
+	// the same fixture name is present in both. nil/empty override leaves
+	// the pool untouched.
+	if len(fxOverride) > 0 {
+		if pool == nil {
+			pool = map[string]string{}
+		}
+		for k, v := range fxOverride {
+			pool[k] = v
+		}
+	}
 	typed.Fixtures = pool
 	typed.Cwd = projectRoot
 
 	envMap := buildSealedEnv(typed)
+	// Merge env override on top of the sealed snapshot. Parent step's
+	// with: { foo: "value" } entries appear under env.foo in the sub-run.
+	for k, v := range envOverride {
+		envMap[k] = v
+	}
 	subrun := newSubrunFunc(projectRoot, schemasDir, v, root)
 
 	signals, runErr := exec.Run(ctx, typed, subrun, envMap)
@@ -206,14 +229,13 @@ func buildSealedEnv(typed *sensor.Sensor) map[string]string {
 }
 
 // newSubrunFunc returns the engine's re-entry callback for type: sensor
-// steps. The callback re-enters RunOneWithRoot for the referenced
-// sensor. Fixture/env overrides resolved from the parent step's with:
-// block are accepted at the SubrunFunc boundary but not yet threaded
-// into the sub-run — RunOneWithRoot has no override hooks today, so
-// the sub-sensor sees the project's normal fixture pool / env snapshot
-// rebuilt from its own projectRoot. Threading overrides is a follow-up.
+// steps. The callback re-enters the sub-run via RunOneWithRootCaptureOverride
+// so fixture/env overrides resolved from the parent step's with: block
+// are merged into the child's fixture pool and sealed env snapshot
+// before the child's engine runs. Caller-supplied overrides win on
+// collision with the project-discovered pool / shell environment.
 func newSubrunFunc(projectRoot, schemasDir string, v *schema.Validator, root *registry.Root) step.SubrunFunc {
-	return func(ctx context.Context, ref string, _, _ map[string]string) (*step.StepResult, error) {
+	return func(ctx context.Context, ref string, fxOverride, envOverride map[string]string) (*step.StepResult, error) {
 		// Resolve the referenced sensor by id (or path). sensor.Resolve
 		// handles both forms and validates the id shape.
 		path, err := sensor.Resolve(ref, projectRoot)
@@ -241,7 +263,10 @@ func newSubrunFunc(projectRoot, schemasDir string, v *schema.Validator, root *re
 		// pollute the parent's stream; the sub-run's aggregate
 		// (returned as sig) is folded into the parent step's result
 		// instead, so the parent can decide whether to surface it.
-		sig, exit := RunOneWithRootCapture(ctx, child, projectRoot, schemasDir, v, root, io.Discard, io.Discard)
+		sig, exit := RunOneWithRootCaptureOverride(
+			ctx, child, projectRoot, schemasDir, v, root,
+			io.Discard, io.Discard, fxOverride, envOverride,
+		)
 		if exit != 0 || sig == nil {
 			return &step.StepResult{
 				Verdict: signal.VerdictError,
