@@ -25,6 +25,14 @@ type Sensor struct {
 	BlindSpots     []string        `json:"blind_spots,omitempty"`
 	Calibration    *Calibration    `json:"calibration,omitempty"`
 	References     []string        `json:"references,omitempty"`
+
+	// Fixtures is the resolved fixture-name → absolute-path pool for this
+	// sensor run. Populated by the caller (orchestrator / runner) after
+	// Load via fixture.Discover; absent from the on-disk schema and
+	// therefore tagged `json:"-"` so a round-trip through AsMap or Persist
+	// never leaks it back into YAML. The engine threads it into
+	// step.ExecContext.Fixtures.
+	Fixtures map[string]string `json:"-"`
 }
 
 type Cost struct {
