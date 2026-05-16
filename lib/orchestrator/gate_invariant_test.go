@@ -26,6 +26,12 @@ func TestSpawnCallSitesGated(t *testing.T) {
 		"lib/subprocess/stream.go": true,
 		"lib/subprocess/detach.go": true,
 		"lib/subprocess/step.go":   true,
+		// lib/step/shell/shell.go is a streaming primitive consumed by lib/exec,
+		// which is gated upstream by orchestrator.RunOne (PreflightGate). The
+		// shell step needs Start+Run because parse: patterns require stdout to
+		// be drained — subprocess.RunStep (the prepare/teardown primitive)
+		// discards stdout and is unsuitable.
+		"lib/step/shell/shell.go": true,
 	}
 	allowedDirs := []string{
 		"lib/subprocess/",
