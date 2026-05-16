@@ -10,6 +10,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/exec"
 	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
+	"github.com/iurykrieger/harness-framework/lib/step"
 )
 
 // TestRun_HappyPath_ShellHttpAssert drives the three currently supported
@@ -146,23 +147,38 @@ func TestRun_FailFast_AbortsRest(t *testing.T) {
 	}
 }
 
-// TestRun_SensorStepNotYetSupported guards against accidental
-// enablement of the type: sensor step before it is wired into the
-// engine. Run must return an error so the orchestrator surfaces a
-// clear, attributable failure instead of silently dropping the step.
-func TestRun_SensorStepNotYetSupported(t *testing.T) {
+// TestRun_SensorStepDispatchesToSubrun verifies that type: sensor steps
+// are routed to sensorstep.New with the engine-supplied SubrunFunc. The
+// stub subrun's verdict (warn) becomes the sensor step's verdict and is
+// the worst-of contribution to the run's aggregate.
+func TestRun_SensorStepDispatchesToSubrun(t *testing.T) {
+	called := false
+	sub := func(ctx context.Context, ref string, fx, env map[string]string) (*step.StepResult, error) {
+		called = true
+		if ref != "child-sensor" {
+			t.Errorf("subrun ref = %q (want child-sensor)", ref)
+		}
+		return &step.StepResult{Verdict: signal.VerdictWarn, Status: step.StatusCompleted}, nil
+	}
 	s := &sensor.Sensor{
-		ID:      "premature",
+		ID:      "with-subrun",
 		Version: "1.0.0",
 		Execution: sensor.Execution{
 			Steps: []sensor.StepConfig{
-				{ID: "child", Type: "sensor", Ref: "other"},
+				{ID: "child", Type: "sensor", Ref: "child-sensor"},
 			},
 		},
 	}
-	_, err := exec.Run(context.Background(), s, nil, map[string]string{})
-	if err == nil {
-		t.Fatal("Run with type=sensor should error when no implementation is wired")
+	signals, err := exec.Run(context.Background(), s, sub, map[string]string{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !called {
+		t.Fatal("subrun was not invoked")
+	}
+	agg := signals[len(signals)-1]
+	if agg["verdict"] != string(signal.VerdictWarn) {
+		t.Fatalf("aggregate verdict = %v (want warn)", agg["verdict"])
 	}
 }
 

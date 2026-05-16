@@ -21,6 +21,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/step"
 	"github.com/iurykrieger/harness-framework/lib/step/assert"
 	httpstep "github.com/iurykrieger/harness-framework/lib/step/http"
+	sensorstep "github.com/iurykrieger/harness-framework/lib/step/sensor"
 	"github.com/iurykrieger/harness-framework/lib/step/shell"
 )
 
@@ -29,9 +30,9 @@ import (
 // declaration order, then the aggregate as the LAST element).
 //
 // subrun is consulted only by the type: sensor step; callers that do
-// not exercise sensor steps may pass nil. When type: sensor has no
-// wired implementation in the engine, buildStep returns an error so the
-// orchestrator surfaces the misconfiguration explicitly.
+// not exercise sensor steps may pass nil. buildStep forwards subrun to
+// sensorstep.New, which rejects a nil callback at construction time so
+// the misconfiguration is attributable to the parent sensor.
 //
 // env is the sealed environment snapshot for the run; the engine does
 // not read os.Environ. Fixtures are read from s.Fixtures (populated by
@@ -71,10 +72,9 @@ func Run(ctx context.Context, s *sensor.Sensor, subrun step.SubrunFunc, env map[
 }
 
 // buildStep dispatches on the step's declared Type to the appropriate
-// step constructor. Type: sensor is rejected here with an explanatory
-// error so that misconfigured sensors fail attributably at engine entry
-// rather than being silently skipped. The step package that owns the
-// type=sensor implementation is wired in separately.
+// step constructor. The type=sensor branch wires the engine-supplied
+// SubrunFunc into sensorstep so the child sensor's pipeline can be
+// re-entered without lib/step importing lib/orchestrator.
 func buildStep(cfg sensor.StepConfig, subrun step.SubrunFunc) (step.Step, error) {
 	switch cfg.Type {
 	case "shell":
@@ -84,7 +84,7 @@ func buildStep(cfg sensor.StepConfig, subrun step.SubrunFunc) (step.Step, error)
 	case "assert":
 		return assert.New(cfg)
 	case "sensor":
-		return nil, fmt.Errorf("type: sensor not yet supported in this PR")
+		return sensorstep.New(cfg, subrun)
 	default:
 		return nil, fmt.Errorf("unknown step type %q", cfg.Type)
 	}
