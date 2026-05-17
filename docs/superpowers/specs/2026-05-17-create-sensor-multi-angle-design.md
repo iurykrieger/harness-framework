@@ -85,19 +85,11 @@ The user wants `/create-sensor` to produce **multi-angle** sensors that hit a re
 
 ## Schema changes — `schemas/sensor.yaml`
 
-Conceptual diff:
+Conceptual diff (abridged — `properties` and `required` show only the affected fields; the existing 15-item `required` list keeps all other entries):
 
 ```diff
  properties:
-   id: ...
-   version: ...
-   kind: ...        # observation | assertion | setup
-   type: ...        # computational | inferential
-   output: ...      # single | stream
-   cost: ...
-   execution: ...
-   requires: ...
-   triggers: ...
+   ...
 +  use_cases:
 +    description: |
 +      Usecase ids this sensor validates. Pure traceability — the runtime
@@ -124,29 +116,40 @@ Conceptual diff:
 -      self_test_command: { type: string }
 -    required: [golden_cases]
  required:
--  - verification
-+  - use_cases
    - id
    - version
+   - name
+   - description
    - kind
    - type
+   - regulation
+   - phase
+   - determinism
    - output
-   ...
+   - cost
+   - triggers
+   - execution
+-  - verification
++  - use_cases
 ```
+
+The top-level `allOf` discriminators (keyed off `type` and `output`) are unaffected — they reference `cost.*` and `execution.*` only.
 
 Cascade through the codebase:
 
 1. **`lib/sensor/shape.go`** — drop `GoldenCase` struct and the `Verification` field. Add `UseCases []string` on `Sensor`. Helpers like `Sensor.HasGoldenCases()` are removed.
 2. **`lib/sensor/load.go`** — `Normalize` stops initializing `verification`. The `use_cases[]` pattern is validated at parse time; existence-on-disk is validated in Phase 5.
 3. **`lib/sensor/validate.go`** — remove the `golden_cases_*` cross-field rules. Add `use_cases_non_empty` (covered by schema `minItems: 1`) and, when the validator has a `projectRoot`, `use_cases_files_exist`.
-4. **`skills/detect-sensors/scripts/run-golden.go`** — deleted along with its `_test.go`. No more golden replay path. CI invokes `/run-sensor smoke-typed-pipeline` and `/run-sensor smoke-with-setup` directly.
-5. **`.github/workflows/test.yml`** — remove the `run_golden` step; replace with a step that runs the smoke sensors via `run-computational`.
-6. **`.harness/sensors/smoke-*.yaml`** — both gain `use_cases: ["framework-smoke-typed-pipeline"]` / `["framework-smoke-with-setup"]`. Those usecases are created as part of this PR under `.harness/usecases/framework/`.
-7. **`schemas/usecase.yaml`** — unchanged.
+4. **`lib/sensor/persist.go`** — currently extracts `sensorMap["verification"]["golden_cases"][].fixture` to drive the `RequireFixturesOnDisk` check (lines 34, 57, 149–153). Reroute the fixture-existence check to read `use_cases[]` and validate each one resolves to a real `.harness/usecases/**/<id>.yaml`; rename the option to `RequireUseCaseFilesOnDisk`. The dual-purpose comment on the `Rel` field is rewritten accordingly.
+5. **`skills/detect-sensors/scripts/run-golden.go`** — deleted along with its `_test.go`. No more golden replay path.
+6. **`skills/detect-sensors/SKILL.md`** — currently has nine references to `verification.golden_cases[]` as authoring guidance (Phase B drafting examples + the persistence step). Rewritten in the same PR so `/detect-sensors` produces sensors with `use_cases[]` referencing usecase ids it co-produces (or that already exist under `.harness/usecases/**`). When `/detect-sensors` runs against a project with no usecases yet, it emits sensors with empty `use_cases: []` and a warn — schema rejects this, so the user is funneled to run `/detect-usecases` first.
+7. **`.github/workflows/test.yml`** — remove the `run_golden` step; replace with a step that runs the smoke sensors via `run-computational`.
+8. **`.harness/sensors/smoke-*.yaml`** — both gain `use_cases: ["framework-smoke-typed-pipeline"]` / `["framework-smoke-with-setup"]`. Those usecases are created as part of this PR under `.harness/usecases/framework/`.
+9. **`schemas/usecase.yaml`** — unchanged.
 
 Cross-validation in Phase 5 (`write-sensor.go`): for each `use_case_id` in `use_cases[]`, fail if no file matches `<projectRoot>/.harness/usecases/**/<use_case_id>.yaml`. A `--skip-usecase-existence-check` flag exists but is reserved for the script's own tests; the skill never sets it.
 
-`/heal-sensor` consequence: anywhere it cites `verification.golden_cases[].fixture` in evidence prose, it now cites `use_cases[]` and reads the relevant usecase YAML to find `business_rules[]` text that connects to the failing step. Mechanical refactor, in scope for the same PR.
+**`/heal-sensor`:** no current references to `verification.golden_cases[]` in the skill body or its scripts (confirmed by grep at spec time). The skill's existing tests cover unchanged paths; no refactor needed here. If `/heal-sensor` later wants to surface usecase context in its diagnostics, that is a separate change.
 
 ## Component: `read-usecases.go`
 
@@ -166,7 +169,7 @@ go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=read_usecases \
   [--include-catalog]
 ```
 
-`--list-only` (used by Phase 1.5 free-text inference) returns a thin index: id, name, tags only. The full ledger is emitted only when `--include-stack` and/or `--include-catalog` are absent? — no: `--list-only` is mutually exclusive with `--include-*`. When neither flag is set, the ledger contains just `usecases[]`.
+**Flag interactions (single rule):** `--list-only` produces a thin index (id + name + tags only) and is mutually exclusive with `--include-stack` and `--include-catalog`. Combining `--list-only` with either inclusion flag returns `verdict=error, metadata.kind=usage`. When neither inclusion flag is set and `--list-only` is absent, the ledger contains just `usecases[]` (full shape, no stack, no catalog).
 
 Output shape on success:
 
@@ -253,7 +256,7 @@ Multi-axis decision; order matters:
 | 4. `evidence` file proximity | Usecases whose `evidence[].file` sits in the SAME directory (or one level up) → same sensor. | `skills/tail-sensor/scripts/tail.go` groups; `lib/registry/lookup.go` separates. |
 | 5. `regression_priority` | Does not influence grouping — informative only (feeds `cost.class`). | No cardinality impact. |
 
-**Tie-breaking:** if a bucket holds >8 usecases, fission by dominant tag (each top-frequency tag becomes its own sensor). Hard limit: 8 usecases/sensor. If no tag dominates, the script emits warn `bucket_too_large` and divides arbitrarily into chunks of ≤8 named `<base>-part-1`, `<base>-part-2`, recording the arbitrariness in `rationale`.
+**Tie-breaking:** if a bucket holds >8 usecases, fission by dominant tag (each top-frequency tag becomes its own sensor). Hard limit: 8 usecases/sensor. If no tag dominates, the script emits warn `bucket_too_large` and divides into chunks of ≤8. **Deterministic ordering for the split:** sort usecases by `id` ascending, then chunk into contiguous groups of ≤8, naming them `<base>-part-1`, `<base>-part-2`, etc. Recorded in `rationale`. The `go test -count=10` determinism requirement (§Testing plan) depends on this rule.
 
 ### Inference: `kind` / `type` / `output`
 
@@ -277,6 +280,19 @@ Applied per planned sensor after grouping:
 | ≥2 independent `business_rules` all assertable in a single run | `stream` |
 | (default) | `single` |
 
+### Canonical cost defaults
+
+The schema requires `cost.compute` for `type=computational` and `cost.tokens` for `type=inferential`. `plan-sensors.go` emits canonical defaults so Phase 4 (LLM) does not have to invent them. The LLM may override during synthesis when the requirement clearly implies different scaling.
+
+| Field | Default for `computational` | Default for `inferential` |
+|---|---|---|
+| `cost.compute` | `{ cpu: "low", memory_mb: 64 }` | — (forbidden by schema) |
+| `cost.tokens` | — (forbidden by schema) | `{ input_tokens: 4000, output_tokens: 1000 }` |
+| `cost.class` | `cheap` if all steps are local shell/file; `medium` if any HTTP step or `setup-mock-infra`; else `expensive` | `expensive` |
+| `cost.latency` | `{ p50_ms: 10, p95_ms: 100, timeout_ms: 5000 }` for shell-only; `{ p50_ms: 200, p95_ms: 2000, timeout_ms: 30000 }` if any HTTP step | `{ p50_ms: 3000, p95_ms: 20000, timeout_ms: 60000 }` |
+
+These mirror the canonical example in `write-sensor_test.go` so existing fixtures keep round-tripping.
+
 ### Inference: `mock_strategy` (the hybrid)
 
 Per step, not per sensor — a sensor may legitimately mix strategies across its steps.
@@ -288,7 +304,7 @@ Per step, not per sensor — a sensor may legitimately mix strategies across its
 | `expected_outcome.side_effects[]` mentions "DB write", "kafka publish", "external API call" | `setup-mock-infra` — propose a `kind=setup` sensor as auxiliary |
 | Nothing clear | `stub-deterministic` (conservative default) + warn recorded in `rationale` |
 
-Multiple `evidence[]` entries with divergent signals: the most specific wins (handler > lib > unknown).
+Multiple `evidence[]` entries with divergent signals: the most specific wins (handler > lib > unknown). Within the same tier (e.g., two `lib/` entries from different subdirs, or two HTTP handlers), the first entry in `evidence[]` order (the order the usecase YAML records them) wins. The ordering is stable and reproducible across runs.
 
 ## SKILL.md flow (Phases that live in markdown)
 
@@ -383,9 +399,12 @@ Next: run `/run-sensor assert-tail-sensor-error-handling` to exercise the sensor
 | Origin | `metadata.kind` | `verdict` | Handling |
 |---|---|---|---|
 | `read-usecases.go` cannot find an id | `usecase_not_found` | `error` | Abort before plan. |
+| `read-usecases.go` flag misuse (`--list-only` + `--include-*`) | `usage` | `error` | Abort with help message. |
 | usecase YAML violates `schemas/usecase.yaml` | `usecase_schema_invalid` | `warn` | Skip that usecase; continue with the valid ones; surface to user. |
 | `plan-sensors.go` collides id with existing sensor | `sensor_id_collision` | `warn` | Plan proceeds with warn; user decides at confirmation. |
 | `plan-sensors.go` infers `type=inferential` but no calibration provided | `inferential_calibration_required` | `warn` | Plan emits the sensor as pending; Phase 4 blocks until user supplies calibration. |
+| `plan-sensors.go` bucket >8 with no dominant tag | `bucket_too_large` | `warn` | Apply id-sorted chunk split (§Grouping heuristic); record in `rationale`. |
+| Phase 4 LLM cannot infer a concrete shell `run` from `evidence[]` (e.g. evidence points to an internal lib function with no shell surface) | `command_inference_failed` | `warn` | Skill blocks and asks the user: "What shell command exercises `<file>:<line>`? (or: should I wrap it as `go test -run <Test>`?)". Sensor is NOT persisted until resolved. |
 | LLM produces YAML that fails schema | `schema_invalid` | `error` | Retry with surgical diff (max 2x); then hand draft to user for manual edit. |
 | Fixture write escapes `.harness/fixtures/` | `fixture_path_escape` | `error` | Abort the whole invocation. |
 | `write-sensor.go` fails on sensor N of M (with N-1 already persisted) | `partial_persist` | `error` | NO rollback of the N-1 (they are valid in themselves); report what landed and what failed. |
@@ -435,7 +454,7 @@ Next: run `/run-sensor assert-tail-sensor-error-handling` to exercise the sensor
 
 - New `.harness/usecases/framework/framework-smoke-typed-pipeline.yaml` and `.harness/usecases/framework/framework-smoke-with-setup.yaml` documenting trigger/behavior/expected_outcome for what these sensors should emit.
 - Both smoke sensors regenerated with `use_cases: ["framework-..."]`.
-- New `assert-create-sensor-multi-angle` sensor that exercises `/create-sensor` itself against a real usecase from `tail-sensor`, asserting the resulting sensor parses and contains N>1 steps. Acts as the plugin's self-test for this spec.
+- New `assert-create-sensor-multi-angle` sensor that exercises `/create-sensor` itself against a real usecase from `tail-sensor`. **The assertion is strictly structural** to survive LLM nondeterminism: (a) the resulting YAML parses against `schemas/sensor.yaml`, (b) `len(execution.steps) ≥ 2`, (c) `len(use_cases) ≥ 1`, (d) at least one step references a real fixture under `.harness/fixtures/`. Do NOT diff YAML bytes or assert specific step contents — the LLM's synthesis is allowed to vary. Acts as the plugin's self-test for this spec.
 
 ### Out of scope for automated tests
 
@@ -464,12 +483,14 @@ No rollout. Users on the plugin take the cut at upgrade time and regenerate.
 
 ## Implementation order (anticipated)
 
-This spec hands off to `/writing-plans`; the plan will sequence tasks. The ordering below is the spec author's anticipation and is not binding:
+This spec hands off to `/writing-plans`; the plan will sequence tasks. The ordering below is the spec author's anticipation and is not binding. **The sequence matters** because the schema change invalidates the existing smoke sensors and the existing `run-golden.go` + its tests; both must be addressed before the schema flips, or in the same atomic commit.
 
-1. Schema change + `lib/sensor/` updates + write-sensor.go `use_cases[]` support + framework usecases under `.harness/usecases/framework/` + smoke sensor regeneration.
-2. `read-usecases.go` + tests.
-3. `plan-sensors.go` + tests with all heuristic scenarios.
-4. SKILL.md rewrite (Phases 1, 1.5, 4, 5; orchestration prose for Phases 2, 3, 3.5).
-5. `/heal-sensor` prose refactor.
-6. Deletion of `run-golden.go` + CI workflow update.
+1. **Delete** `skills/detect-sensors/scripts/run-golden.go` + `_test.go`. Remove the `run_golden` step from `.github/workflows/test.yml`, replacing it with `/run-sensor smoke-typed-pipeline` and `/run-sensor smoke-with-setup` invocations (these will fail until step 2 lands, but CI is run by humans, not the build itself).
+2. **Single atomic commit:** schema change + `lib/sensor/{shape,load,validate,persist}.go` updates + `write-sensor.go` `use_cases[]` support + framework usecases under `.harness/usecases/framework/` + smoke sensor regeneration. After this commit, `go test ./...` passes and the smoke sensors work via `/run-sensor`.
+3. `read-usecases.go` + tests.
+4. `plan-sensors.go` + tests with all heuristic scenarios.
+5. `SKILL.md` rewrite (Phases 1, 1.5, 4, 5; orchestration prose for Phases 2, 3, 3.5).
+6. `skills/detect-sensors/SKILL.md` rewrite (rip out `verification.golden_cases[]` authoring guidance; replace with `use_cases[]` flow).
 7. Acceptance sensor `assert-create-sensor-multi-angle` + its framework usecase.
+
+Step 1 deliberately precedes the schema change so the deletion can land independently and bisecting is clean. Step 2 is a single commit because partial state (new schema + old smoke sensors, or vice versa) breaks every test invocation.
