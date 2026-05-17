@@ -1,0 +1,19 @@
+{
+  "usecases": [
+    {
+      "id": "uc-a", "journey_id": "j", "name": "a", "regression_priority": "low", "tags": [],
+      "trigger": {"shape": "CLI invocation", "summary": "s", "fixture": {}},
+      "behavior": {"summary": "s", "business_rules": ["x."]},
+      "expected_outcome": {"shape": "single", "summary": "s", "fixture": {}, "invariants": ["y."], "side_effects": []},
+      "evidence": [{"file": "lib/x.go", "rationale": "r"}], "source_path": "x"
+    },
+    {
+      "id": "uc-b", "journey_id": "j", "name": "b", "regression_priority": "low", "tags": [],
+      "trigger": {"shape": "HTTP request", "summary": "s", "fixture": {}},
+      "behavior": {"summary": "s", "business_rules": ["x."]},
+      "expected_outcome": {"shape": "single", "summary": "s", "fixture": {}, "invariants": ["y."], "side_effects": []},
+      "evidence": [{"file": "lib/x.go", "rationale": "r"}], "source_path": "x"
+    }
+  ],
+  "project_root": "/repo"
+}
