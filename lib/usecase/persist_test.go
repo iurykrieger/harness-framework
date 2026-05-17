@@ -2,6 +2,7 @@ package usecase_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,17 +25,23 @@ func minimalStack() *stack.Stack {
 	}
 }
 
-// projectRootWithEvidence creates a temp dir, writes the file the
-// canonical UseCase points to, and returns the dir.
+// projectRootWithEvidence creates a temp dir, writes the files the
+// canonical UseCase points to (handler + DTO contract), and returns the
+// dir.
 func projectRootWithEvidence(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	target := filepath.Join(root, "src", "users", "users.controller.ts")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(target, []byte("//"), 0o644); err != nil {
-		t.Fatal(err)
+	for _, rel := range []string{
+		filepath.Join("src", "users", "users.controller.ts"),
+		filepath.Join("src", "users", "dto", "create-user.dto.ts"),
+	} {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("//"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return root
 }
@@ -86,6 +93,46 @@ func TestValidateAndPersist_RejectsMissingEvidence(t *testing.T) {
 	entries, _ := os.ReadDir(outDir)
 	if len(entries) != 0 {
 		t.Errorf("expected nothing written on validation failure, got %d entries (subdir leak)", len(entries))
+	}
+}
+
+func TestValidateAndPersist_RejectsMissingContractEvidence(t *testing.T) {
+	schemasDir := schematest.RepoSchemasDir(t)
+	outDir := t.TempDir()
+	projectRoot := projectRootWithEvidence(t)
+
+	var doc map[string]interface{}
+	if err := json.Unmarshal(usecasetest.CanonicalBody(t), &doc); err != nil {
+		t.Fatal(err)
+	}
+	// Strip the kind=contract row, leaving only kind=implementation
+	// citations. The fixture is still a map, so the check must reject.
+	evRaw, _ := doc["evidence"].([]interface{})
+	var kept []interface{}
+	for _, item := range evRaw {
+		m := item.(map[string]interface{})
+		if m["kind"] == "contract" {
+			continue
+		}
+		kept = append(kept, m)
+	}
+	doc["evidence"] = kept
+	body, _ := json.Marshal(doc)
+
+	_, err := usecase.ValidateAndPersist(body, outDir, projectRoot, minimalStack(), schemasDir)
+	if err == nil {
+		t.Fatal("expected contract evidence cross-check error")
+	}
+	var cce *stack.CrossCheckError
+	if !errors.As(err, &cce) {
+		t.Fatalf("expected *stack.CrossCheckError, got %T (%v)", err, err)
+	}
+	if cce.Kind != "contract_evidence_missing" {
+		t.Errorf("kind = %q", cce.Kind)
+	}
+	entries, _ := os.ReadDir(outDir)
+	if len(entries) != 0 {
+		t.Errorf("expected nothing written on validation failure, got %d entries", len(entries))
 	}
 }
 

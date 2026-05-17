@@ -68,6 +68,9 @@ func ValidateAndPersist(
 	if err := CheckEvidenceFiles(&uc, projectRoot); err != nil {
 		return "", err
 	}
+	if err := CheckFixtureContractEvidence(&uc); err != nil {
+		return "", err
+	}
 
 	id, ok := doc["id"].(string)
 	if !ok || id == "" {

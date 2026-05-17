@@ -34,6 +34,14 @@ type Evidence struct {
 	LineStart *int   `json:"line_start,omitempty"`
 	LineEnd   *int   `json:"line_end,omitempty"`
 	Rationale string `json:"rationale"`
+
+	// Kind classifies the evidence row inside a UseCase: empty (or
+	// "implementation") points at the code that implements the variation;
+	// "contract" points at the typed declaration backing a fixture (DTO,
+	// schema, struct, CLI flag definition). The field is meaningful only
+	// for usecase.yaml evidence rows; stack.yaml's Evidence schema sets
+	// additionalProperties=false, so it stays absent in stack-context use.
+	Kind string `json:"kind,omitempty"`
 }
 
 type LogShape struct {
