@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/planning"
@@ -33,7 +34,7 @@ func loadLedger(t *testing.T, name string) []usecase.UseCase {
 }
 
 func TestBuildSingleUsecase(t *testing.T) {
-	plans := planning.Build(loadLedger(t, "ledger-single-usecase.json"), nil)
+	plans := planning.Build(loadLedger(t, "ledger-single-usecase.json"))
 	if len(plans) != 1 {
 		t.Fatalf("expected 1 plan; got %d", len(plans))
 	}
@@ -51,12 +52,12 @@ func TestBuildSingleUsecase(t *testing.T) {
 
 func TestBuildIsDeterministic(t *testing.T) {
 	ucs := loadLedger(t, "ledger-two-grouped.json")
-	first, err := json.Marshal(planning.Build(ucs, nil))
+	first, err := json.Marshal(planning.Build(ucs))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 10; i++ {
-		again, err := json.Marshal(planning.Build(ucs, nil))
+		again, err := json.Marshal(planning.Build(ucs))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,7 +69,7 @@ func TestBuildIsDeterministic(t *testing.T) {
 
 func TestBuildShapeSplitProducesDistinctIDs(t *testing.T) {
 	ucs := loadLedger(t, "ledger-two-split-trigger-shape.json")
-	plans := planning.Build(ucs, nil)
+	plans := planning.Build(ucs)
 	if len(plans) < 2 {
 		t.Fatalf("want at least 2 plans; got %d", len(plans))
 	}
@@ -85,7 +86,7 @@ func TestBuildShapeSplitProducesDistinctIDs(t *testing.T) {
 }
 
 func TestBuildFissionPartsShareInferredShape(t *testing.T) {
-	plans := planning.Build(loadLedger(t, "ledger-bucket-too-large.json"), nil)
+	plans := planning.Build(loadLedger(t, "ledger-bucket-too-large.json"))
 	if len(plans) < 2 {
 		t.Fatalf("expected ≥2 plans from fission; got %d", len(plans))
 	}
@@ -99,7 +100,7 @@ func TestBuildFissionPartsShareInferredShape(t *testing.T) {
 }
 
 func TestBuildGroupsByJourneyAndShape(t *testing.T) {
-	plans := planning.Build(loadLedger(t, "ledger-two-grouped.json"), nil)
+	plans := planning.Build(loadLedger(t, "ledger-two-grouped.json"))
 	if len(plans) != 1 {
 		t.Fatalf("want 1 sensor planned; got %d", len(plans))
 	}
@@ -113,43 +114,26 @@ func TestBuildGroupsByJourneyAndShape(t *testing.T) {
 }
 
 func TestBuildInferentialEmitsCalibrationWarn(t *testing.T) {
-	plans := planning.Build(loadLedger(t, "ledger-inferential.json"), nil)
+	plans := planning.Build(loadLedger(t, "ledger-inferential.json"))
 	if len(plans) != 1 {
 		t.Fatalf("want 1 plan; got %d", len(plans))
 	}
 	if plans[0].Type != "inferential" {
 		t.Fatalf("type: %s", plans[0].Type)
 	}
-	if !containsCalibrationWarn(plans[0].Rationale) {
+	if !strings.Contains(plans[0].Rationale, "WARN: inferential") {
 		t.Fatalf("expected calibration warn in rationale; got %q", plans[0].Rationale)
 	}
 }
 
 func TestBuildObservationKind(t *testing.T) {
-	plans := planning.Build(loadLedger(t, "ledger-observation.json"), nil)
+	plans := planning.Build(loadLedger(t, "ledger-observation.json"))
 	if len(plans) != 1 {
 		t.Fatalf("want 1 plan; got %d", len(plans))
 	}
 	if plans[0].Kind != "observation" || plans[0].Output != "stream" {
 		t.Fatalf("kind/output: %s / %s", plans[0].Kind, plans[0].Output)
 	}
-}
-
-func containsCalibrationWarn(s string) bool {
-	return len(s) > 0 && (indexOf(s, "WARN: inferential") >= 0)
-}
-
-func indexOf(haystack, needle string) int {
-	n, h := len(needle), len(haystack)
-	if n == 0 || n > h {
-		return -1
-	}
-	for i := 0; i <= h-n; i++ {
-		if haystack[i:i+n] == needle {
-			return i
-		}
-	}
-	return -1
 }
 
 func TestMakeAggregateCountsUniqueUsecaseIDs(t *testing.T) {

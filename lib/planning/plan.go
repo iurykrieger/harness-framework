@@ -4,28 +4,23 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/usecase"
 )
 
 // Build groups the input usecases, infers kind/type/output per
 // bucket, materializes one Plan per bucket (splitting buckets that
 // exceed BucketLimit), and returns the resulting slice sorted by
-// sensor_id ascending. catalog is currently informational only — the
-// planner does not inspect it — but the parameter is kept on the
-// signature so future heuristics (id-collision avoidance, dep
-// composition) can use it without touching the wrapper script.
+// sensor_id ascending.
 //
 // Build is the package's single entrypoint. The name "Build" is used
 // because Go forbids reusing the type identifier Plan for a function;
 // see lib/planning/shape.go for the type.
-func Build(usecases []usecase.UseCase, catalog []*sensor.Sensor) []Plan {
-	_ = catalog
-	buckets := Group(usecases)
-	AssignDiscriminators(buckets)
+func Build(usecases []usecase.UseCase) []Plan {
+	buckets := group(usecases)
+	assignDiscriminators(buckets)
 	var plans []Plan
 	for _, b := range buckets {
-		plans = append(plans, Materialize(b)...)
+		plans = append(plans, materialize(b)...)
 	}
 	sort.Slice(plans, func(i, j int) bool { return plans[i].SensorID < plans[j].SensorID })
 	return plans
@@ -45,11 +40,11 @@ func MakeAggregate(plans []Plan) Aggregate {
 	}
 }
 
-// Materialize turns a Bucket into 1..N Plans. Buckets above
+// materialize turns a bucket into 1..N Plans. Buckets above
 // BucketLimit are chunked deterministically (id-sorted, by 8) so
 // every chunk shares identical kind/type/output (computed once per
 // bucket so two halves never disagree).
-func Materialize(b Bucket) []Plan {
+func materialize(b bucket) []Plan {
 	sort.Slice(b.Usecases, func(i, j int) bool { return b.Usecases[i].ID < b.Usecases[j].ID })
 
 	bucketKind := InferKind(b.Usecases)

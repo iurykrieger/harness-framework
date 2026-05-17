@@ -9,22 +9,20 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/usecase"
 )
 
-// Bucket is a tentative grouping of usecases sharing journey+shape.
-// Exported so callers (other libraries, tests in other packages) can
-// inspect the partition independently of Plan synthesis.
-type Bucket struct {
+// bucket is a tentative grouping of usecases sharing journey+shape.
+type bucket struct {
 	JourneyID     string
 	Shape         string
 	Usecases      []usecase.UseCase
 	Discriminator string // non-empty only when the journey has multiple buckets
 }
 
-// Group partitions usecases by (journey_id, trigger.shape). Tag
+// group partitions usecases by (journey_id, trigger.shape). Tag
 // overlap further splits — usecases with disjoint tag sets in the
 // same journey+shape go to different sensors. Evidence-directory
 // proximity tightens further; usecases whose evidence files share a
 // common directory (or 1-level-up) stay together.
-func Group(usecases []usecase.UseCase) []Bucket {
+func group(usecases []usecase.UseCase) []bucket {
 	keyed := map[string][]usecase.UseCase{}
 	var order []string
 	for _, uc := range usecases {
@@ -36,13 +34,13 @@ func Group(usecases []usecase.UseCase) []Bucket {
 	}
 	sort.Strings(order)
 
-	var out []Bucket
+	var out []bucket
 	for _, k := range order {
 		parts := strings.SplitN(k, "|", 2)
 		clusters := splitByTagsAndEvidence(keyed[k])
 		for _, c := range clusters {
 			sort.Slice(c, func(i, j int) bool { return c[i].ID < c[j].ID })
-			out = append(out, Bucket{JourneyID: parts[0], Shape: parts[1], Usecases: c})
+			out = append(out, bucket{JourneyID: parts[0], Shape: parts[1], Usecases: c})
 		}
 	}
 	return out
@@ -121,7 +119,7 @@ func evidenceProximate(a, b usecase.UseCase) bool {
 	return false
 }
 
-// AssignDiscriminators populates Bucket.Discriminator for every
+// assignDiscriminators populates bucket.Discriminator for every
 // bucket that belongs to a journey with more than one bucket. The
 // discriminator is deterministic and computed in priority order:
 //
@@ -129,11 +127,11 @@ func evidenceProximate(a, b usecase.UseCase) bool {
 //     multiple such tags exist, the alphabetically first is chosen.
 //  2. Slugified trigger shape (e.g. "cli-invocation", "http-request").
 //  3. Last-resort stable "cluster-N" index reflecting emergence order
-//     from Group (1-based, scoped to the journey).
+//     from group (1-based, scoped to the journey).
 //
 // Single-bucket journeys leave discriminator empty so the simple
 // "<prefix>-<journey>" sensor_id shape is preserved.
-func AssignDiscriminators(buckets []Bucket) {
+func assignDiscriminators(buckets []bucket) {
 	counts := map[string]int{}
 	for _, b := range buckets {
 		counts[b.JourneyID]++
@@ -149,7 +147,7 @@ func AssignDiscriminators(buckets []Bucket) {
 	}
 }
 
-func computeDiscriminator(b Bucket, clusterIdx int) string {
+func computeDiscriminator(b bucket, clusterIdx int) string {
 	if tag := dominantTag(b.Usecases); tag != "" {
 		return Slugify(tag)
 	}

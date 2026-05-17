@@ -22,9 +22,7 @@ import (
 
 // ledger mirrors the wire format read-usecases.go emits. The full
 // catalog projection sits inside read-usecases.go (the wire-format
-// owner); here we only need to consume usecases for planning. The
-// catalog parameter to planning.Build is currently unused but kept on
-// the API, so we pass nil.
+// owner); here we only need to consume usecases for planning.
 type ledger struct {
 	Usecases []usecase.UseCase `json:"usecases"`
 }
@@ -45,7 +43,7 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	plans := planning.Build(lg.Usecases, nil)
+	plans := planning.Build(lg.Usecases)
 	for _, p := range plans {
 		emit(stdout, p)
 	}
