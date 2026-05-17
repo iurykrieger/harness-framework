@@ -80,3 +80,34 @@ type ListEntry struct {
 type IndexLedger struct {
 	Usecases []ListEntry `json:"usecases"`
 }
+
+// Plan is one of the JSONL lines plan-sensors emits.
+type Plan struct {
+	SensorID    string        `json:"sensor_id"`
+	Kind        string        `json:"kind"`
+	Type        string        `json:"type"`
+	Output      string        `json:"output"`
+	UseCases    []string      `json:"use_cases"`
+	StepOutline []StepOutline `json:"step_outline"`
+	Rationale   string        `json:"rationale"`
+}
+
+// StepOutline describes one step a planned sensor will need to assert.
+type StepOutline struct {
+	StepID            string         `json:"step_id"`
+	SourceUsecase     string         `json:"source_usecase"`
+	SourceRule        string         `json:"source_rule"`
+	SuggestedStepType string         `json:"suggested_step_type"`
+	MockStrategy      string         `json:"mock_strategy"`
+	Evidence          []EvidenceItem `json:"evidence,omitempty"`
+}
+
+// Aggregate is the last JSONL line emitted by plan-sensors. Aggregate
+// signals are distinguished from Plan lines by the "aggregate":true field.
+type Aggregate struct {
+	Aggregate        bool   `json:"aggregate"`
+	Verdict          string `json:"verdict"`
+	Severity         string `json:"severity"`
+	SensorsPlanned   int    `json:"sensors_planned"`
+	UsecasesConsumed int    `json:"usecases_consumed"`
+}
