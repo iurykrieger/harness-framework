@@ -1,0 +1,54 @@
+behavior:
+  business_rules:
+  - Lines 1..cursor are skipped.
+  - Lines cursor+1..end are emitted.
+  - The envelope's next_cursor is the new line count.
+  summary: |
+    runTail opens signals.log, advances past the first 2 lines, emits
+    lines 3..5 as Signals on stdout, then emits the envelope carrying
+    metadata.next_cursor=5.
+description: |
+  /tail-sensor with cursor=N where 0 < N < total-line-count emits lines
+  N+1..end as individual Signals plus the envelope Signal with
+  next_cursor=total-line-count. The agent can chain successive calls
+  using next_cursor.
+evidence:
+- file: skills/tail-sensor/scripts/tail.go
+  line_start: 153
+  rationale: Line-by-line skip/emit pipeline using the cursor argument.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[{"excerpt":"line
+      3"}],"cost_actual":{"latency_ms":1}}'
+    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[{"excerpt":"line
+      4"}],"cost_actual":{"latency_ms":1}}'
+    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[{"excerpt":"line
+      5"}],"cost_actual":{"latency_ms":1}}'
+    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[{"rationale":"tail
+      envelope"}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"envelope","next_cursor":5}}'
+  invariants:
+  - The first 2 lines are NOT emitted.
+  - The envelope's next_cursor equals the current line count.
+  shape: JSONL on stdout + exit code
+  side_effects: []
+  summary: 3 individual Signals + 1 envelope, exit code 0.
+id: tail-sensor-cursor-mid-stream
+journey_id: tail-sensor
+name: /tail-sensor with non-zero cursor reads only new lines
+regression_priority: critical
+tags:
+- happy-path
+- cursor
+trigger:
+  fixture:
+    argv:
+    - tail-sensor
+    - dev-server
+    - "2"
+    state:
+      .harness/runtime/dev-server/42-abc/signals.log: 5 JSONL lines total
+  shape: CLI invocation
+  summary: /tail-sensor with a cursor pointing past some previously-read lines.
+version: 0.1.0

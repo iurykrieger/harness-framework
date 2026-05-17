@@ -1,0 +1,62 @@
+behavior:
+  business_rules:
+  - prepare[] is fail-fast.
+  - The subprocess command is NOT spawned on prepare failure.
+  - metadata.lifecycle.prepare carries the per-step outcomes.
+  summary: |
+    runStart invokes orchestrator.RunPreparePhase. When prepFailed is
+    true, it detaches any live deps and emits cause=prepare_failed with
+    the per-step results under metadata.lifecycle.prepare.
+description: |
+  /start-sensor runs orchestrator.RunPreparePhase after the requires[]
+  gate passes. When any prepare step exits non-zero, the spawn is
+  aborted with cause=prepare_failed and the failing step is recorded
+  in metadata.lifecycle.prepare.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  line_start: 155
+  rationale: RunPreparePhase invocation and prepare_failed branch.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    stdout_lines:
+    - '{"sensor_id":"integration-server","verdict":"error","severity":"high","evidence":[],"cost_actual":{"latency_ms":18},"metadata":{"kind":"failed","cause":"prepare_failed","lifecycle":{"prepare":[{"command":"false","verdict":"fail","exit_code":1}]}}}'
+  invariants:
+  - metadata.cause is "prepare_failed".
+  - The target's command is NOT spawned.
+  - metadata.lifecycle.prepare lists per-step results.
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: |
+    One Signal on stdout, verdict=error, metadata.cause=prepare_failed,
+    metadata.lifecycle.prepare containing the failing step, exit code 1.
+id: start-sensor-prepare-failed
+journey_id: start-sensor
+name: Target's prepare[] step fails — command not spawned
+regression_priority: medium
+tags:
+- error-handling
+- lifecycle
+- prepare
+trigger:
+  fixture:
+    argv:
+    - start-sensor
+    - integration-server
+    sensor:
+      execution:
+        blocking: true
+        command: ./bin/server
+        output_parsing:
+          patterns:
+          - regex: ready (.+)
+            verdict: pass
+        prepare:
+        - command: "false"
+          description: intentional fail
+      id: integration-server
+      output: stream
+      type: computational
+  shape: CLI invocation
+  summary: /start-sensor on a sensor whose first execution.prepare[] step exits non-zero.
+version: 0.1.0

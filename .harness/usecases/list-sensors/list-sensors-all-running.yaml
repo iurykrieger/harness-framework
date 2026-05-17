@@ -1,0 +1,49 @@
+behavior:
+  business_rules:
+  - Each entry carries pid_alive, state, and signals_log_path.
+  - blocking entries additionally carry watcher_pid and watcher_alive.
+  - state is "running" when pid_alive is true.
+  - rationale is "%d running sensor(s)".
+  summary: |
+    runList iterates rs.Entries, computes pid_alive via registry.IsPIDAlive,
+    derives state, normalizes signals_log_path (handling legacy runs),
+    summarizes held_by, and emits one Signal carrying the full entries
+    array.
+description: |
+  /list-sensors with a registry containing entries whose subprocesses
+  are alive (kill -0 returns 0). Each entry is rendered with
+  state=running, pid_alive=true, and (for blocking entries) watcher_pid
+  + watcher_alive=true.
+evidence:
+- file: skills/list-sensors/scripts/list.go
+  line_start: 51
+  rationale: Per-entry projection — pid_alive, state, watcher_alive, signals_log_path.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"sensor_id":"list-sensors","verdict":"pass","severity":"info","evidence":[],"cost_actual":{"latency_ms":4},"metadata":{"kind":"list","entries":[{"sensor_id":"dev-server","run_id":"42-abc","blocking":true,"pid":12345,"pid_alive":true,"state":"running","watcher_pid":12346,"watcher_alive":true,"held_by":[{"kind":"manual"}],"signals_log_path":".harness/runtime/dev-server/42-abc/signals.log"},{"sensor_id":"postgres","run_id":"7-def","blocking":true,"pid":12400,"pid_alive":true,"state":"running","watcher_pid":12401,"watcher_alive":true,"held_by":[{"kind":"sensor","id":"app-server","pid":12345}],"signals_log_path":".harness/runtime/postgres/7-def/signals.log"}]}}'
+  invariants:
+  - verdict is "pass".
+  - Every entry has pid_alive=true.
+  - Every entry has state="running".
+  - Blocking entries carry watcher_pid and watcher_alive.
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One Signal verdict=pass, kind=list, entries=[…], exit code 0.
+id: list-sensors-all-running
+journey_id: list-sensors
+name: /list-sensors lists every entry with state=running when all PIDs are alive
+regression_priority: critical
+tags:
+- happy-path
+trigger:
+  fixture:
+    argv:
+    - list-sensors
+    state:
+      .harness/runtime/running_sensors.json: entries for dev-server and postgres,
+        both PIDs alive
+  shape: CLI invocation
+  summary: /list-sensors with one or more entries whose PIDs are alive.
+version: 0.1.0

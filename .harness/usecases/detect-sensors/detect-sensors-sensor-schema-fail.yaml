@@ -1,0 +1,63 @@
+behavior:
+  business_rules:
+  - Schema violations exit with code 1.
+  - The destination file is NOT written.
+  - The violation message comes from PrintValidationOrPlain.
+  summary: |
+    The schemas/sensor.yaml allOf branches forbid cost.tokens for
+    computational sensors. ValidateAndPersist surfaces the
+    jsonschema.ValidationError; write-sensor's branch on errors.As
+    matches and prints the violation.
+description: |
+  When the draft sensor violates schemas/sensor.yaml — most commonly
+  because the type/output discriminator rules forbid a field, or a
+  required field is missing — sensor.ValidateAndPersist returns a
+  jsonschema.ValidationError. write-sensor prints the violation to
+  stderr and exits 1.
+evidence:
+- file: skills/detect-sensors/scripts/write-sensor.go
+  line_start: 63
+  rationale: jsonschema.ValidationError handling that exits with code 1.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    filesystem:
+      /repo/.harness/sensors/badly-shaped-sensor.yaml: NOT written
+    stderr_includes: cost
+    stdout_lines: []
+  invariants:
+  - Exit code is 1.
+  - The destination file is NOT touched.
+  shape: stderr lines + exit code
+  side_effects: []
+  summary: Schema violation on stderr, exit code 1.
+id: detect-sensors-sensor-schema-fail
+journey_id: detect-sensors
+name: write-sensor rejects a draft sensor that fails schema validation
+regression_priority: high
+tags:
+- validation
+- error-handling
+trigger:
+  fixture:
+    argv:
+    - write-sensor
+    - --out=/repo/.harness/sensors
+    - /tmp/draft-bad.yaml
+    draft:
+      cost:
+        tokens:
+          budget: 1000
+      execution:
+        command: "true"
+        exit_code_map:
+        - exit_code: 0
+          verdict: pass
+      id: badly-shaped-sensor
+      output: single
+      type: computational
+      version: 0.1.0
+  shape: CLI invocation
+  summary: write-sensor with a draft that declares type=computational but provides
+    cost.tokens (forbidden).
+version: 0.1.0

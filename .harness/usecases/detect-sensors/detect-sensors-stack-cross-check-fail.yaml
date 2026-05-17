@@ -1,0 +1,65 @@
+behavior:
+  business_rules:
+  - Cross-check failures exit with code 1 (same class as schema failures).
+  - The destination file is NOT written.
+  - The stderr line carries the kind and message from the CrossCheckError.
+  summary: |
+    ValidateAndPersist runs CheckProducedBy after schema validation
+    succeeds. The mismatch becomes a stack.CrossCheckError with
+    kind=produced_by_orphan. write-stack's error handling matches
+    that type and formats it as "error: stack_<kind>: <message>".
+description: |
+  After schema validation, stack.ValidateAndPersist runs the
+  produced_by + journey_archetypes cross-checks. When a log_shape's
+  produced_by names a component that is not declared in components[],
+  CheckProducedBy returns a CrossCheckError with kind=produced_by_orphan.
+  write-stack prints "error: stack_produced_by_orphan: …" to stderr
+  and exits 1.
+evidence:
+- file: skills/detect-sensors/scripts/write-stack.go
+  line_start: 65
+  rationale: |
+    CrossCheckError handling — emits a stderr line prefixed with
+    "error: stack_<kind>:" and exits 1.
+- file: lib/stack/cross_check.go
+  rationale: CheckProducedBy implementation that produces the produced_by_orphan kind.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    filesystem:
+      /repo/.harness/stack.yaml: NOT written
+    stderr_includes: stack_produced_by_orphan
+    stdout_lines: []
+  invariants:
+  - Exit code is 1.
+  - stderr contains "stack_produced_by_orphan".
+  - The destination file is NOT touched.
+  shape: stderr line + exit code
+  side_effects: []
+  summary: Cross-check error on stderr, exit code 1.
+id: detect-sensors-stack-cross-check-fail
+journey_id: detect-sensors
+name: write-stack rejects when log_shapes.produced_by references unknown components
+regression_priority: high
+tags:
+- cross-check
+- error-handling
+trigger:
+  fixture:
+    argv:
+    - write-stack
+    - --out=/repo
+    - /tmp/draft-orphan.yaml
+    draft:
+      components:
+      - evidence: []
+        name: gomod
+        role: package-manager
+      log_shapes:
+      - format: plain
+        id: app-log
+        produced_by:
+        - ghost-component
+  shape: CLI invocation
+  summary: write-stack with a log_shape referencing an undeclared component.
+version: 0.1.0

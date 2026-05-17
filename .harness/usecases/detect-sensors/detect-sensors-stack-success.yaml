@@ -1,0 +1,82 @@
+behavior:
+  business_rules:
+  - --out is required.
+  - Exactly one positional payload path is required.
+  - The payload is read with sigs.k8s.io/yaml (YAML and JSON both work).
+  - Atomic write — partial files are never observable.
+  summary: |
+    run() parses --out and the positional payload, reads it as JSON
+    (via YAML round-trip), and delegates to stack.ValidateAndPersist
+    which performs schema validation, runs both cross-check functions,
+    and writes the file atomically with os.Rename.
+description: |
+  Happy-path of /detect-sensors Phase A. The draft stack payload
+  validates against schemas/stack.yaml and passes both cross-checks
+  (produced_by and journey_archetypes). The file is written atomically
+  to <project-root>/.harness/stack.yaml.
+evidence:
+- file: skills/detect-sensors/scripts/write-stack.go
+  line_start: 33
+  rationale: run() entry point that delegates to stack.ValidateAndPersist.
+- file: skills/detect-sensors/scripts/write-stack.go
+  line_start: 73
+  rationale: Stdout path emission on success.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    filesystem:
+      /repo/.harness/stack.yaml: validated stack payload
+    stdout_line: /repo/.harness/stack.yaml
+  invariants:
+  - Exit code is 0.
+  - Stdout contains the absolute file path.
+  - The destination file matches the validated payload.
+  shape: stdout line + exit code + filesystem change
+  side_effects:
+  - Creates or overwrites .harness/stack.yaml atomically.
+  summary: Absolute path of the written file on stdout, exit code 0.
+id: detect-sensors-stack-success
+journey_id: detect-sensors
+name: write-stack persists a valid stack payload atomically
+regression_priority: critical
+tags:
+- happy-path
+- persistence
+trigger:
+  fixture:
+    argv:
+    - write-stack
+    - --out=/repo
+    - /tmp/draft-stack.yaml
+    draft:
+      archetypes:
+      - cli-tool
+      components:
+      - evidence:
+        - file: go.mod
+          rationale: module file
+        name: gomod
+        role: package-manager
+      journeys:
+      - archetype: cli-tool
+        entry_points:
+        - command: my-cmd
+          evidence:
+            file: cmd/main.go
+            rationale: entry
+          kind: cli-command
+        id: my-cmd
+        name: My CLI
+        summary: A CLI command.
+      languages:
+      - name: go
+        version: 1.25.3
+      log_shapes:
+      - format: plain
+        id: app-log
+        produced_by:
+        - gomod
+      purpose: A demo project.
+  shape: CLI invocation
+  summary: write-stack invoked with a valid draft payload and a writable --out directory.
+version: 0.1.0

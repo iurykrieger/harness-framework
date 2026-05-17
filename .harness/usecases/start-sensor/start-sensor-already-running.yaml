@@ -1,0 +1,54 @@
+behavior:
+  business_rules:
+  - At most one live entry per sensor id (singleton).
+  - The check is performed inside the registry file lock to avoid races.
+  - metadata.existing_pid identifies the still-running subprocess.
+  summary: |
+    Inside the registry file lock, runStart calls rs.FindBlockingEntry
+    + registry.IsPIDAlive. A live entry short-circuits the spawn path:
+    no new subprocess, no new registry entry. The function exits the
+    locked region cleanly and emits the rejected Signal.
+description: |
+  /start-sensor on an id that already has a live registry entry (PID
+  reachable via kill -0) returns verdict=error, metadata.kind=rejected
+  with metadata.existing_pid pointing at the live subprocess.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  line_start: 346
+  rationale: Singleton rejection branch after FindBlockingEntry + IsPIDAlive check.
+- file: skills/start-sensor/scripts/start.go
+  line_start: 194
+  rationale: FindBlockingEntry + IsPIDAlive logic inside the file-locked region.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    stdout_lines:
+    - '{"sensor_id":"dev-server","verdict":"error","severity":"high","evidence":[],"cost_actual":{"latency_ms":15},"metadata":{"kind":"rejected","existing_pid":12345}}'
+  invariants:
+  - metadata.kind is "rejected".
+  - metadata.existing_pid equals the live entry PID.
+  - The original registry entry is unchanged.
+  - No new subprocess is spawned.
+  shape: One JSON line on stdout + exit code
+  side_effects:
+  - None — the existing registry entry is untouched.
+  summary: One Signal on stdout, verdict=error, metadata.kind=rejected, exit code
+    1.
+id: start-sensor-already-running
+journey_id: start-sensor
+name: /start-sensor is a singleton — rejects when sensor is already running
+regression_priority: high
+tags:
+- idempotent
+- singleton
+trigger:
+  fixture:
+    argv:
+    - start-sensor
+    - dev-server
+    state:
+      .harness/runtime/running_sensors.json: entry for dev-server with pid=12345,
+        IsPIDAlive=true
+  shape: CLI invocation
+  summary: /start-sensor on an id whose previous run is still alive.
+version: 0.1.0

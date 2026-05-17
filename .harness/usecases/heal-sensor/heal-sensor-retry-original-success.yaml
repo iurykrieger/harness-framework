@@ -1,0 +1,52 @@
+behavior:
+  business_rules:
+  - sensor.type=inferential selects the run_inferential build tag.
+  - Anything else (or absent) defaults to run_computational.
+  - CLAUDE_PLUGIN_ROOT is required.
+  - The child's stdout/stderr and exit code pass through.
+  summary: |
+    The script parses the sensor's type, chooses run_computational or
+    run_inferential, and forwards to the runner. The retry runs the
+    sensor exactly once — the heal loop does NOT recurse.
+description: |
+  Step 4 of /heal-sensor. retry-original reads the patched sensor file,
+  picks the right runner build tag (run_computational or
+  run_inferential) based on sensor.type, spawns `go run` once on
+  ./skills/run-sensor/scripts, and forwards the child's stdout/stderr.
+  The runner's exit code becomes retry-original's exit code.
+evidence:
+- file: skills/heal-sensor/scripts/retry-original.go
+  line_start: 30
+  rationale: run() entry — picks the build tag from sensor.type and forwards to the
+    runner exactly once.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"sensor_id":"integration-test","verdict":"pass","severity":"info","evidence":[],"cost_actual":{"latency_ms":420},"metadata":{"kind":"aggregate"}}'
+  invariants:
+  - The child's stdout/stderr is forwarded verbatim.
+  - The runner's exit code is propagated.
+  - retry-original makes EXACTLY ONE child invocation (no retry loop).
+  shape: JSONL on stdout + forwarded exit code
+  side_effects:
+  - Spawns one `go run` child process.
+  summary: Runner's JSONL on stdout, exit code mirrors the runner.
+id: heal-sensor-retry-original-success
+journey_id: heal-sensor
+name: retry-original re-invokes the sensor once after fixes are applied
+regression_priority: high
+tags:
+- happy-path
+- retry
+trigger:
+  fixture:
+    argv:
+    - retry-original
+    - --sensor=/repo/.harness/sensors/integration-test.yaml
+    env:
+      CLAUDE_PLUGIN_ROOT: /plugin
+  shape: CLI invocation
+  summary: retry-original --sensor=…/.harness/sensors/integration-test.yaml after
+    a patch persisted by apply-sensors.
+version: 0.1.0

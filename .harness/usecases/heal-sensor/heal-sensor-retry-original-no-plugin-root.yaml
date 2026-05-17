@@ -1,0 +1,45 @@
+behavior:
+  business_rules:
+  - CLAUDE_PLUGIN_ROOT must be set to a non-empty path.
+  - Exit code is 2.
+  - No child process is spawned.
+  summary: |
+    The script reads CLAUDE_PLUGIN_ROOT after parsing argv and sensor
+    type. An empty value short-circuits with an error before any
+    subprocess is spawned.
+description: |
+  retry-original needs CLAUDE_PLUGIN_ROOT to chdir the `go` process
+  into the plugin tree (-C flag). With the env var empty, it prints
+  an error to stderr and exits 2 without spawning the runner.
+evidence:
+- file: skills/heal-sensor/scripts/retry-original.go
+  line_start: 60
+  rationale: CLAUDE_PLUGIN_ROOT empty branch — emits to stderr and returns 2.
+expected_outcome:
+  fixture:
+    exit_code: 2
+    stderr_includes: CLAUDE_PLUGIN_ROOT not set
+    stdout_lines: []
+  invariants:
+  - Exit code is 2.
+  - No subprocess is spawned.
+  shape: stderr line + exit code
+  side_effects: []
+  summary: Error message on stderr, exit code 2.
+id: heal-sensor-retry-original-no-plugin-root
+journey_id: heal-sensor
+name: retry-original errors when CLAUDE_PLUGIN_ROOT is unset
+regression_priority: medium
+tags:
+- error-handling
+- environment
+trigger:
+  fixture:
+    argv:
+    - retry-original
+    - --sensor=/repo/.harness/sensors/integration-test.yaml
+    env:
+      CLAUDE_PLUGIN_ROOT: ""
+  shape: CLI invocation
+  summary: retry-original invoked when the runtime did not export CLAUDE_PLUGIN_ROOT.
+version: 0.1.0

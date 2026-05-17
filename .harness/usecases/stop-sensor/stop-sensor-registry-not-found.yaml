@@ -1,0 +1,50 @@
+behavior:
+  business_rules:
+  - Sensor cannot be running without a registry file.
+  - Verdict is error (a sensor cannot logically be running without registry).
+  - Exit code is 1.
+  - rationale mentions the resolved registry path.
+  summary: |
+    Before acquiring any lock, runStop checks b.Res.Exists from the
+    bootstrap. A false value means the registry discovery resolved a
+    root but no registry file is on disk. The rationale string names
+    the resolved registry path to aid the user.
+description: |
+  When the registry file is absent (no .harness/runtime/running_sensors.json),
+  /stop-sensor returns verdict=error, metadata.kind=stop_no_registry,
+  exit code 1. Rationale spells out the likely causes (wrong cwd,
+  misconfigured HARNESS_REGISTRY_ROOT).
+evidence:
+- file: skills/stop-sensor/scripts/stop.go
+  line_start: 67
+  rationale: registry_exists=false branch emitting stop_no_registry.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    stdout_lines:
+    - '{"sensor_id":"dev-server","verdict":"error","severity":"high","evidence":[{"rationale":"registry
+      not found at /repo/.harness/runtime/running_sensors.json"}],"cost_actual":{"latency_ms":2},"metadata":{"kind":"stop_no_registry"}}'
+  invariants:
+  - Exit code is 1.
+  - metadata.kind is "stop_no_registry".
+  - The rationale names the missing registry path.
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One Signal verdict=error, metadata.kind=stop_no_registry, exit code 1.
+id: stop-sensor-registry-not-found
+journey_id: stop-sensor
+name: /stop-sensor errors when running_sensors.json does not exist
+regression_priority: high
+tags:
+- error-handling
+- registry-discovery
+trigger:
+  fixture:
+    argv:
+    - stop-sensor
+    - dev-server
+    state:
+      .harness/runtime/running_sensors.json: absent
+  shape: CLI invocation
+  summary: /stop-sensor invoked when registry file is missing or unreachable.
+version: 0.1.0

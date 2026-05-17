@@ -1,0 +1,60 @@
+behavior:
+  business_rules:
+  - execution.blocking=true ⇒ /run-sensor refuses.
+  - The runner emits no Signal in this rejection path.
+  - Exit code 2 (usage error class).
+  summary: |
+    Before delegating to the orchestrator, run() inspects
+    execution.blocking. When true, it refuses with a guidance line on
+    stderr and returns exit code 2. Use /start-sensor for blocking
+    sensors instead.
+description: |
+  /run-sensor invoked on a sensor whose execution.blocking field is true.
+  These sensors are meant for /start-sensor. The runner exits 2 with a
+  "use /start-sensor instead" hint and does NOT spawn the command.
+evidence:
+- file: skills/run-sensor/scripts/run-computational.go
+  line_start: 106
+  rationale: Inspects sensor execution.blocking flag and refuses with exit 2 before
+    delegating.
+expected_outcome:
+  fixture:
+    exit_code: 2
+    stderr_match: sensor is blocking; use /start-sensor instead
+    stdout_lines: []
+  invariants:
+  - Exit code is 2.
+  - No JSON Signal on stdout.
+  - Subprocess is NOT spawned.
+  shape: stderr line + exit code
+  side_effects: []
+  summary: |
+    Empty stdout, "error: sensor is blocking; use /start-sensor instead"
+    on stderr, exit code 2.
+id: run-sensor-blocking-rejected
+journey_id: run-sensor
+name: /run-sensor refuses a sensor with execution.blocking=true
+regression_priority: medium
+tags:
+- error-handling
+- validation
+trigger:
+  fixture:
+    argv:
+    - run-computational
+    - dev-server
+    sensor:
+      execution:
+        blocking: true
+        command: npm run dev
+        output_parsing:
+          patterns:
+          - regex: ready on (.+)
+            verdict: pass
+      id: dev-server
+      output: stream
+      type: computational
+  shape: CLI invocation
+  summary: |
+    /run-sensor invoked on a sensor with execution.blocking=true.
+version: 0.1.0

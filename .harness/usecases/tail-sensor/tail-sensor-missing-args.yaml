@@ -1,0 +1,44 @@
+behavior:
+  business_rules:
+  - Both sensor.id (with optional /run.id) and cursor are required.
+  - sensor_id in the Signal is "tail" when the user did not supply enough args.
+  - Exit code is 2 (usage error).
+  summary: |
+    runTail's first check is len(args) < 2. The Signal builder uses
+    "tail" as sensor_id (no real id available yet) and exits with code 2.
+description: |
+  /tail-sensor with fewer than two arguments returns verdict=error,
+  metadata.kind=tail_invalid_args, exit code 2.
+evidence:
+- file: skills/tail-sensor/scripts/tail.go
+  line_start: 36
+  rationale: Argv length check that produces tail_invalid_args.
+expected_outcome:
+  fixture:
+    exit_code: 2
+    stdout_lines:
+    - '{"sensor_id":"tail","verdict":"error","severity":"high","evidence":[{"rationale":"expected
+      <sensor.id>[/<run.id>] <cursor>"}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"tail_invalid_args"}}'
+  invariants:
+  - Exit code is 2.
+  - sensor_id is "tail".
+  - metadata.kind is "tail_invalid_args".
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One Signal sensor_id=tail, verdict=error, kind=tail_invalid_args, exit
+    code 2.
+id: tail-sensor-missing-args
+journey_id: tail-sensor
+name: /tail-sensor requires both sensor id and cursor
+regression_priority: medium
+tags:
+- error-handling
+- usage
+trigger:
+  fixture:
+    argv:
+    - tail-sensor
+    - dev-server
+  shape: CLI invocation
+  summary: /tail-sensor with zero or one positional argument.
+version: 0.1.0

@@ -1,0 +1,84 @@
+behavior:
+  business_rules:
+  - Exit code 0 means the requested sensor's command ran and emitted its aggregate.
+  - The aggregate Signal is the LAST JSONL line on stdout.
+  - One individual Signal per output line that matches an output_parsing.pattern.
+  - Aggregate verdict = worst-of(exit_code_map[exit], MAX(individual verdicts)).
+  summary: |
+    run() parses argv, resolves the sensor path, reads the YAML, refuses
+    if execution.blocking=true, derives id+projectRoot from the path, and
+    delegates to orchestrator.RunWithDepsRoot which executes the DAG and
+    streams Signals to stdout in JSONL.
+description: |
+  Happy-path of /run-sensor for a computational sensor with output=stream.
+  The orchestrator resolves the requires[kind=sensor] DAG, runs the
+  sensor's lifecycle (prepare → command → teardown), streams one
+  individual Signal per matched stdout/stderr line, and finishes with one
+  aggregate Signal as the LAST JSONL line on stdout, verdict=pass.
+evidence:
+- file: skills/run-sensor/scripts/run-computational.go
+  line_start: 72
+  rationale: run() entry point — argv parsing, sensor resolution, blocking refusal,
+    delegation to orchestrator.
+- file: lib/orchestrator/lifecycle.go
+  rationale: Lifecycle executor (prepare → command → teardown) producing the aggregate
+    Signal that becomes the LAST JSONL line.
+- file: lib/signal/aggregate.go
+  rationale: Aggregate verdict computation (worst-of exit_code_map and stream verdicts).
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"sensor_id":"lint-go-vet-stream","verdict":"pass","severity":"info","evidence":[{"file":"lib/foo.go","excerpt":"PASS
+      lib/foo.go"}],"cost_actual":{"latency_ms":3}}'
+    - '{"sensor_id":"lint-go-vet-stream","verdict":"pass","severity":"info","evidence":[],"cost_actual":{"latency_ms":12},"metadata":{"kind":"aggregate"}}'
+  invariants:
+  - The aggregate Signal is the LAST JSONL line on stdout.
+  - Aggregate verdict is "pass" when exit code is 0 and all individual verdicts are
+    pass.
+  - Aggregate severity is "info" when verdict is "pass".
+  - Each Signal validates against schemas/signal.yaml.
+  shape: JSONL on stdout + exit code
+  side_effects:
+  - None on the filesystem (no registry write — that is /start-sensor).
+  summary: |
+    Stdout carries JSONL: zero or more individual Signals followed by the
+    aggregate Signal as the LAST line. verdict=pass, exit code 0.
+id: run-sensor-stream-aggregate-pass
+journey_id: run-sensor
+name: Computational stream sensor finishes with all observations passing
+regression_priority: critical
+tags:
+- happy-path
+- computational
+- stream
+trigger:
+  fixture:
+    argv:
+    - run-computational
+    - lint-go-vet-stream
+    env:
+      HARNESS_REGISTRY_ROOT: /repo
+    sensor:
+      execution:
+        command: echo 'PASS lib/foo.go'
+        exit_code_map:
+        - exit_code: 0
+          verdict: pass
+        output_parsing:
+          patterns:
+          - regex: ^PASS (.+)$
+            verdict: pass
+      id: lint-go-vet-stream
+      output: stream
+      type: computational
+  preconditions:
+  - The sensor file exists at .harness/sensors/lint-go-vet-stream.yaml
+  - The sensor passes schema validation
+  - No requires[kind=sensor] declared (or all already passing)
+  shape: CLI invocation
+  summary: |
+    User invokes `/run-sensor <id>` where the sensor declares
+    type=computational, output=stream, no requires[kind=sensor], a single
+    output_parsing.pattern that matches a "PASS" line, and exits 0.
+version: 0.1.0

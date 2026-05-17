@@ -1,0 +1,49 @@
+behavior:
+  business_rules:
+  - Schema violations exit with code 1 (validation class).
+  - The destination file is NOT written.
+  summary: |
+    sensor.ValidateAndPersist surfaces the underlying
+    jsonschema.ValidationError. The script's errors.As branch matches
+    and emits the schema_invalid Signal.
+description: |
+  When the draft violates schemas/sensor.yaml, ValidateAndPersist
+  returns a jsonschema.ValidationError. write-sensor emits
+  verdict=error, metadata.kind=schema_invalid with the violation
+  detail in rationale. Exit code 1.
+evidence:
+- file: skills/create-sensor/scripts/write-sensor.go
+  line_start: 96
+  rationale: jsonschema.ValidationError handling branch.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    stdout_lines:
+    - '{"sensor_id":"write-sensor","verdict":"error","severity":"high","evidence":[{"rationale":"validation:
+      missing required field type"}],"cost_actual":{"latency_ms":2},"metadata":{"kind":"schema_invalid"}}'
+  invariants:
+  - metadata.kind is "schema_invalid".
+  - Exit code is 1.
+  - The destination file is NOT written.
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One error Signal verdict=error, kind=schema_invalid, exit code 1.
+id: create-sensor-schema-invalid
+journey_id: create-sensor
+name: create-sensor rejects a draft that fails schemas/sensor.yaml
+regression_priority: high
+tags:
+- validation
+- error-handling
+trigger:
+  fixture:
+    argv:
+    - write-sensor
+    - --out=/repo/.harness/sensors
+    - /tmp/draft.yaml
+    draft:
+      id: incomplete
+      output: single
+  shape: CLI invocation
+  summary: write-sensor with a draft missing a required field (e.g. type).
+version: 0.1.0

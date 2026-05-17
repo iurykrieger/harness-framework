@@ -1,0 +1,49 @@
+behavior:
+  business_rules:
+  - state=orphan when pid_alive is false.
+  - The overall verdict stays pass because /list-sensors itself succeeded.
+  - Orphan entries are not auto-removed by /list-sensors.
+  summary: |
+    For each entry, runList checks kill(pid,0). When the process is
+    gone, the entry is rendered with pid_alive=false and state=orphan
+    so the operator can clean up via /stop-sensor or manual edit.
+description: |
+  /list-sensors with a registry entry whose recorded PID no longer
+  resolves to a live process renders state=orphan + pid_alive=false.
+  The overall verdict remains pass — the list query itself succeeded.
+evidence:
+- file: skills/list-sensors/scripts/list.go
+  line_start: 53
+  rationale: state classification — running vs orphan based on registry.IsPIDAlive.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"sensor_id":"list-sensors","verdict":"pass","severity":"info","evidence":[],"cost_actual":{"latency_ms":3},"metadata":{"kind":"list","entries":[{"sensor_id":"crashed-server","run_id":"1-xyz","blocking":true,"pid":99999,"pid_alive":false,"state":"orphan","watcher_pid":99998,"watcher_alive":false,"held_by":[],"signals_log_path":".harness/runtime/crashed-server/1-xyz/signals.log"}]}}'
+  invariants:
+  - The orphan entry has state="orphan".
+  - The orphan entry has pid_alive=false.
+  - verdict is "pass".
+  shape: One JSON line on stdout + exit code
+  side_effects:
+  - The registry is NOT modified. /list-sensors is read-only.
+  summary: One Signal verdict=pass, kind=list, exit code 0, with at least one entry
+    marked orphan.
+id: list-sensors-orphan
+journey_id: list-sensors
+name: /list-sensors flags entries whose PIDs are dead as state=orphan
+regression_priority: medium
+tags:
+- edge-case
+- orphan
+trigger:
+  fixture:
+    argv:
+    - list-sensors
+    state:
+      .harness/runtime/running_sensors.json: entry for crashed-server with pid=99999,
+        IsPIDAlive=false
+  shape: CLI invocation
+  summary: /list-sensors with at least one entry whose subprocess died without registry
+    cleanup.
+version: 0.1.0

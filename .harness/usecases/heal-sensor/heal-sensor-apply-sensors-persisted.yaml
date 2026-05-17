@@ -1,0 +1,75 @@
+behavior:
+  business_rules:
+  - The patch version is bumped before validation (idempotent re-runs increment further).
+  - Both patches and new sensors are validated against the sensor schema.
+  - Output is a single JSON document with the written paths.
+  summary: |
+    For each patch, the script marshals + bumps the patch version, then
+    persists via ValidateAndPersist (overwrite allowed, no fixture
+    pre-check). For each new sensor, it persists directly. Schema or
+    persist errors return exit 1 with a stderr message; success returns
+    exit 0 with a {"written":[…]} JSON document.
+description: |
+  Step 3 of /heal-sensor. apply-sensors iterates plan.SensorPatches
+  (bumping the patch version) and plan.NewSetupSensors, persisting
+  each through lib/sensor.ValidateAndPersist. The final stdout is a
+  JSON document listing every written path.
+evidence:
+- file: skills/heal-sensor/scripts/apply-sensors.go
+  line_start: 32
+  rationale: run() entry — iterates patches + new sensors and persists each via ValidateAndPersist.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    filesystem:
+      /repo/.harness/sensors/integration-test.yaml: version bumped, requires updated
+      /repo/.harness/sensors/start-postgres.yaml: new setup sensor written
+    stdout_lines:
+    - '{"written":["/repo/.harness/sensors/integration-test.yaml","/repo/.harness/sensors/start-postgres.yaml"]}'
+  invariants:
+  - Exit code is 0.
+  - Each entry in "written" exists on disk.
+  shape: One JSON document on stdout + exit code + filesystem
+  side_effects:
+  - Overwrites patched sensors.
+  - Creates new setup sensors.
+  summary: One JSON document listing written paths, exit code 0.
+id: heal-sensor-apply-sensors-persisted
+journey_id: heal-sensor
+name: apply-sensors persists each patched and new sensor via ValidateAndPersist
+regression_priority: high
+tags:
+- persistence
+- side-effects
+- happy-path
+trigger:
+  fixture:
+    argv:
+    - apply-sensors
+    - --plan=/tmp/plan.json
+    - --out=/repo/.harness/sensors
+    plan:
+      new_setup_sensors:
+      - id: start-postgres
+        json:
+          execution:
+            command: ./scripts/start-pg.sh
+            exit_code_map:
+            - exit_code: 0
+              verdict: pass
+          id: start-postgres
+          kind: setup
+          output: single
+          type: computational
+          version: 0.1.0
+      sensor_patches:
+      - id: integration-test
+        patch:
+          requires:
+          - kind: env
+            name: DATABASE_URL
+          version: 0.1.1
+  shape: CLI invocation
+  summary: apply-sensors --plan=…/plan.json --out=…/.harness/sensors with a plan that
+    contains both patches and new sensors.
+version: 0.1.0

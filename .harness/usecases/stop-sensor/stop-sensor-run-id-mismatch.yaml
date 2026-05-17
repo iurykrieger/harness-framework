@@ -1,0 +1,50 @@
+behavior:
+  business_rules:
+  - run_id ownership is enforced by sensor_id.
+  - The error is distinct from "not_running" (a run does exist, just under a different
+    sensor).
+  summary: |
+    runStop parses sensorID/runID from the first arg. With an explicit
+    runID it calls rs.FindEntryByRunID. If the entry's SensorID does
+    not match the requested sensorID, it returns mismatchErr which is
+    surfaced as a run_id_sensor_mismatch Signal outside the lock.
+description: |
+  /stop-sensor invoked as sensorID/runID where the run_id exists in
+  the registry but is owned by a different sensor. runStop refuses
+  with verdict=error, metadata.kind=run_id_sensor_mismatch, exit code 1.
+evidence:
+- file: skills/stop-sensor/scripts/stop.go
+  line_start: 136
+  rationale: mismatchErr handling branch that emits run_id_sensor_mismatch.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    stdout_lines:
+    - '{"sensor_id":"app-server","verdict":"error","severity":"high","evidence":[{"rationale":"run_id
+      \"42-abcd1234\" does not belong to sensor \"app-server\""}],"cost_actual":{"latency_ms":2},"metadata":{"kind":"run_id_sensor_mismatch"}}'
+  invariants:
+  - metadata.kind is "run_id_sensor_mismatch".
+  - The original entry remains untouched.
+  - The subprocess of the mismatching run is NOT killed.
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One Signal verdict=error, metadata.kind=run_id_sensor_mismatch, exit code
+    1.
+id: stop-sensor-run-id-mismatch
+journey_id: stop-sensor
+name: Explicit run_id belongs to a different sensor
+regression_priority: medium
+tags:
+- error-handling
+- validation
+trigger:
+  fixture:
+    argv:
+    - stop-sensor
+    - app-server/42-abcd1234
+    state:
+      .harness/runtime/running_sensors.json: entry for run_id=42-abcd1234 with sensor_id=dev-server
+  shape: CLI invocation
+  summary: /stop-sensor app-server/42-abcd1234 when run_id 42-abcd1234 belongs to
+    dev-server instead.
+version: 0.1.0

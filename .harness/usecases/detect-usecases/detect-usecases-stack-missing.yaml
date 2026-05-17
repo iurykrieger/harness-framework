@@ -1,0 +1,52 @@
+behavior:
+  business_rules:
+  - stack.yaml is mandatory for /detect-usecases.
+  - The hint mentions /detect-sensors as the producing skill.
+  - Exit code is 2 (setup error, not a validation failure).
+  summary: |
+    Before validating the draft, run() calls loadStack which os.Stats
+    <project-root>/.harness/stack.yaml. On missing, it prints a hint
+    pointing the user to /detect-sensors and returns exit 2.
+description: |
+  /detect-usecases needs the project stack to cross-check journey_id
+  references. When .harness/stack.yaml does not exist under
+  --project-root, write-usecase prints "error: stack_missing: <path>"
+  to stderr and exits 2.
+evidence:
+- file: skills/detect-usecases/scripts/write-usecase.go
+  line_start: 90
+  rationale: loadStack helper that emits stack_missing when .harness/stack.yaml is
+    absent.
+expected_outcome:
+  fixture:
+    exit_code: 2
+    filesystem:
+      /repo/.harness/usecases: NOT created
+    stderr_includes: stack_missing
+    stdout_lines: []
+  invariants:
+  - Exit code is 2.
+  - stderr contains "stack_missing".
+  - No output usecase file is written.
+  shape: stderr line + exit code
+  side_effects: []
+  summary: stack_missing error on stderr, exit code 2.
+id: detect-usecases-stack-missing
+journey_id: detect-usecases
+name: write-usecase exits stack_missing when .harness/stack.yaml is absent
+regression_priority: high
+tags:
+- setup
+- error-handling
+trigger:
+  fixture:
+    argv:
+    - write-usecase
+    - --out=/repo/.harness/usecases
+    - --project-root=/repo
+    - /tmp/draft-usecase.yaml
+    state:
+      .harness/stack.yaml: absent
+  shape: CLI invocation
+  summary: write-usecase against a project whose .harness/stack.yaml does not exist.
+version: 0.1.0

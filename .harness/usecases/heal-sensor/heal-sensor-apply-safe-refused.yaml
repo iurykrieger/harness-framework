@@ -1,0 +1,56 @@
+behavior:
+  business_rules:
+  - The allowlist is hardcoded — no plugin can extend it.
+  - Non-allow-listed actions are refused, NOT skipped silently.
+  - The script's exit code stays 0; the refusal is conveyed in the JSON output.
+  summary: |
+    heal.Apply's switch on action.kind falls into the default branch
+    when the kind is not on the allowlist. The default branch records
+    a refusal with applied=false and a reason naming the offending kind.
+description: |
+  /heal-sensor never executes arbitrary shell commands or removes
+  files. Any action.kind outside {copy-template, mkdir, touch,
+  set-env-in-file} produces applied=false with a reason explaining
+  the refusal. The script's exit code remains 0 because the refusal
+  is a successful outcome of the allowlist check.
+evidence:
+- file: lib/heal/apply.go
+  line_start: 55
+  rationale: default branch of the kind switch — produces the not-in-allowlist refusal.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"results":[{"action":{"kind":"rm","path":"/repo/.env"},"applied":false,"reason":"kind
+      \"rm\" not in allowlist"}]}'
+  invariants:
+  - applied is false.
+  - reason names the disallowed kind.
+  - No filesystem changes happen.
+  - Exit code is 0.
+  shape: One JSON document on stdout + exit code
+  side_effects: []
+  summary: results JSON with applied=false and a refusal reason, exit code 0.
+id: heal-sensor-apply-safe-refused
+journey_id: heal-sensor
+name: apply-safe refuses any action kind outside the hardcoded allowlist
+regression_priority: high
+tags:
+- security
+- allowlist
+- error-handling
+trigger:
+  fixture:
+    argv:
+    - apply-safe
+    - --plan=/tmp/plan.json
+    - --sensor=/repo/.harness/sensors/integration-test.yaml
+    - --root=/repo
+    plan:
+      auto_apply:
+      - kind: rm
+        path: /repo/.env
+  shape: CLI invocation
+  summary: apply-safe with a plan whose first action has kind="rm" (or any kind not
+    on the allowlist).
+version: 0.1.0

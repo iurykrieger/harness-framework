@@ -1,0 +1,58 @@
+behavior:
+  business_rules:
+  - The dir argument is required.
+  - The dir must fall under FailedSensor.Requires.Context.
+  - os.MkdirAll semantics — parents are created.
+  summary: |
+    The mkdir branch verifies the dir argument falls under one of the
+    sensor's context paths (security boundary). If it does, os.MkdirAll
+    is invoked; the action result records applied=true.
+description: |
+  The mkdir action creates a directory under one of
+  FailedSensor.Requires.Context paths. Outside the declared context
+  the action is refused. The action is idempotent — re-running on an
+  existing directory is a successful no-op.
+evidence:
+- file: lib/heal/apply.go
+  line_start: 48
+  rationale: mkdir branch of the apply dispatcher.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    filesystem:
+      /repo/tmp/build-output: directory exists
+    stdout_lines:
+    - '{"results":[{"action":{"kind":"mkdir","dir":"tmp/build-output"},"applied":true}]}'
+  invariants:
+  - The directory exists after the call.
+  - applied is true.
+  shape: One JSON document on stdout + exit code + filesystem
+  side_effects:
+  - Creates the directory tree.
+  summary: results JSON with applied=true; the dir exists on disk; exit code 0.
+id: heal-sensor-apply-safe-mkdir
+journey_id: heal-sensor
+name: apply-safe mkdir creates a directory inside the sensor's declared context
+regression_priority: medium
+tags:
+- setup
+- side-effects
+trigger:
+  fixture:
+    argv:
+    - apply-safe
+    - --plan=/tmp/plan.json
+    - --sensor=/repo/.harness/sensors/needs-tmp-dir.yaml
+    - --root=/repo
+    plan:
+      auto_apply:
+      - dir: tmp/build-output
+        kind: mkdir
+    sensor:
+      requires:
+        context:
+        - tmp
+  shape: CLI invocation
+  summary: apply-safe with a plan containing a mkdir action whose dir is under the
+    sensor's context.
+version: 0.1.0

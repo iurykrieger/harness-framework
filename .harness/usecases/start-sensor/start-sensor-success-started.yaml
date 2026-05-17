@@ -1,0 +1,85 @@
+behavior:
+  business_rules:
+  - execution.blocking MUST be true.
+  - Subprocess is spawned with Setsid so it survives the runner.
+  - stdout/stderr is redirected to .harness/runtime/<id>/<run-id>/raw.log.
+  - The watcher binary is spawned to tail raw.log into signals.log.
+  - The registry entry held_by contains exactly one entry of kind=manual.
+  summary: |
+    runStart resolves the sensor, validates schema, confirms blocking,
+    runs deps + preflight gate + prepare[], spawns the subprocess
+    detached (Setsid, raw.log redirect), spawns the watcher subprocess,
+    writes the registry entry under file lock, and emits a started Signal.
+description: |
+  Happy-path of /start-sensor. The target sensor declares
+  execution.blocking=true, the requires[] gate passes, prepare[] succeeds,
+  the subprocess is spawned detached with its raw.log redirected, the
+  watcher subprocess is spawned to tail raw.log into signals.log, the
+  registry entry is written with held_by:[{kind:manual}], and a Signal
+  verdict=pass, metadata.kind=started is emitted on stdout.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  line_start: 385
+  rationale: Builds and emits the started Signal after registry write succeeds.
+- file: skills/start-sensor/scripts/start.go
+  line_start: 189
+  rationale: registry.WithFileLock body — spawn detached + watcher + registry persist.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    filesystem:
+      .harness/runtime/dev-server/42-abcd1234/raw.log: exists
+      .harness/runtime/dev-server/42-abcd1234/signals.log: exists
+      .harness/runtime/running_sensors.json: contains entry for sensor_id=dev-server,
+        pid=54321, held_by=[{kind:manual}]
+    stdout_lines:
+    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","run_id":"42-abcd1234","evidence":[],"cost_actual":{"latency_ms":80},"metadata":{"kind":"started","pid":54321,"watcher_pid":54322,"log_dir":".harness/runtime/dev-server/42-abcd1234","next_cursor":0}}'
+  invariants:
+  - verdict is "pass".
+  - metadata.kind is "started".
+  - registry entry exists with held_by containing {kind:"manual"}.
+  - subprocess PID is alive (kill -0 succeeds).
+  - watcher PID is alive.
+  shape: One JSON line on stdout + exit code + filesystem changes
+  side_effects:
+  - Creates .harness/runtime/<id>/<run-id>/{raw.log,signals.log}.
+  - Writes .harness/runtime/running_sensors.json.
+  - Spawns one detached subprocess plus one watcher subprocess.
+  summary: |
+    One Signal on stdout, verdict=pass, metadata.kind=started, with
+    metadata.pid, metadata.watcher_pid, metadata.log_dir, and
+    metadata.next_cursor=0. Exit code 0. A new entry exists in
+    .harness/runtime/running_sensors.json.
+id: start-sensor-success-started
+journey_id: start-sensor
+name: Blocking sensor spawned detached, watcher attached, registry entry written
+regression_priority: critical
+tags:
+- happy-path
+- blocking
+- side-effects
+trigger:
+  fixture:
+    argv:
+    - start-sensor
+    - dev-server
+    env:
+      CLAUDE_PLUGIN_ROOT: /plugin
+      HARNESS_REGISTRY_ROOT: /repo
+    sensor:
+      execution:
+        blocking: true
+        command: npm run dev
+        graceful_timeout_ms: 5000
+        output_parsing:
+          patterns:
+          - regex: ready on (.+)
+            verdict: pass
+      id: dev-server
+      output: stream
+      type: computational
+  shape: CLI invocation
+  summary: |
+    User invokes /start-sensor with the id of a sensor whose
+    execution.blocking=true and whose requires[] are satisfied.
+version: 0.1.0

@@ -1,0 +1,64 @@
+behavior:
+  business_rules:
+  - cursor=0 means read every line.
+  - One emitted Signal per line of signals.log past the cursor.
+  - The envelope Signal is the LAST line on stdout.
+  - next_cursor equals the total number of lines read.
+  summary: |
+    runTail validates argv + cursor, finds the registry entry (unique
+    or via run_id), opens signals.log, skips the first <cursor> lines,
+    emits each remaining line on stdout, and finishes with the envelope
+    Signal carrying next_cursor.
+description: |
+  Happy-path of /tail-sensor with cursor=0. Each existing JSONL line in
+  signals.log is emitted on stdout as a Signal; an envelope Signal with
+  metadata.kind=envelope and metadata.next_cursor=<line-count> closes
+  the stream.
+evidence:
+- file: skills/tail-sensor/scripts/tail.go
+  line_start: 186
+  rationale: Envelope Signal construction + next_cursor metadata.
+- file: skills/tail-sensor/scripts/tail.go
+  line_start: 153
+  rationale: signals.log path resolution and per-line emission.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[{"excerpt":"ready
+      on :8080"}],"cost_actual":{"latency_ms":1}}'
+    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[{"excerpt":"GET
+      /healthz 200"}],"cost_actual":{"latency_ms":1}}'
+    - '{"sensor_id":"dev-server","verdict":"warn","severity":"low","evidence":[{"excerpt":"slow
+      query 1200ms"}],"cost_actual":{"latency_ms":1}}'
+    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[{"rationale":"tail
+      envelope"}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"envelope","next_cursor":3}}'
+  invariants:
+  - The envelope is the LAST JSON line on stdout.
+  - metadata.kind on the envelope is "envelope".
+  - metadata.next_cursor equals the total line count.
+  shape: JSONL on stdout + exit code
+  side_effects:
+  - signals.log is opened read-only — no writes.
+  summary: |
+    JSONL on stdout — each individual Signal from signals.log followed
+    by the envelope Signal. Exit code 0.
+id: tail-sensor-cursor-zero-read-all
+journey_id: tail-sensor
+name: /tail-sensor with cursor=0 reads every line of signals.log
+regression_priority: critical
+tags:
+- happy-path
+- cursor
+trigger:
+  fixture:
+    argv:
+    - tail-sensor
+    - dev-server
+    - "0"
+    state:
+      .harness/runtime/dev-server/42-abc/signals.log: 3 JSONL lines of individual
+        Signals
+  shape: CLI invocation
+  summary: /tail-sensor <id> 0 with at least one line in signals.log.
+version: 0.1.0

@@ -1,0 +1,51 @@
+behavior:
+  business_rules:
+  - Schema violations exit with code 1.
+  - The destination file is NOT written.
+  - The error detail is printed to stderr.
+  summary: |
+    stack.ValidateAndPersist calls schema.PrintValidationOrPlain when
+    it detects a jsonschema.ValidationError. Exit code 1 signals a
+    validation failure (vs. exit 2 for I/O / setup errors).
+description: |
+  When the draft stack payload violates schemas/stack.yaml (missing
+  required field, wrong type, etc.), stack.ValidateAndPersist returns
+  a jsonschema.ValidationError. write-stack prints the violation
+  detail to stderr and exits 1; no file is written.
+evidence:
+- file: skills/detect-sensors/scripts/write-stack.go
+  line_start: 60
+  rationale: jsonschema.ValidationError handling branch — exit 1, no file write.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    filesystem:
+      /repo/.harness/stack.yaml: NOT written
+    stderr_includes: required
+    stdout_lines: []
+  invariants:
+  - Exit code is 1 (schema validation failure).
+  - The destination file is NOT touched.
+  shape: stderr lines + exit code
+  side_effects: []
+  summary: Schema violation on stderr, empty stdout, exit code 1.
+id: detect-sensors-stack-schema-fail
+journey_id: detect-sensors
+name: write-stack rejects a draft that fails schema validation
+regression_priority: high
+tags:
+- validation
+- error-handling
+trigger:
+  fixture:
+    argv:
+    - write-stack
+    - --out=/repo
+    - /tmp/draft-bad.yaml
+    draft:
+      components: []
+      languages: []
+      log_shapes: []
+  shape: CLI invocation
+  summary: write-stack with a draft that omits a required field (e.g. purpose).
+version: 0.1.0

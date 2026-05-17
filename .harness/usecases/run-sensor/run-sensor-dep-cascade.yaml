@@ -1,0 +1,76 @@
+behavior:
+  business_rules:
+  - Deps run before the requested sensor.
+  - The first failed dep stops downstream execution.
+  - Dependents of a failed dep emit cascade Signals, not normal aggregates.
+  - The requested sensor's exec.command is NOT spawned when any dep fails.
+  - The cascade Signal carries metadata.kind="cascade" and metadata.failed_dep_id=<id>.
+  summary: |
+    The orchestrator resolves the requires[kind=sensor] closure
+    topologically (deps first). For each dep, it runs the full
+    lifecycle. The first dep that emits a fail/error aggregate halts
+    further execution: every dependent sensor is replaced by a cascade
+    Signal whose metadata names the failed dep.
+description: |
+  /run-sensor on a sensor whose requires[kind=sensor] dep emits verdict=fail
+  or verdict=error. The orchestrator emits the dep's aggregate first,
+  then a cascade Signal for the requested sensor (metadata.kind=cascade,
+  metadata.failed_dep_id=<id>). The requested sensor's command is never spawned.
+evidence:
+- file: lib/orchestrator/cascade.go
+  rationale: BuildCascadeSignal — constructs the cascade Signal for skipped dependents.
+- file: lib/orchestrator/lifecycle.go
+  rationale: Lifecycle driver that detects failed deps and replaces normal execution
+    with a cascade.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    stdout_lines:
+    - '{"sensor_id":"build","verdict":"fail","severity":"high","evidence":[{"excerpt":"undefined:
+      foo"}],"cost_actual":{"latency_ms":250},"metadata":{"kind":"aggregate"}}'
+    - '{"sensor_id":"e2e-tests","verdict":"error","severity":"high","evidence":[],"cost_actual":{"latency_ms":0},"metadata":{"kind":"cascade","failed_dep_id":"build","failed_dep_verdict":"fail"}}'
+  invariants:
+  - Exit code is 1 (the requested sensor did not run).
+  - The requested sensor's command was NOT spawned.
+  - metadata.kind on the requested sensor's Signal is "cascade".
+  - metadata.failed_dep_id identifies the failing ancestor.
+  shape: JSONL on stdout + exit code
+  side_effects: []
+  summary: |
+    Stdout carries the failed dep's aggregate first, then the requested
+    sensor's cascade Signal as the LAST JSONL line. Exit code 1
+    (requested sensor did not run).
+id: run-sensor-dep-cascade
+journey_id: run-sensor
+name: Dependency failed — requested sensor cascades instead of running
+regression_priority: critical
+tags:
+- error-handling
+- cascade
+- dag
+trigger:
+  fixture:
+    argv:
+    - run-computational
+    - e2e-tests
+    dep_outcome:
+      sensor_id: build
+      verdict: fail
+    sensor:
+      execution:
+        command: go test -tags=e2e ./...
+        exit_code_map:
+        - exit_code: 0
+          verdict: pass
+      id: e2e-tests
+      output: single
+      requires:
+      - id: build
+        kind: sensor
+      type: computational
+  shape: CLI invocation
+  summary: |
+    /run-sensor on a sensor whose transitive requires[kind=sensor]
+    dependency emits a fail/error verdict, so the requested sensor does
+    not run.
+version: 0.1.0

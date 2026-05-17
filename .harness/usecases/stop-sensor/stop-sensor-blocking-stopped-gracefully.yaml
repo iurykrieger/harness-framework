@@ -1,0 +1,70 @@
+behavior:
+  business_rules:
+  - The manual hold is always removed first.
+  - Other live holders (kind=sensor) would abort with kind=held instead.
+  - SIGTERM is the first signal; SIGKILL only if it times out.
+  - Aggregate verdict comes from signals.log via MaxStreamVerdict.
+  - The registry entry is removed on a successful stop.
+  summary: |
+    Inside the registry file lock, runStop locates the unique entry,
+    removes the kind=manual hold, persists the updated registry, then
+    outside the lock sends SIGTERM to the subprocess group, waits up
+    to graceful_timeout_ms, and aggregates the signals.log into the
+    final Signal. The registry entry is removed on success.
+description: |
+  Happy-path of /stop-sensor on a blocking sensor whose subprocess responds
+  to SIGTERM within graceful_timeout_ms. The runner removes the manual
+  hold, refuses if any other holder remains, otherwise sends SIGTERM,
+  drains the watcher, reads signals.log, builds the aggregate Signal,
+  and removes the registry entry.
+evidence:
+- file: skills/stop-sensor/scripts/stop.go
+  line_start: 281
+  rationale: Builds the stopped Signal with the aggregate verdict + killed_forcefully
+    flag.
+- file: skills/stop-sensor/scripts/stop.go
+  line_start: 174
+  rationale: blocking-branch logic — manual hold removal, SIGTERM, signals.log drain.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    filesystem:
+      .harness/runtime/running_sensors.json: entry for dev-server removed
+    stdout_lines:
+    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[],"cost_actual":{"latency_ms":250},"metadata":{"kind":"stopped","killed_forcefully":false}}'
+  invariants:
+  - metadata.kind is "stopped".
+  - metadata.killed_forcefully is false when SIGTERM sufficed.
+  - The registry entry is gone after the call returns.
+  - The subprocess (and its watcher) are no longer alive.
+  shape: One JSON line on stdout + exit code + filesystem changes
+  side_effects:
+  - SIGTERM sent to the subprocess group.
+  - Registry entry removed.
+  - Watcher drained and terminated.
+  summary: |
+    One aggregate Signal on stdout, verdict reflects the run's stream
+    verdict (pass/warn/error), metadata.kind=stopped, exit code 0.
+    The registry entry no longer exists.
+id: stop-sensor-blocking-stopped-gracefully
+journey_id: stop-sensor
+name: /stop-sensor takes a live blocking sensor down with SIGTERM
+regression_priority: critical
+tags:
+- happy-path
+- blocking
+- side-effects
+trigger:
+  fixture:
+    argv:
+    - stop-sensor
+    - dev-server
+    state:
+      .harness/runtime/running_sensors.json: single entry for dev-server, pid=12345
+        alive, blocking=true, held_by=[{kind:manual}]
+  shape: CLI invocation
+  summary: |
+    /stop-sensor with the id of a running blocking sensor that has
+    only the manual hold and whose subprocess exits within
+    execution.graceful_timeout_ms after SIGTERM.
+version: 0.1.0

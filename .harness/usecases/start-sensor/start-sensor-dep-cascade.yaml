@@ -1,0 +1,75 @@
+behavior:
+  business_rules:
+  - All deps run before the target's command spawn.
+  - The first failed dep stops the chain.
+  - Live deps brought up earlier are detached on cascade.
+  - metadata.failed_dep_id names the failing dep.
+  - The target subprocess is NOT spawned.
+  summary: |
+    runStart calls orchestrator.RunDeps. If pre.CascadeSig is non-nil,
+    runStart extracts failed_dep_id/run_id/verdict/severity from the
+    cascade Signal's metadata, detaches any live deps spawned earlier
+    in the chain, and emits its own dep_cascade Signal.
+description: |
+  /start-sensor's pre-flight runs the requires[kind=sensor] dep closure
+  via orchestrator.RunDeps. When any dep produces a fail/error aggregate,
+  RunDeps surfaces a CascadeSig. /start-sensor detaches any live deps
+  spawned earlier and emits cause=dep_cascade with metadata pointing at
+  the failed dep.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  line_start: 115
+  rationale: Cascade branch — extracts failed_dep_* metadata and emits dep_cascade
+    Signal.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    stdout_lines:
+    - '{"sensor_id":"app-server","verdict":"error","severity":"high","evidence":[],"cost_actual":{"latency_ms":300},"metadata":{"kind":"failed","cause":"dep_cascade","failed_dep_id":"db-migration","failed_dep_verdict":"fail","failed_dep_severity":"high"}}'
+  invariants:
+  - metadata.cause is "dep_cascade".
+  - metadata.failed_dep_id identifies the failing dep.
+  - The target's command is NOT spawned.
+  - No registry entry is written for the target.
+  shape: One JSON line on stdout + exit code
+  side_effects:
+  - Live deps from pre.LiveStack are detached.
+  summary: |
+    One Signal on stdout, verdict=error, metadata.kind=failed,
+    metadata.cause=dep_cascade, with metadata.failed_dep_* fields,
+    exit code 1.
+id: start-sensor-dep-cascade
+journey_id: start-sensor
+name: /start-sensor aborts when a requires[kind=sensor] dep cascades
+regression_priority: high
+tags:
+- error-handling
+- cascade
+- dag
+trigger:
+  fixture:
+    argv:
+    - start-sensor
+    - app-server
+    dep_outcome:
+      sensor_id: db-migration
+      verdict: fail
+    sensor:
+      execution:
+        blocking: true
+        command: ./bin/server
+        output_parsing:
+          patterns:
+          - regex: ready (.+)
+            verdict: pass
+      id: app-server
+      output: stream
+      requires:
+      - id: db-migration
+        kind: sensor
+      type: computational
+  shape: CLI invocation
+  summary: |
+    /start-sensor on a sensor with requires[kind=sensor] whose transitive
+    dep produces a fail or error aggregate.
+version: 0.1.0

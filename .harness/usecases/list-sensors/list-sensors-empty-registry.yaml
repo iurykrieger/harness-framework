@@ -1,0 +1,49 @@
+behavior:
+  business_rules:
+  - sensor_id in the Signal is "list-sensors".
+  - verdict is warn (advisory) — the user might just be in the wrong cwd.
+  - metadata.entries is an empty array.
+  - rationale names the resolved registry path.
+  summary: |
+    b.Res.Exists is false. runList short-circuits with verdict=warn,
+    kind=list, entries=[], and a rationale string mentioning the
+    resolved registry path so the user can diagnose cwd / env-var
+    mismatches.
+description: |
+  /list-sensors with no running_sensors.json on disk emits a single
+  Signal verdict=warn, metadata.kind=list, metadata.entries=[]. The
+  rationale hints at the two most common causes (wrong cwd, no live
+  sensors yet).
+evidence:
+- file: skills/list-sensors/scripts/list.go
+  line_start: 35
+  rationale: Empty-registry warn branch with empty entries metadata.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"sensor_id":"list-sensors","verdict":"warn","severity":"info","evidence":[],"cost_actual":{"latency_ms":2},"metadata":{"kind":"list","entries":[]}}'
+  invariants:
+  - verdict is "warn".
+  - metadata.entries is [].
+  - metadata.kind is "list".
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One Signal verdict=warn, kind=list, entries=[], exit code 0.
+id: list-sensors-empty-registry
+journey_id: list-sensors
+name: /list-sensors warns when the registry file does not exist
+regression_priority: high
+tags:
+- happy-path
+- empty
+- registry-discovery
+trigger:
+  fixture:
+    argv:
+    - list-sensors
+    state:
+      .harness/runtime/running_sensors.json: absent
+  shape: CLI invocation
+  summary: /list-sensors when .harness/runtime/running_sensors.json is absent.
+version: 0.1.0

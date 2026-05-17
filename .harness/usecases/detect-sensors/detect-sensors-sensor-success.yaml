@@ -1,0 +1,67 @@
+behavior:
+  business_rules:
+  - The destination is <out>/<id>.yaml.
+  - The persisted YAML is canonical (sorted keys, deterministic order).
+  - Schema validation runs before any disk write.
+  summary: |
+    run() reads the draft, calls sensor.ValidateAndPersist which
+    enforces both the type and output discriminators, and writes the
+    YAML atomically. The output path is the persisted file's absolute
+    path.
+description: |
+  Happy-path of /detect-sensors Phase B. The draft sensor validates
+  against schemas/sensor.yaml, sensor.ValidateAndPersist writes the
+  canonical YAML to <out>/<id>.yaml atomically. The absolute path is
+  echoed to stdout.
+evidence:
+- file: skills/detect-sensors/scripts/write-sensor.go
+  line_start: 33
+  rationale: run() entry — argument parsing and delegation to sensor.ValidateAndPersist.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    filesystem:
+      /repo/.harness/sensors/lint-go-vet.yaml: canonical YAML of the validated sensor
+    stdout_line: /repo/.harness/sensors/lint-go-vet.yaml
+  invariants:
+  - Exit code is 0.
+  - Destination file exists.
+  shape: stdout line + exit code + filesystem change
+  side_effects:
+  - Creates or overwrites the destination atomically.
+  summary: Absolute path of the written sensor on stdout, exit code 0.
+id: detect-sensors-sensor-success
+journey_id: detect-sensors
+name: write-sensor persists a valid sensor draft atomically
+regression_priority: critical
+tags:
+- happy-path
+- persistence
+trigger:
+  fixture:
+    argv:
+    - write-sensor
+    - --out=/repo/.harness/sensors
+    - /tmp/draft-sensor.yaml
+    draft:
+      cost:
+        compute:
+          cpu_seconds: 5
+      description: Run go vet over the module.
+      execution:
+        command: go vet ./...
+        exit_code_map:
+        - exit_code: 0
+          verdict: pass
+        - exit_code: 1
+          severity: high
+          verdict: fail
+      id: lint-go-vet
+      kind: observation
+      name: go vet
+      output: single
+      type: computational
+      version: 0.1.0
+  shape: CLI invocation
+  summary: write-sensor invoked with a valid sensor draft.
+version: 0.1.0

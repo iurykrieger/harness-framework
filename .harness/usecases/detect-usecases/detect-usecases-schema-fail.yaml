@@ -1,0 +1,54 @@
+behavior:
+  business_rules:
+  - schemas/usecase.yaml is the single source of truth.
+  - Exit code is 1 on validation failures.
+  - The destination file is NOT written.
+  summary: |
+    schema.PrintValidationOrPlain reports the violation path-by-path.
+    Exit code 1 (validation class) — separate from cross-check failures
+    that also return 1, both classes ARE collapsed by the CLI's exit
+    code contract.
+description: |
+  When the draft UseCase violates schemas/usecase.yaml (missing
+  required field, wrong type, regression_priority outside enum),
+  ValidateAndPersist returns a jsonschema.ValidationError;
+  write-usecase prints it via PrintValidationOrPlain and exits 1.
+evidence:
+- file: skills/detect-usecases/scripts/write-usecase.go
+  line_start: 73
+  rationale: jsonschema.ValidationError branch — calls PrintValidationOrPlain and
+    returns 1.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    filesystem:
+      /repo/.harness/usecases/...: NOT written
+    stderr_includes: required
+    stdout_lines: []
+  invariants:
+  - Exit code is 1.
+  - The destination file is NOT touched.
+  shape: stderr lines + exit code
+  side_effects: []
+  summary: Schema violation on stderr, exit code 1.
+id: detect-usecases-schema-fail
+journey_id: detect-usecases
+name: write-usecase rejects a draft that fails schemas/usecase.yaml
+regression_priority: medium
+tags:
+- validation
+- error-handling
+trigger:
+  fixture:
+    argv:
+    - write-usecase
+    - --out=/repo/.harness/usecases
+    - --project-root=/repo
+    - /tmp/draft-incomplete.yaml
+    draft:
+      id: incomplete
+      journey_id: my-journey
+      version: 0.1.0
+  shape: CLI invocation
+  summary: write-usecase with a draft missing a required field (e.g. trigger).
+version: 0.1.0

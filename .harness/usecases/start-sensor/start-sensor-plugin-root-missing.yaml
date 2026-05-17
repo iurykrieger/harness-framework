@@ -1,0 +1,46 @@
+behavior:
+  business_rules:
+  - CLAUDE_PLUGIN_ROOT is required to spawn the watcher.
+  - Empty env var produces cause=plugin_root_missing.
+  - No filesystem side-effects in this failure path.
+  summary: |
+    runStart reads CLAUDE_PLUGIN_ROOT after the argv check. When it is
+    empty, it emits a failed Signal and returns exit code 1 without
+    touching the sensor file or registry.
+description: |
+  /start-sensor needs CLAUDE_PLUGIN_ROOT to locate the watcher subprocess.
+  When the env var is empty, runStart aborts before sensor resolution
+  and emits verdict=error, metadata.cause=plugin_root_missing.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  line_start: 59
+  rationale: Reads CLAUDE_PLUGIN_ROOT and emits plugin_root_missing on empty value.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    stdout_lines:
+    - '{"sensor_id":"dev-server","verdict":"error","severity":"high","evidence":[],"cost_actual":{"latency_ms":0},"metadata":{"kind":"failed","cause":"plugin_root_missing"}}'
+  invariants:
+  - Exit code is 1.
+  - metadata.cause is "plugin_root_missing".
+  - No subprocess is spawned, no registry write happens.
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One error Signal on stdout, exit code 1.
+id: start-sensor-plugin-root-missing
+journey_id: start-sensor
+name: CLAUDE_PLUGIN_ROOT env var not set in environment
+regression_priority: medium
+tags:
+- error-handling
+- environment
+trigger:
+  fixture:
+    argv:
+    - start-sensor
+    - dev-server
+    env:
+      CLAUDE_PLUGIN_ROOT: ""
+  shape: CLI invocation
+  summary: /start-sensor with CLAUDE_PLUGIN_ROOT unset or empty.
+version: 0.1.0

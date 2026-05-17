@@ -1,0 +1,61 @@
+behavior:
+  business_rules:
+  - The manual hold is always removed first (idempotent).
+  - --reap-dead-holders can clear dead kind=sensor holders before the IsHeld check.
+  - A live kind=sensor holder blocks the stop.
+  - The subprocess is NOT killed in this branch.
+  summary: |
+    Inside the lock, runStop removes the manual hold. The entry is then
+    re-evaluated by registry.IsHeld which scans the remaining holders
+    for live PIDs. Any live kind=sensor holder keeps the run alive.
+    runStop emits kind=held with the surviving holder list.
+description: |
+  /stop-sensor on a blocking sensor whose entry has kind=sensor holders
+  besides the user's manual hold. After removing the manual hold,
+  registry.IsHeld is still true; runStop emits verdict=warn,
+  metadata.kind=held listing the surviving holders. The subprocess is
+  not killed.
+evidence:
+- file: skills/stop-sensor/scripts/stop.go
+  line_start: 188
+  rationale: kind=held branch emitted when registry.IsHeld is still true after manual
+    hold removal.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    filesystem:
+      .harness/runtime/running_sensors.json: entry for postgres remains; manual hold
+        removed; sensor holders unchanged
+    stdout_lines:
+    - '{"sensor_id":"postgres","verdict":"warn","severity":"low","evidence":[],"cost_actual":{"latency_ms":4},"metadata":{"kind":"held","holders":[{"kind":"sensor","id":"app-server","pid":54321}]}}'
+  invariants:
+  - metadata.kind is "held".
+  - The subprocess is still alive.
+  - The manual hold is gone from the registry entry.
+  - Exit code is 0 — the call succeeded in its refusal contract.
+  shape: One JSON line on stdout + exit code
+  side_effects:
+  - Manual hold removed from the registry entry.
+  summary: One Signal verdict=warn, metadata.kind=held, with the holders list, exit
+    code 0.
+id: stop-sensor-held-by-other-sensors
+journey_id: stop-sensor
+name: /stop-sensor refuses when another live sensor still holds the run
+regression_priority: high
+tags:
+- error-handling
+- holders
+- idempotent
+trigger:
+  fixture:
+    argv:
+    - stop-sensor
+    - postgres
+    state:
+      .harness/runtime/running_sensors.json: entry for postgres, pid alive, held_by=[{kind:manual},{kind:sensor,id:app-server,pid:alive}]
+  shape: CLI invocation
+  summary: |
+    /stop-sensor on a blocking sensor whose held_by includes one or
+    more live kind=sensor holders (a dep started by a higher-level
+    /start-sensor).
+version: 0.1.0

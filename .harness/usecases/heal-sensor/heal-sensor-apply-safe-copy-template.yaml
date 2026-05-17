@@ -1,0 +1,67 @@
+behavior:
+  business_rules:
+  - Requires both src and dst.
+  - src must exist; dst must not exist before the call.
+  - The action is idempotent — a pre-existing dst short-circuits as no-op.
+  - The copy preserves file mode.
+  summary: |
+    heal.Apply dispatches on action.kind. For copy-template it requires
+    src + dst, verifies src exists and dst is absent, and performs the
+    copy preserving file mode. The result is recorded with applied=true.
+description: |
+  Step 2 of /heal-sensor for setup_kind=missing-env-file. The
+  copy-template action copies <src> to <dst> only when <src> exists
+  AND <dst> does not. Side-effecting and idempotent — re-running is a
+  no-op once <dst> is in place.
+evidence:
+- file: lib/heal/apply.go
+  line_start: 46
+  rationale: copy-template branch of the apply dispatcher.
+- file: skills/heal-sensor/scripts/apply-safe.go
+  line_start: 29
+  rationale: apply-safe entry — parses inputs and invokes heal.Apply.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    filesystem:
+      /repo/.env: matches contents of /repo/.env.example
+    stdout_lines:
+    - '{"results":[{"action":{"kind":"copy-template","src":".env.example","dst":".env"},"applied":true}]}'
+  invariants:
+  - applied is true.
+  - /repo/.env exists with the contents of .env.example.
+  - Exit code is 0.
+  shape: One JSON document on stdout + exit code + filesystem
+  side_effects:
+  - Creates /repo/.env.
+  summary: |
+    results JSON with applied=true for the copy-template action; .env
+    exists on disk with the contents of .env.example. Exit code 0.
+id: heal-sensor-apply-safe-copy-template
+journey_id: heal-sensor
+name: apply-safe copy-template copies .env.example to .env when src exists and dst
+  does not
+regression_priority: high
+tags:
+- setup
+- side-effects
+- idempotent
+trigger:
+  fixture:
+    argv:
+    - apply-safe
+    - --plan=/tmp/plan.json
+    - --sensor=/repo/.harness/sensors/integration-test.yaml
+    - --root=/repo
+    plan:
+      auto_apply:
+      - dst: .env
+        kind: copy-template
+        src: .env.example
+    state:
+      /repo/.env: absent
+      /repo/.env.example: exists
+  shape: CLI invocation
+  summary: apply-safe with a plan containing one copy-template action (src=.env.example,
+    dst=.env).
+version: 0.1.0

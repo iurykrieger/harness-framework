@@ -1,0 +1,72 @@
+behavior:
+  business_rules:
+  - PreflightGate runs once per spawn site, before sh -c <command>.
+  - A missing env/tool/context produces verdict=error.
+  - metadata.kind is "failed".
+  - metadata.cause is "preflight_failed".
+  - The sensor's command is NOT spawned.
+  summary: |
+    The orchestrator invokes orchestrator.PreflightGate before any
+    subprocess spawn. The gate evaluates requires[kind ∈ {tool,context,env}]
+    against the live process environment, filesystem, and $PATH. On
+    failure it returns the canonical Signal and the runner emits it
+    instead of spawning the command.
+description: |
+  /run-sensor on a sensor that declares requires[kind=env].name=DATABASE_URL,
+  but the env var is not set. The orchestrator's PreflightGate runs
+  BEFORE spawning execution.command and emits a canonical
+  verdict=error, metadata.cause=preflight_failed Signal instead.
+evidence:
+- file: lib/orchestrator/lifecycle.go
+  rationale: orchestrator.PreflightGate is invoked here before each command spawn.
+- file: lib/sensor/requires.go
+  rationale: CheckRequiresGate / BuildRequiresGateSignal — the underlying gate evaluation.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"sensor_id":"integration-test","verdict":"error","severity":"high","evidence":[{"rationale":"requires[kind=env].name=DATABASE_URL
+      absent"}],"cost_actual":{"latency_ms":1},"metadata":{"kind":"failed","cause":"preflight_failed"}}'
+  invariants:
+  - The execution.command is NOT spawned.
+  - metadata.cause equals "preflight_failed".
+  - evidence names the unsatisfied requirement.
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: |
+    One Signal on stdout, verdict=error, metadata.kind=failed,
+    metadata.cause=preflight_failed, evidence naming the missing
+    requirement(s). Exit code 0.
+id: run-sensor-preflight-gate-failed
+journey_id: run-sensor
+name: Required env var missing — preflight gate aborts the spawn
+regression_priority: high
+tags:
+- error-handling
+- preflight
+- gate
+trigger:
+  fixture:
+    argv:
+    - run-computational
+    - integration-test
+    env:
+      HARNESS_REGISTRY_ROOT: /repo
+    sensor:
+      execution:
+        command: go test -tags=integration ./...
+        exit_code_map:
+        - exit_code: 0
+          verdict: pass
+      id: integration-test
+      output: single
+      requires:
+      - kind: env
+        name: DATABASE_URL
+      type: computational
+  shape: CLI invocation
+  summary: |
+    /run-sensor on a sensor whose requires[] gate cannot be satisfied at
+    invocation time (env var, tool on PATH, or required filesystem
+    context absent).
+version: 0.1.0

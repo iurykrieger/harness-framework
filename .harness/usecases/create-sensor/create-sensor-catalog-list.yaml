@@ -1,0 +1,53 @@
+behavior:
+  business_rules:
+  - One stdout line per sensor file.
+  - Valid sensors emit a digest line.
+  - Invalid sensors emit a warn Signal that names the file.
+  - Exit code 0 even when some sensors are malformed.
+  summary: |
+    catalog-sensors enumerates the directory, parses each YAML, and
+    emits a one-line digest carrying id, type, output, kind, and
+    requires hints. Files that fail schema validation produce a warn
+    Signal instead so the operator can fix them later.
+description: |
+  catalog-sensors walks .harness/sensors/ and emits a JSONL digest of
+  every sensor it finds — kept minimal so /create-sensor's interactive
+  dialogue can pick candidate dependencies without paying the full
+  sensor schema cost. Invalid sensors emit warn Signals; valid ones
+  emit the digest.
+evidence:
+- file: skills/create-sensor/scripts/catalog-sensors.go
+  line_start: 34
+  rationale: Enumeration entry — produces the JSONL digest of existing sensors.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"id":"lint-go-vet","type":"computational","output":"single","kind":"observation","requires":[]}'
+    - '{"id":"build-go","type":"computational","output":"single","kind":"observation","requires":[]}'
+    - '{"id":"e2e-tests","type":"computational","output":"stream","kind":"assertion","requires":[{"kind":"sensor","id":"build-go"}]}'
+    - '{"sensor_id":"catalog-sensors","verdict":"warn","severity":"low","evidence":[{"rationale":"sensor
+      file fails schema: bad.yaml"}],"cost_actual":{"latency_ms":1},"metadata":{"kind":"invalid_sensor","path":".harness/sensors/bad.yaml"}}'
+  invariants:
+  - Exit code is 0 even with malformed files in the dir.
+  - One line per sensor file (valid digests or warn Signals).
+  shape: JSONL on stdout + exit code
+  side_effects:
+  - None — read-only enumeration.
+  summary: JSONL on stdout (one line per sensor), exit code 0.
+id: create-sensor-catalog-list
+journey_id: create-sensor
+name: create-sensor catalog-sensors emits one digest line per valid sensor
+regression_priority: medium
+tags:
+- happy-path
+- read-only
+trigger:
+  fixture:
+    argv:
+    - catalog-sensors
+    state:
+      .harness/sensors/: 3 valid sensor files, 1 malformed
+  shape: CLI invocation
+  summary: catalog-sensors run from a project that already has multiple sensors persisted.
+version: 0.1.0

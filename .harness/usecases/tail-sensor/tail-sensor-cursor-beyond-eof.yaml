@@ -1,0 +1,48 @@
+behavior:
+  business_rules:
+  - No individual Signals are emitted when cursor >= total lines.
+  - The envelope's next_cursor equals the current line count.
+  - The agent can detect "no progress" by comparing input cursor with next_cursor.
+  summary: |
+    runTail opens signals.log, skips all 5 lines, exits the per-line loop
+    with no Signals emitted, and ends with the envelope.
+description: |
+  /tail-sensor with cursor >= current line count emits no individual
+  Signals, only the envelope. The envelope's next_cursor equals the
+  current line count, signaling "no new content to read".
+evidence:
+- file: skills/tail-sensor/scripts/tail.go
+  line_start: 186
+  rationale: Envelope emission after the per-line loop completes with zero new lines.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[{"rationale":"tail
+      envelope"}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"envelope","next_cursor":5}}'
+  invariants:
+  - Only the envelope is emitted.
+  - metadata.next_cursor equals the line count.
+  - Cursor stays at the EOF.
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: Only the envelope Signal on stdout, exit code 0.
+id: tail-sensor-cursor-beyond-eof
+journey_id: tail-sensor
+name: /tail-sensor with cursor at or past EOF emits only the envelope
+regression_priority: medium
+tags:
+- edge-case
+- cursor
+trigger:
+  fixture:
+    argv:
+    - tail-sensor
+    - dev-server
+    - "5"
+    state:
+      .harness/runtime/dev-server/42-abc/signals.log: exactly 5 JSONL lines
+  shape: CLI invocation
+  summary: /tail-sensor with a cursor value that is already at or past the end of
+    signals.log.
+version: 0.1.0

@@ -1,0 +1,48 @@
+behavior:
+  business_rules:
+  - All three flags are required.
+  - The output is one JSON document on stdout.
+  - The function is read-only.
+  summary: |
+    run() reads the three inputs, scans the project for setup-relevant
+    templates (.env.example, docker-compose, ...), and assembles them
+    into a single JSON document on stdout. No side-effects.
+description: |
+  Step 1 of /heal-sensor. The diagnose script reads the failing Signal,
+  the failing sensor, and project state, then emits a single JSON
+  document grouping signal + sensor + docs + templates so the next
+  step (LLM-driven plan synthesis) has a deterministic input.
+evidence:
+- file: skills/heal-sensor/scripts/diagnose.go
+  line_start: 34
+  rationale: diagnose run() — collects signal/sensor/docs/templates into the diagnosis
+    JSON.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"signal":{"verdict":"error","metadata":{"cause":"missing_env"}},"sensor":{"id":"integration-test","requires":[{"kind":"env","name":"DATABASE_URL"}]},"docs":[],"templates":[".env.example"]}'
+  invariants:
+  - Exit code is 0.
+  - The output is a single JSON object.
+  - The function performs no writes.
+  shape: One JSON document on stdout + exit code
+  side_effects: []
+  summary: One JSON document on stdout, exit code 0.
+id: heal-sensor-diagnose-context
+journey_id: heal-sensor
+name: heal-sensor diagnose emits the input context for the Setup Plan
+regression_priority: medium
+tags:
+- read-only
+- happy-path
+trigger:
+  fixture:
+    argv:
+    - diagnose
+    - --signal=/tmp/failing-signal.json
+    - --sensor=/repo/.harness/sensors/integration-test.yaml
+    - --root=/repo
+  shape: CLI invocation
+  summary: diagnose --signal=…/signal.json --sensor=…/sensor.yaml --root=/repo
+version: 0.1.0

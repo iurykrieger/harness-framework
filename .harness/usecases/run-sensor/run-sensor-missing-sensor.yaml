@@ -1,0 +1,51 @@
+behavior:
+  business_rules:
+  - sensor.Resolve fails when no .harness/sensors/<id>.yaml exists.
+  - The runner exits with code 2 (usage / I/O error class).
+  - No Signal is emitted on stdout for this failure mode.
+  summary: |
+    sensor.Resolve walks .harness/sensors/ for an id-shaped match. When
+    no file matches, run() prints a diagnostic to stderr and exits 2
+    without invoking the orchestrator.
+description: |
+  /run-sensor invoked with an id that does not resolve to a file under
+  .harness/sensors/. sensor.Resolve returns an error; the runner exits 2
+  and prints "error: resolve: …" to stderr without emitting a Signal.
+evidence:
+- file: skills/run-sensor/scripts/run-computational.go
+  line_start: 91
+  rationale: sensor.Resolve call site; failure prints to stderr and returns exit 2.
+expected_outcome:
+  fixture:
+    exit_code: 2
+    stderr_match: '^error: resolve: .*non-existent-sensor'
+    stdout_lines: []
+  invariants:
+  - Exit code is 2.
+  - No JSON Signal on stdout.
+  - The orchestrator is NOT invoked.
+  shape: stderr line + exit code
+  side_effects: []
+  summary: |
+    Empty stdout, a line matching "error: resolve: <details>" on
+    stderr, and exit code 2.
+id: run-sensor-missing-sensor
+journey_id: run-sensor
+name: Requested sensor id does not exist on disk
+regression_priority: medium
+tags:
+- error-handling
+- usage
+trigger:
+  fixture:
+    argv:
+    - run-computational
+    - non-existent-sensor
+    project_root: /repo
+    state:
+      .harness/sensors/: []
+  shape: CLI invocation
+  summary: |
+    /run-sensor invoked with an id that has no matching
+    .harness/sensors/<id>.yaml in the resolved project root.
+version: 0.1.0

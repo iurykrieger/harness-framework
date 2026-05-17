@@ -1,0 +1,54 @@
+behavior:
+  business_rules:
+  - /create-sensor never overwrites an existing sensor file.
+  - metadata.path points at the existing file so the user can inspect.
+  - Exit code is 2 (refusal, not a validation failure).
+  summary: |
+    ValidateAndPersist os.Stats the target path before writing.
+    With RejectIfExists=true, an existing file produces
+    SensorAlreadyExistsError. The script's errors.As branch catches
+    it and emits the sensor_already_exists Signal.
+description: |
+  /create-sensor's write-sensor uses RejectIfExists=true. When a file
+  already exists at <out>/<id>.yaml, ValidateAndPersist returns a
+  SensorAlreadyExistsError; the script emits verdict=error,
+  metadata.kind=sensor_already_exists with metadata.path pointing at
+  the existing file. Exit code 2.
+evidence:
+- file: skills/create-sensor/scripts/write-sensor.go
+  line_start: 86
+  rationale: SensorAlreadyExistsError handling branch.
+expected_outcome:
+  fixture:
+    exit_code: 2
+    stdout_lines:
+    - '{"sensor_id":"write-sensor","verdict":"error","severity":"high","evidence":[{"rationale":"sensor
+      file already exists; refusing to overwrite"}],"cost_actual":{"latency_ms":3},"metadata":{"kind":"sensor_already_exists","path":"/repo/.harness/sensors/lint-go-vet.yaml"}}'
+  invariants:
+  - metadata.kind is "sensor_already_exists".
+  - The pre-existing file is NOT modified.
+  - Exit code is 2.
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One error Signal verdict=error, metadata.kind=sensor_already_exists, exit
+    code 2.
+id: create-sensor-already-exists
+journey_id: create-sensor
+name: create-sensor refuses to overwrite an existing sensor file
+regression_priority: high
+tags:
+- error-handling
+- idempotent
+trigger:
+  fixture:
+    argv:
+    - write-sensor
+    - --out=/repo/.harness/sensors
+    - /tmp/draft.yaml
+    draft:
+      id: lint-go-vet
+    state:
+      .harness/sensors/lint-go-vet.yaml: already exists
+  shape: CLI invocation
+  summary: write-sensor with a draft whose id matches an existing .harness/sensors/<id>.yaml.
+version: 0.1.0

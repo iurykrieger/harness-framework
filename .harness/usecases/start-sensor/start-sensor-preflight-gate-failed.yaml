@@ -1,0 +1,69 @@
+behavior:
+  business_rules:
+  - PreflightGate is invoked on the target before each subprocess spawn.
+  - cause is "preflight_failed".
+  - Subprocess is NOT spawned, no registry write.
+  - Live deps spawned earlier are detached cleanly.
+  summary: |
+    orchestrator.PreflightGate evaluates requires[kind ∈ {tool,env,context}]
+    against PATH, the process env, and the filesystem. On failure, it
+    returns the canonical Signal (kind=failed, cause=preflight_failed)
+    plus a "failed" flag. runStart detaches live deps, optionally merges
+    its own diagnose block into metadata, and relays the Signal.
+description: |
+  Before spawning the subprocess, /start-sensor invokes
+  orchestrator.PreflightGate on the target. When a tool, env var, or
+  context is missing, the gate returns the canonical
+  metadata.cause=preflight_failed Signal; runStart relays it (merging
+  bootstrap diagnostics) and aborts the spawn.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  line_start: 145
+  rationale: orchestrator.PreflightGate invocation that produces the canonical preflight_failed
+    Signal.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    stdout_lines:
+    - '{"sensor_id":"dev-server-needs-node","verdict":"error","severity":"high","evidence":[{"rationale":"requires[kind=tool].name=node
+      not on PATH"}],"cost_actual":{"latency_ms":4},"metadata":{"kind":"failed","cause":"preflight_failed","missing_tools":["node"]}}'
+  invariants:
+  - metadata.cause is "preflight_failed".
+  - No subprocess is spawned.
+  - Any live deps were detached before returning.
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One Signal on stdout, verdict=error, metadata.cause=preflight_failed, exit
+    code 1.
+id: start-sensor-preflight-gate-failed
+journey_id: start-sensor
+name: /start-sensor aborts when requires[kind ∈ {tool,context,env}] is unsatisfied
+regression_priority: high
+tags:
+- error-handling
+- preflight
+- gate
+trigger:
+  fixture:
+    argv:
+    - start-sensor
+    - dev-server-needs-node
+    env:
+      PATH: /usr/bin:/bin
+    sensor:
+      execution:
+        blocking: true
+        command: node server.js
+        output_parsing:
+          patterns:
+          - regex: listening on (.+)
+            verdict: pass
+      id: dev-server-needs-node
+      output: stream
+      requires:
+      - kind: tool
+        name: node
+      type: computational
+  shape: CLI invocation
+  summary: /start-sensor on a sensor whose requires[] gate is not satisfied.
+version: 0.1.0

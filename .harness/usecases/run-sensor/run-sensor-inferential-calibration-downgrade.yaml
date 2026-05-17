@@ -1,0 +1,76 @@
+behavior:
+  business_rules:
+  - HARNESS_PROMPT env var carries the rendered prompt to the subprocess.
+  - HARNESS_AGGREGATE_CONFIDENCE=<float> on stdout sets the confidence.
+  - fail + confidence < threshold ⇒ verdict downgraded to warn.
+  - error and pass verdicts are NOT downgraded by calibration.
+  summary: |
+    The inferential runner exposes the rendered user_prompt_template via
+    HARNESS_PROMPT, spawns the subprocess, captures a single Signal from
+    stdout, and reads HARNESS_AGGREGATE_CONFIDENCE=<float> if printed.
+    When confidence < calibration.confidence_threshold AND verdict=fail,
+    the runner downgrades to verdict=warn and stamps
+    metadata.calibration_downgrade=true.
+description: |
+  /run-sensor on an inferential sensor where the LLM emits a fail verdict
+  but HARNESS_AGGREGATE_CONFIDENCE is below calibration.confidence_threshold.
+  The runner downgrades the aggregate verdict from fail to warn and
+  stamps metadata.calibration_downgrade=true.
+evidence:
+- file: skills/run-sensor/scripts/run-inferential.go
+  line_start: 61
+  rationale: Inferential runner — reads HARNESS_AGGREGATE_CONFIDENCE and applies the
+    calibration downgrade.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"sensor_id":"llm-review","verdict":"warn","severity":"medium","confidence":0.4,"evidence":[{"rationale":"sql
+      injection in line 42"}],"cost_actual":{"latency_ms":4200,"input_tokens":1200,"output_tokens":250,"model":"claude-opus-4-7"},"metadata":{"kind":"aggregate","calibration_downgrade":true,"original_verdict":"fail"}}'
+  invariants:
+  - verdict is "warn" (downgraded from "fail").
+  - metadata.calibration_downgrade is true.
+  - confidence is recorded from HARNESS_AGGREGATE_CONFIDENCE.
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: |
+    One aggregate Signal verdict=warn (downgraded from fail) with
+    metadata.calibration_downgrade=true. Exit code 0.
+id: run-sensor-inferential-calibration-downgrade
+journey_id: run-sensor
+name: Inferential sensor below confidence threshold downgrades fail → warn
+regression_priority: high
+tags:
+- inferential
+- calibration
+- downgrade
+trigger:
+  fixture:
+    argv:
+    - run-inferential
+    - llm-review
+    sensor:
+      calibration:
+        confidence_threshold: 0.7
+      execution:
+        command: python llm_review.py
+        decoding:
+          temperature: 0
+        model: claude-opus-4-7
+        system_prompt: You review pull requests for security issues.
+        user_prompt_template: |-
+          diff:
+          {{.diff}}
+      id: llm-review
+      output: single
+      type: inferential
+    subprocess_output:
+    - HARNESS_AGGREGATE_CONFIDENCE=0.4
+    - '{"verdict":"fail","severity":"medium","evidence":[{"rationale":"sql injection
+      in line 42"}]}'
+  shape: CLI invocation
+  summary: |
+    /run-sensor invoked on an inferential sensor whose LLM child process
+    emits a fail-shaped Signal but also prints HARNESS_AGGREGATE_CONFIDENCE=<x>
+    with x below calibration.confidence_threshold.
+version: 0.1.0

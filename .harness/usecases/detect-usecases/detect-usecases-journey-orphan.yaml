@@ -1,0 +1,58 @@
+behavior:
+  business_rules:
+  - The journey_id must match an existing stack.journeys[].id.
+  - Cross-check failures exit with code 1 (validation class).
+  - The destination file is NOT written.
+  summary: |
+    ValidateAndPersist runs CheckJourneyReference after schema
+    validation succeeds. The mismatch becomes a stack.CrossCheckError
+    with kind=journey_reference_orphan. write-usecase's error handling
+    matches that type and formats it via cce.Error().
+description: |
+  After schema validation, usecase.CheckJourneyReference verifies that
+  the draft's journey_id matches an entry in stack.journeys[]. A missing
+  match produces CrossCheckError{Kind:"journey_reference_orphan"}.
+  write-usecase prints the error and exits 1.
+evidence:
+- file: skills/detect-usecases/scripts/write-usecase.go
+  line_start: 78
+  rationale: errors.As(err, &cce) branch — emits the CrossCheckError to stderr and
+    exits 1.
+- file: lib/usecase/cross_check.go
+  line_start: 19
+  rationale: CheckJourneyReference produces the journey_reference_orphan kind.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    filesystem:
+      /repo/.harness/usecases/ghost-journey/orphan-usecase.yaml: NOT written
+    stderr_includes: journey_reference_orphan
+    stdout_lines: []
+  invariants:
+  - Exit code is 1.
+  - The destination file is NOT touched.
+  shape: stderr line + exit code
+  side_effects: []
+  summary: Cross-check error on stderr, exit code 1.
+id: detect-usecases-journey-orphan
+journey_id: detect-usecases
+name: write-usecase rejects a UseCase whose journey_id is not in stack.journeys
+regression_priority: high
+tags:
+- cross-check
+- error-handling
+trigger:
+  fixture:
+    argv:
+    - write-usecase
+    - --out=/repo/.harness/usecases
+    - --project-root=/repo
+    - /tmp/draft-orphan.yaml
+    draft:
+      id: orphan-usecase
+      journey_id: ghost-journey
+    state:
+      .harness/stack.yaml: no journey with id=ghost-journey
+  shape: CLI invocation
+  summary: write-usecase with journey_id that is not declared in the project stack.
+version: 0.1.0

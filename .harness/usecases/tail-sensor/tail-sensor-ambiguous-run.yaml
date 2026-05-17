@@ -1,0 +1,49 @@
+behavior:
+  business_rules:
+  - A bare sensor id with multiple live runs requires an explicit run_id.
+  - The user is shown the available run_ids in evidence.
+  summary: |
+    When the user supplies a bare sensor id, runTail resolves entries
+    via rs.FindEntries. With more than one match it lists the live
+    run_ids in evidence and emits ambiguous_run so the user can disambiguate.
+description: |
+  /tail-sensor with only sensor.id (no /run.id) and the registry holds
+  multiple live entries for that sensor emits verdict=error,
+  metadata.kind=ambiguous_run with the active run_ids in evidence.
+  Exit code 1.
+evidence:
+- file: skills/tail-sensor/scripts/tail.go
+  line_start: 134
+  rationale: Ambiguous-bare-id branch emitting ambiguous_run with all candidate run_ids.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    stdout_lines:
+    - '{"sensor_id":"postgres","verdict":"error","severity":"high","evidence":[{"rationale":"active
+      run_id: 42-abc"},{"rationale":"active run_id: 99-def"}],"cost_actual":{"latency_ms":1},"metadata":{"kind":"ambiguous_run"}}'
+  invariants:
+  - metadata.kind is "ambiguous_run".
+  - Evidence lists every live run_id.
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One Signal verdict=error, metadata.kind=ambiguous_run, exit code 1.
+id: tail-sensor-ambiguous-run
+journey_id: tail-sensor
+name: /tail-sensor refuses a bare sensor id that matches multiple live runs
+regression_priority: medium
+tags:
+- error-handling
+- validation
+trigger:
+  fixture:
+    argv:
+    - tail-sensor
+    - postgres
+    - "0"
+    state:
+      .harness/runtime/running_sensors.json: two entries for sensor postgres with
+        distinct run_ids
+  shape: CLI invocation
+  summary: /tail-sensor sensorID 0 when rs.FindEntries(sensorID) returns more than
+    one entry.
+version: 0.1.0

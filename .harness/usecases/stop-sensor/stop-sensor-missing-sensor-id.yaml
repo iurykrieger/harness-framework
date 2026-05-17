@@ -1,0 +1,44 @@
+behavior:
+  business_rules:
+  - Missing argv is a usage error (exit code 2).
+  - sensor_id in the Signal is "stop" when no id was supplied.
+  - kind is "not_running" (consistent with the broader semantics).
+  summary: |
+    runStop's first check is len(args) < 1. The Signal builder uses
+    "stop" as sensor_id because there is no id to attribute the failure
+    to. Verdict=warn keeps with the skill's idempotent contract.
+description: |
+  Argument-less /stop-sensor returns verdict=warn,
+  metadata.kind=not_running, exit code 2. The sensor_id used in the
+  Signal is the literal "stop" to keep the schema valid.
+evidence:
+- file: skills/stop-sensor/scripts/stop.go
+  line_start: 47
+  rationale: Missing-argv branch — emits a warn Signal with sensor_id=stop.
+expected_outcome:
+  fixture:
+    exit_code: 2
+    stdout_lines:
+    - '{"sensor_id":"stop","verdict":"warn","severity":"low","evidence":[{"rationale":"missing
+      sensor id"}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"not_running"}}'
+  invariants:
+  - Exit code is 2.
+  - sensor_id in the Signal is "stop".
+  - metadata.kind is "not_running".
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One Signal with sensor_id=stop, verdict=warn, exit code 2.
+id: stop-sensor-missing-sensor-id
+journey_id: stop-sensor
+name: /stop-sensor invoked without a sensor id
+regression_priority: medium
+tags:
+- error-handling
+- usage
+trigger:
+  fixture:
+    argv:
+    - stop-sensor
+  shape: CLI invocation
+  summary: /stop-sensor with no positional arguments.
+version: 0.1.0

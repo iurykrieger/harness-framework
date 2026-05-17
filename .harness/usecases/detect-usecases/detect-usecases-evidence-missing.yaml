@@ -1,0 +1,56 @@
+behavior:
+  business_rules:
+  - Every evidence[].file must exist relative to --project-root.
+  - The error message lists every missing path.
+  - Exit code is 1 (validation class).
+  summary: |
+    CheckEvidenceFiles iterates evidence[], joins projectRoot with each
+    file, and stat's it. Missing paths are collected and surfaced as a
+    single CrossCheckError with kind=evidence_file_missing.
+description: |
+  After journey cross-check, usecase.CheckEvidenceFiles os.Stats every
+  evidence[].file (joined with projectRoot). Any missing path produces
+  a CrossCheckError listing the absent files. write-usecase prints it
+  and exits 1.
+evidence:
+- file: skills/detect-usecases/scripts/write-usecase.go
+  line_start: 71
+  rationale: ValidateAndPersist call site whose CrossCheckError is surfaced to stderr.
+- file: lib/usecase/evidence.go
+  line_start: 15
+  rationale: CheckEvidenceFiles that emits the evidence_file_missing kind.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    filesystem:
+      /repo/.harness/usecases/...: NOT written
+    stderr_includes: evidence_file_missing
+    stdout_lines: []
+  invariants:
+  - Exit code is 1.
+  - stderr lists at least one missing file path.
+  shape: stderr line + exit code
+  side_effects: []
+  summary: Cross-check error on stderr listing missing files, exit code 1.
+id: detect-usecases-evidence-missing
+journey_id: detect-usecases
+name: write-usecase rejects a draft whose evidence files do not exist on disk
+regression_priority: high
+tags:
+- cross-check
+- validation
+trigger:
+  fixture:
+    argv:
+    - write-usecase
+    - --out=/repo/.harness/usecases
+    - --project-root=/repo
+    - /tmp/draft-bad-evidence.yaml
+    draft:
+      evidence:
+      - file: src/does/not/exist.go
+        rationale: ghost evidence
+  shape: CLI invocation
+  summary: write-usecase with at least one evidence[].file that does not exist under
+    projectRoot.
+version: 0.1.0

@@ -1,0 +1,45 @@
+behavior:
+  business_rules:
+  - sensor_id is mandatory.
+  - The Signal carries sensor_id="unknown" because no id was provided.
+  - cause is "bootstrap_failed" when the runner cannot get past argv parsing.
+  summary: |
+    runStart inspects len(args) before anything else. With zero args it
+    emits the bootstrap_failed Signal under sensor_id="unknown" and
+    returns exit code 2.
+description: |
+  When /start-sensor is invoked without a sensor id, runStart returns
+  exit code 2 with a verdict=error, metadata.kind=failed,
+  metadata.cause=bootstrap_failed Signal.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  line_start: 54
+  rationale: Argv length check that emits the bootstrap_failed Signal.
+expected_outcome:
+  fixture:
+    exit_code: 2
+    stdout_lines:
+    - '{"sensor_id":"unknown","verdict":"error","severity":"high","evidence":[],"cost_actual":{"latency_ms":0},"metadata":{"kind":"failed","cause":"bootstrap_failed"}}'
+  invariants:
+  - Exit code is 2.
+  - sensor_id is "unknown".
+  - metadata.cause is "bootstrap_failed".
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One error Signal on stdout, exit code 2.
+id: start-sensor-missing-id
+journey_id: start-sensor
+name: /start-sensor invoked with no arguments
+regression_priority: medium
+tags:
+- error-handling
+- usage
+trigger:
+  fixture:
+    argv:
+    - start-sensor
+    env:
+      CLAUDE_PLUGIN_ROOT: /plugin
+  shape: CLI invocation
+  summary: /start-sensor with len(args) < 1.
+version: 0.1.0

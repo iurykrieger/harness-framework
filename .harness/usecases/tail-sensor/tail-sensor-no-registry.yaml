@@ -1,0 +1,46 @@
+behavior:
+  business_rules:
+  - Sensor cannot be tailed without a registry entry.
+  - rationale names the resolved registry path.
+  - Verdict is error and exit code is 1.
+  summary: |
+    After parsing argv and cursor, runTail checks b.Res.Exists. A false
+    value means no registry was found at the resolved path. /tail-sensor
+    cannot tail something that is not running.
+description: |
+  /tail-sensor with no running_sensors.json on disk emits verdict=error,
+  metadata.kind=tail_no_registry, exit code 1.
+evidence:
+- file: skills/tail-sensor/scripts/tail.go
+  line_start: 72
+  rationale: registry_exists=false branch emitting tail_no_registry.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    stdout_lines:
+    - '{"sensor_id":"dev-server","verdict":"error","severity":"high","evidence":[{"rationale":"registry
+      not found at /repo/.harness/runtime/running_sensors.json"}],"cost_actual":{"latency_ms":1},"metadata":{"kind":"tail_no_registry"}}'
+  invariants:
+  - Exit code is 1.
+  - metadata.kind is "tail_no_registry".
+  shape: One JSON line on stdout + exit code
+  side_effects: []
+  summary: One Signal verdict=error, metadata.kind=tail_no_registry, exit code 1.
+id: tail-sensor-no-registry
+journey_id: tail-sensor
+name: /tail-sensor errors when the registry file is absent
+regression_priority: high
+tags:
+- error-handling
+- registry-discovery
+trigger:
+  fixture:
+    argv:
+    - tail-sensor
+    - dev-server
+    - "0"
+    state:
+      .harness/runtime/running_sensors.json: absent
+  shape: CLI invocation
+  summary: /tail-sensor invoked when registry file is missing.
+version: 0.1.0

@@ -1,0 +1,69 @@
+behavior:
+  business_rules:
+  - One individual Signal per matched output line.
+  - The aggregate verdict is the worst verdict observed.
+  - The verdict fail outranks the verdict pass.
+  summary: |
+    The runner streams individual Signals for each matched line and
+    composes the aggregate by taking the worst verdict across the stream
+    and the exit_code_map.
+description: |
+  /run-sensor on a stream sensor whose output_parsing.patterns include a
+  fail-producing match. Even with exit code 0, the aggregate verdict is
+  fail because aggregate = worst-of(exit_code_map[exit], stream verdicts).
+evidence:
+- file: lib/signal/aggregate.go
+  rationale: MaxStreamVerdict + worst-of(exit_code_map) composition.
+- file: skills/run-sensor/scripts/run-computational.go
+  line_start: 72
+  rationale: run() delegates to orchestrator which drives the streaming pipeline.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_lines:
+    - '{"sensor_id":"lint-fail-stream","verdict":"pass","severity":"info","evidence":[{"excerpt":"PASS
+      a.go"}],"cost_actual":{"latency_ms":1}}'
+    - '{"sensor_id":"lint-fail-stream","verdict":"fail","severity":"high","evidence":[{"excerpt":"FAIL
+      b.go missing import"}],"cost_actual":{"latency_ms":1}}'
+    - '{"sensor_id":"lint-fail-stream","verdict":"fail","severity":"high","evidence":[],"cost_actual":{"latency_ms":5},"metadata":{"kind":"aggregate"}}'
+  invariants:
+  - The aggregate is the LAST JSONL line on stdout.
+  - The aggregate verdict equals the worst per-line verdict.
+  - Exit code 0 — the sensor's command ran and emitted its aggregate.
+  shape: JSONL on stdout + exit code
+  side_effects: []
+  summary: Two individual Signals (one pass, one fail) followed by aggregate verdict=fail.
+id: run-sensor-stream-fail-verdict
+journey_id: run-sensor
+name: Stream sensor with a failing match produces aggregate verdict=fail
+regression_priority: critical
+tags:
+- error-handling
+- computational
+- stream
+trigger:
+  fixture:
+    argv:
+    - run-computational
+    - lint-fail-stream
+    sensor:
+      execution:
+        command: printf 'PASS a.go\nFAIL b.go missing import\n'
+        exit_code_map:
+        - exit_code: 0
+          verdict: pass
+        output_parsing:
+          patterns:
+          - regex: ^PASS (.+)$
+            verdict: pass
+          - regex: ^FAIL (.+)$
+            severity: high
+            verdict: fail
+      id: lint-fail-stream
+      output: stream
+      type: computational
+  shape: CLI invocation
+  summary: |
+    /run-sensor invoked on a stream sensor whose stdout includes a
+    line matching a pattern that maps to verdict=fail.
+version: 0.1.0
