@@ -37,9 +37,7 @@ func minimalStepsSensor(t *testing.T) *sensor.Sensor {
 				},
 			},
 		},
-		Verification: sensor.Verification{
-			GoldenCases: []sensor.GoldenCase{{Fixture: "x", ExpectedVerdict: "pass", ExpectedSeverity: "info"}},
-		},
+		UseCases: []string{"fake-uc"},
 	}
 }
 

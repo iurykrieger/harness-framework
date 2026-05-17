@@ -498,7 +498,7 @@ func TestValidator_Sensor_RequiresArrayV2(t *testing.T) {
 			{"kind":"step","command":"true"}
 		],
 		"execution": {"command":"true","exit_code_map":[{"exit_code":0,"verdict":"pass","severity":"info"}]},
-		"verification": {"golden_cases":[{"fixture":"f","expected_verdict":"pass","expected_severity":"info"}]}
+		"use_cases": ["fake-uc"]
 	}`)
 	var instance map[string]interface{}
 	if err := json.Unmarshal(body, &instance); err != nil {
@@ -531,7 +531,7 @@ func TestValidator_Sensor_RequiresArrayV2_Rejections(t *testing.T) {
 		"triggers": [{"on":"manual"}],
 		"requires": %s,
 		"execution": {"command":"true","exit_code_map":[{"exit_code":0,"verdict":"pass","severity":"info"}]},
-		"verification": {"golden_cases":[{"fixture":"f","expected_verdict":"pass","expected_severity":"info"}]}
+		"use_cases": ["fake-uc"]
 	}`
 
 	cases := []struct {
@@ -597,11 +597,8 @@ cost:
     timeout_ms: 5000
 triggers:
   - "on": manual
-verification:
-  golden_cases:
-    - fixture: x
-      expected_verdict: pass
-      expected_severity: info
+use_cases:
+  - fake-uc
 execution:
   steps:
     - id: ping
@@ -642,11 +639,8 @@ cost:
     timeout_ms: 5000
 triggers:
   - "on": manual
-verification:
-  golden_cases:
-    - fixture: x
-      expected_verdict: pass
-      expected_severity: info
+use_cases:
+  - fake-uc
 execution:
   command: echo hi
   exit_code_map:

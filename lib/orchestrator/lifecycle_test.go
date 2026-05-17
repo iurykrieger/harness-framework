@@ -599,7 +599,7 @@ func TestRunOne_WithRoot_StreamSensorPersistsIndividualsAndRawLog(t *testing.T) 
         "latency": {"p50_ms": 10, "p95_ms": 50, "timeout_ms": 5000}
       },
       "triggers": [{"on": "manual"}],
-      "verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "warn", "expected_severity": "medium"}]},
+      "use_cases": ["fake-uc"],
       "execution": {
         "command": "printf 'WARN one\nWARN two\nWARN three\n'",
         "exit_code_map": [{"exit_code": 0, "verdict": "pass", "severity": "info"}],
@@ -719,7 +719,7 @@ func TestRunOne_SingleOutputFailure_PopulatesEvidenceFromStderr(t *testing.T) {
 "regulation": "behaviour",
 "phase": "on-demand",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "cost": {
   "class": "cheap",
   "compute": {"cpu":"low","memory_mb":32},

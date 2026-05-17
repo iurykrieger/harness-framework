@@ -27,9 +27,6 @@ regulation: maintainability
 triggers:
 - "on": manual
 type: computational
-verification:
-  golden_cases:
-  - expected_severity: info
-    expected_verdict: pass
-    fixture: x
+use_cases:
+  - canonical-computational-fixture
 version: 0.1.0

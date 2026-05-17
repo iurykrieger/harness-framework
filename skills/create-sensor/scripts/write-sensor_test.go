@@ -11,16 +11,15 @@ import (
 	"testing"
 
 	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
-	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
 
 // withProjectRoot creates a fresh project root with a .harness/ marker,
-// .harness/sensors/, and .harness/sensors/fixtures/. Returns absolute root.
+// .harness/sensors/, and .harness/usecases/. Returns absolute root.
 func withProjectRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, sub := range []string{".harness", ".harness/sensors", ".harness/sensors/fixtures"} {
+	for _, sub := range []string{".harness", ".harness/sensors", ".harness/usecases", ".harness/usecases/framework"} {
 		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -37,29 +36,30 @@ func withProjectRoot(t *testing.T) string {
 	return root
 }
 
-// writeDraftWithFixture builds a canonical-computational sensor with id=newID,
-// optionally writes the fixture file referenced by golden_cases[0], and returns
-// the draft path.
-func writeDraftWithFixture(t *testing.T, root, newID string, writeFixture bool) string {
+// writeUseCaseFile writes a minimal usecase YAML at
+// <root>/.harness/usecases/framework/<id>.yaml so RequireUseCaseFilesOnDisk
+// resolves the id during persistence.
+func writeUseCaseFile(t *testing.T, root, id string) {
+	t.Helper()
+	path := filepath.Join(root, ".harness", "usecases", "framework", id+".yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("id: "+id+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeDraftWithUseCase builds a canonical-computational sensor with id=newID
+// and use_cases=[ucID], optionally writes the matching usecase YAML on disk,
+// and returns the draft path.
+func writeDraftWithUseCase(t *testing.T, root, newID, ucID string, writeUC bool) string {
 	t.Helper()
 	s := sensortest.LoadComputational(t)
 	s.ID = newID
-	fixtureRel := ".harness/sensors/fixtures/" + newID + "/pass.txt"
-	s.Verification.GoldenCases = []sensor.GoldenCase{
-		{
-			Fixture:          fixtureRel,
-			ExpectedVerdict:  "pass",
-			ExpectedSeverity: "info",
-		},
-	}
-	if writeFixture {
-		full := filepath.Join(root, fixtureRel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte("ok"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	s.UseCases = []string{ucID}
+	if writeUC {
+		writeUseCaseFile(t, root, ucID)
 	}
 	draftDir := t.TempDir()
 	draftPath := filepath.Join(draftDir, "draft.json")
@@ -77,7 +77,7 @@ func TestRun_HappyPath(t *testing.T) {
 	root := withProjectRoot(t)
 	schemasDir := schematest.RepoSchemasDir(t)
 	outDir := filepath.Join(root, ".harness", "sensors")
-	draft := writeDraftWithFixture(t, root, "alpha", true)
+	draft := writeDraftWithUseCase(t, root, "alpha", "alpha-uc", true)
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"--out", outDir, "--schemas-dir", schemasDir, draft}, &stdout, &stderr)
@@ -106,19 +106,19 @@ func TestRun_HappyPath(t *testing.T) {
 	}
 }
 
-func TestRun_MissingFixture(t *testing.T) {
+func TestRun_MissingUseCase(t *testing.T) {
 	root := withProjectRoot(t)
 	schemasDir := schematest.RepoSchemasDir(t)
 	outDir := filepath.Join(root, ".harness", "sensors")
-	draft := writeDraftWithFixture(t, root, "beta", false) // fixture NOT written
+	draft := writeDraftWithUseCase(t, root, "beta", "nonexistent-uc", false) // usecase NOT written
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"--out", outDir, "--schemas-dir", schemasDir, draft}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("exit=%d (want 2) stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "missing_fixture") {
-		t.Fatalf("missing_fixture not in stdout: %s", stdout.String())
+	if !strings.Contains(stdout.String(), "usecase_not_found") {
+		t.Fatalf("usecase_not_found not in stdout: %s", stdout.String())
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "beta.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("beta.yaml should not exist, err=%v", err)
@@ -135,7 +135,7 @@ func TestRun_SensorAlreadyExists(t *testing.T) {
 	if err := os.WriteFile(target, []byte(`id: gamma`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	draft := writeDraftWithFixture(t, root, "gamma", true)
+	draft := writeDraftWithUseCase(t, root, "gamma", "gamma-uc", true)
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"--out", outDir, "--schemas-dir", schemasDir, draft}, &stdout, &stderr)
@@ -157,28 +157,14 @@ func TestRun_SchemaInvalid(t *testing.T) {
 	schemasDir := schematest.RepoSchemasDir(t)
 	outDir := filepath.Join(root, ".harness", "sensors")
 
-	// Build a draft missing the required "regulation" field.
+	// Build a draft missing the required "regulation" field. The usecase
+	// file is present so the schema check is what trips, not the
+	// usecase-not-found pre-check.
+	writeUseCaseFile(t, root, "delta-uc")
 	s := sensortest.LoadComputational(t).AsMap()
 	s["id"] = "delta"
 	delete(s, "regulation")
-	// Even bad drafts need a fixture for pre-checks; we ensure the
-	// schema check is what trips, not the missing-fixture check.
-	fixtureRel := ".harness/sensors/fixtures/delta/pass.txt"
-	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(fixtureRel)), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, fixtureRel), []byte("ok"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s["verification"] = map[string]interface{}{
-		"golden_cases": []interface{}{
-			map[string]interface{}{
-				"fixture":           fixtureRel,
-				"expected_verdict":  "pass",
-				"expected_severity": "info",
-			},
-		},
-	}
+	s["use_cases"] = []interface{}{"delta-uc"}
 	draftDir := t.TempDir()
 	draftPath := filepath.Join(draftDir, "draft.json")
 	body, _ := json.Marshal(s)

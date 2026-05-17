@@ -15,8 +15,8 @@ import (
 // PersistOpts is the single options struct accepted by ValidateAndPersist.
 // The zero value (other than OutDir/SchemasDir) yields the permissive
 // behavior used by /detect-sensors and /heal-sensor: silent overwrite, no
-// fixture pre-check. /create-sensor sets RejectIfExists and
-// RequireFixturesOnDisk to get strict authoring semantics.
+// usecase pre-check. /create-sensor sets RejectIfExists and
+// RequireUseCaseFilesOnDisk to get strict authoring semantics.
 type PersistOpts struct {
 	// OutDir is the directory where <id>.yaml will be written. Required.
 	OutDir string
@@ -30,14 +30,15 @@ type PersistOpts struct {
 	// <OutDir>/<id>.yaml already exists on disk.
 	RejectIfExists bool
 
-	// RequireFixturesOnDisk causes ValidateAndPersist to stat every
-	// verification.golden_cases[].fixture path (resolved against
-	// ProjectRoot) and return a *MissingFixtureError if any are absent.
-	// Requires ProjectRoot to be set.
-	RequireFixturesOnDisk bool
+	// RequireUseCaseFilesOnDisk causes ValidateAndPersist to verify
+	// every entry in use_cases[] resolves to a real
+	// .harness/usecases/**/<id>.yaml under ProjectRoot, returning a
+	// *MissingUseCaseError if any are absent. Requires ProjectRoot
+	// to be set.
+	RequireUseCaseFilesOnDisk bool
 
-	// ProjectRoot is the absolute path against which fixture relative
-	// paths resolve. Only consulted when RequireFixturesOnDisk is true.
+	// ProjectRoot is the absolute path against which usecase ids
+	// resolve. Only consulted when RequireUseCaseFilesOnDisk is true.
 	ProjectRoot string
 }
 
@@ -51,15 +52,16 @@ func (e *SensorAlreadyExistsError) Error() string {
 	return fmt.Sprintf("sensor file already exists at %s", e.Path)
 }
 
-// MissingFixtureError is returned when RequireFixturesOnDisk is set and a
-// referenced fixture is not on disk.
-type MissingFixtureError struct {
-	Rel  string // path as written in golden_cases[].fixture
-	Full string // resolved absolute path that was missing
+// MissingUseCaseError is returned when RequireUseCaseFilesOnDisk is set
+// and a referenced usecase id does not match any
+// <ProjectRoot>/.harness/usecases/**/<id>.yaml file.
+type MissingUseCaseError struct {
+	ID         string // the use_cases[] entry that did not resolve
+	SearchRoot string // the directory tree that was walked
 }
 
-func (e *MissingFixtureError) Error() string {
-	return fmt.Sprintf("fixture %q not found at %s", e.Rel, e.Full)
+func (e *MissingUseCaseError) Error() string {
+	return fmt.Sprintf("usecase %q not found under %s/.harness/usecases", e.ID, e.SearchRoot)
 }
 
 // ValidateAndPersist is the single entrypoint for writing a sensor file
@@ -72,7 +74,7 @@ func (e *MissingFixtureError) Error() string {
 // Errors:
 //   - JSON parse failure → wrapped error.
 //   - RejectIfExists + collision → *SensorAlreadyExistsError.
-//   - RequireFixturesOnDisk + missing → *MissingFixtureError.
+//   - RequireUseCaseFilesOnDisk + missing → *MissingUseCaseError.
 //   - Schema validation failure → error from the underlying validator
 //     (callers may render via schema.PrintValidationOrPlain).
 //   - I/O failure (mkdir, write, rename) → wrapped os error; nothing
@@ -84,8 +86,8 @@ func ValidateAndPersist(sensorJSON []byte, opts PersistOpts) (string, error) {
 	if opts.OutDir == "" {
 		return "", errors.New("PersistOpts.OutDir is required")
 	}
-	if opts.RequireFixturesOnDisk && opts.ProjectRoot == "" {
-		return "", errors.New("PersistOpts.ProjectRoot is required when RequireFixturesOnDisk is set")
+	if opts.RequireUseCaseFilesOnDisk && opts.ProjectRoot == "" {
+		return "", errors.New("PersistOpts.ProjectRoot is required when RequireUseCaseFilesOnDisk is set")
 	}
 
 	var sensorMap map[string]interface{}
@@ -95,9 +97,10 @@ func ValidateAndPersist(sensorJSON []byte, opts PersistOpts) (string, error) {
 
 	id, _ := sensorMap["id"].(string)
 
-	// Pre-checks (id-collision and missing fixtures) run before schema
-	// validation so the caller gets a structural rejection without paying
-	// the cost of a full schema parse when the answer is going to be no.
+	// Pre-checks (id-collision and missing usecase files) run before
+	// schema validation so the caller gets a structural rejection without
+	// paying the cost of a full schema parse when the answer is going to
+	// be no.
 	if opts.RejectIfExists && id != "" {
 		target := filepath.Join(opts.OutDir, id+".yaml")
 		if _, err := os.Stat(target); err == nil {
@@ -105,8 +108,8 @@ func ValidateAndPersist(sensorJSON []byte, opts PersistOpts) (string, error) {
 			return "", &SensorAlreadyExistsError{Path: abs}
 		}
 	}
-	if opts.RequireFixturesOnDisk {
-		if err := checkFixturesOnDisk(sensorMap, opts.ProjectRoot); err != nil {
+	if opts.RequireUseCaseFilesOnDisk {
+		if err := checkUseCasesOnDisk(sensorMap, opts.ProjectRoot); err != nil {
 			return "", err
 		}
 	}
@@ -145,30 +148,54 @@ func ValidateAndPersist(sensorJSON []byte, opts PersistOpts) (string, error) {
 	return abs, nil
 }
 
-func checkFixturesOnDisk(sensorMap map[string]interface{}, projectRoot string) error {
-	ver, ok := sensorMap["verification"].(map[string]interface{})
+func checkUseCasesOnDisk(sensorMap map[string]interface{}, projectRoot string) error {
+	rawIDs, ok := sensorMap["use_cases"].([]interface{})
 	if !ok {
 		return nil // schema will catch this later
 	}
-	cases, ok := ver["golden_cases"].([]interface{})
-	if !ok {
-		return nil
-	}
-	for _, raw := range cases {
-		gc, ok := raw.(map[string]interface{})
-		if !ok {
+	usecasesRoot := filepath.Join(projectRoot, ".harness", "usecases")
+	for _, raw := range rawIDs {
+		id, ok := raw.(string)
+		if !ok || id == "" {
 			continue
 		}
-		rel, _ := gc["fixture"].(string)
-		if rel == "" {
-			continue
+		found, err := usecaseFileExists(usecasesRoot, id)
+		if err != nil {
+			return err
 		}
-		full := filepath.Join(projectRoot, rel)
-		if _, err := os.Stat(full); err != nil {
-			return &MissingFixtureError{Rel: rel, Full: full}
+		if !found {
+			return &MissingUseCaseError{ID: id, SearchRoot: projectRoot}
 		}
 	}
 	return nil
+}
+
+// usecaseFileExists walks usecasesRoot looking for a <id>.yaml file.
+// Match is by basename equality (filepath.Walk is bounded to the
+// .harness/usecases subtree).
+func usecaseFileExists(usecasesRoot, id string) (bool, error) {
+	target := id + ".yaml"
+	found := false
+	err := filepath.Walk(usecasesRoot, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return filepath.SkipDir
+			}
+			return walkErr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if info.Name() == target {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, filepath.SkipAll) {
+		return false, err
+	}
+	return found, nil
 }
 
 func writeCanonical(path string, sensor map[string]interface{}) error {

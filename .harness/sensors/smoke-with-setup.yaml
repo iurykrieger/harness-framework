@@ -21,16 +21,8 @@ blind_spots:
   - Inherits every blind spot of smoke-typed-pipeline; adds no new coverage on its own.
 triggers:
   - "on": manual
-verification:
-  golden_cases:
-    - fixture: order-valid.json
-      expected_verdict: pass
-      expected_severity: info
-      notes: |
-        Exercises type: sensor inline composition. The inner sensor's
-        aggregate verdict (pass) folds into this sensor's verdict.
-        outputs_passthrough surfaces the inner stream of individuals
-        to the outer signal stream.
+use_cases:
+  - framework-smoke-with-setup
 execution:
   steps:
     - id: run-pipeline

@@ -75,7 +75,7 @@ func writeFastDyingDep(t *testing.T, root, id string) {
 "regulation": "behaviour",
 "phase": "continuous",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "cost": {"class":"cheap","compute":{"cpu":"low","memory_mb":32},"latency":{"p50_ms":10,"p95_ms":50}},
 "execution": {
   "command": "false",
@@ -185,7 +185,7 @@ func TestAttachLiveDep_HealthGateDiedSilently(t *testing.T) {
 "name":"x","description":"x","determinism":"high","kind":"assertion","type":"computational",
 "output":"single","regulation":"behaviour","phase":"on-demand",
 "triggers":[{"on":"manual"}],
-"verification":{"golden_cases":[{"fixture":"smoke","expected_verdict":"pass","expected_severity":"info"}]},
+"use_cases":["fake-uc"],
 "requires":[{"kind":"sensor","id":"fast-dying"}],
 "cost":{"class":"cheap","compute":{"cpu":"low","memory_mb":32},"latency":{"p50_ms":10,"p95_ms":50,"timeout_ms":2000}},
 "execution":{"command":"echo never","exit_code_map":[{"exit_code":0,"verdict":"pass","severity":"info"}]}

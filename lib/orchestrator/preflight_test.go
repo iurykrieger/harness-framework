@@ -151,11 +151,7 @@ func writeBlockingDepFixture(t *testing.T, root, id string, depsOn []string) {
 		"regulation":  "behaviour",
 		"phase":       "continuous",
 		"triggers":    []interface{}{map[string]interface{}{"on": "manual"}},
-		"verification": map[string]interface{}{
-			"golden_cases": []interface{}{
-				map[string]interface{}{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"},
-			},
-		},
+		"use_cases": []interface{}{"fake-uc"},
 		"cost": map[string]interface{}{
 			"class":   "cheap",
 			"compute": map[string]interface{}{"cpu": "low", "memory_mb": 32},

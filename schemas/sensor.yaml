@@ -975,38 +975,16 @@ properties:
     - computational
     - inferential
     type: string
-  verification:
-    additionalProperties: false
-    description: Sensors are code; they need their own harness. Each sensor MUST declare
-      at least one golden case.
-    properties:
-      golden_cases:
-        items:
-          additionalProperties: false
-          properties:
-            expected_severity:
-              $ref: signal.yaml#/$defs/Severity
-            expected_verdict:
-              $ref: signal.yaml#/$defs/Verdict
-            fixture:
-              description: Path to fixture or fixture id.
-              type: string
-            notes:
-              type: string
-          required:
-          - fixture
-          - expected_verdict
-          - expected_severity
-          type: object
-        minItems: 1
-        type: array
-      self_test_command:
-        description: Command that runs all fixtures and validates each emitted Signal
-          against signal.yaml.
-        type: string
-    required:
-    - golden_cases
-    type: object
+  use_cases:
+    description: |
+      Usecase ids this sensor validates. Pure traceability — the runtime
+      does NOT auto-replay these. Steps under execution authoritatively
+      decide pass/fail. Required so every sensor declares its purpose.
+    type: array
+    minItems: 1
+    items:
+      type: string
+      pattern: ^[a-z][a-z0-9-]*$
   version:
     description: SemVer of the sensor definition. Bump on contract changes.
     pattern: ^\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$
@@ -1025,6 +1003,6 @@ required:
 - cost
 - triggers
 - execution
-- verification
+- use_cases
 title: Sensor
 type: object

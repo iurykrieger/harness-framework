@@ -155,11 +155,7 @@ func TestRunOneWithRootCaptureOverride_EndToEnd(t *testing.T) {
           {"id": "echo-override", "type": "shell", "run": "echo ${{ env.` + overrideKey + ` }}"}
         ]
       },
-      "verification": {
-        "golden_cases": [
-          {"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}
-        ]
-      }
+      "use_cases": ["fake-uc"]
     }`)
 	path := filepath.Join(sensorsDir, "child.yaml")
 	if err := os.WriteFile(path, body, 0o644); err != nil {
@@ -233,11 +229,7 @@ func TestRunOneWithRootCaptureOverride_FixtureOverride(t *testing.T) {
           {"id": "render", "type": "shell", "run": "cat ${{ fixtures.parent-only.json }}"}
         ]
       },
-      "verification": {
-        "golden_cases": [
-          {"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}
-        ]
-      }
+      "use_cases": ["fake-uc"]
     }`)
 	path := filepath.Join(sensorsDir, "child.yaml")
 	if err := os.WriteFile(path, body, 0o644); err != nil {

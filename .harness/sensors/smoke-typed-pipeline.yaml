@@ -21,17 +21,8 @@ blind_spots:
   - Validates the fixture content via a substring match only; deeper schema validation is out of scope.
 triggers:
   - "on": manual
-verification:
-  golden_cases:
-    - fixture: order-valid.json
-      expected_verdict: pass
-      expected_severity: info
-      notes: |
-        Exercises the typed-step pipeline end-to-end: with: { fixture }
-        injection into a shell step, declared outputs, ${{ steps.X.outputs.Y }}
-        interpolation into a downstream assert step, and fail-fast aggregation
-        of two step verdicts. Stays hermetic — no network, no external
-        process besides the orchestrator's own shell.
+use_cases:
+  - framework-smoke-typed-pipeline
 execution:
   steps:
     - id: load-fixture

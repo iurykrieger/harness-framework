@@ -27,9 +27,6 @@ regulation: behaviour
 triggers:
 - "on": agent-request
 type: computational
-verification:
-  golden_cases:
-  - expected_severity: info
-    expected_verdict: pass
-    fixture: x
+use_cases:
+  - canonical-setup-fixture
 version: 0.1.0

@@ -39,11 +39,8 @@ cost:
     timeout_ms: 5000
 triggers:
   - "on": manual
-verification:
-  golden_cases:
-    - fixture: x
-      expected_verdict: pass
-      expected_severity: info
+use_cases:
+  - fake-uc
 execution:
   steps:
     - id: ping
@@ -109,11 +106,8 @@ cost:
     timeout_ms: 5000
 triggers:
   - "on": manual
-verification:
-  golden_cases:
-    - fixture: x
-      expected_verdict: pass
-      expected_severity: info
+use_cases:
+  - fake-uc
 execution:
   command: "true"
   exit_code_map:
@@ -153,5 +147,116 @@ execution:
 	}
 	if got := step.ExitCodeMap["1"]; got != "fail" {
 		t.Fatalf("normalized step ExitCodeMap[1] = %q, want fail", got)
+	}
+}
+
+// loadFromString is a small helper for the use_cases coverage tests: it
+// writes body into a temp sensor file and runs sensor.Load against it.
+func loadFromString(t *testing.T, body []byte) (*sensor.Sensor, error) {
+	t.Helper()
+	dir := t.TempDir()
+	sensorDir := filepath.Join(dir, ".harness", "sensors")
+	if err := os.MkdirAll(sensorDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sensorDir, "x.yaml")
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return sensor.Load(path, newValidator(t))
+}
+
+func TestLoadAcceptsUseCases(t *testing.T) {
+	yamlBody := []byte(`
+id: x
+version: 1.0.0
+name: x
+description: x
+kind: assertion
+type: computational
+regulation: maintainability
+phase: on-demand
+determinism: high
+output: single
+cost:
+  class: cheap
+  compute: { cpu: low, memory_mb: 64 }
+  latency: { p50_ms: 10, p95_ms: 100, timeout_ms: 5000 }
+triggers:
+  - "on": manual
+execution:
+  command: "true"
+  exit_code_map:
+    - { exit_code: 0, verdict: pass, severity: info }
+use_cases:
+  - sample-uc
+`)
+	s, err := loadFromString(t, yamlBody)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(s.UseCases) != 1 || s.UseCases[0] != "sample-uc" {
+		t.Fatalf("UseCases not preserved: %#v", s.UseCases)
+	}
+}
+
+func TestLoadRejectsEmptyUseCases(t *testing.T) {
+	yamlBody := []byte(`
+id: x
+version: 1.0.0
+name: x
+description: x
+kind: assertion
+type: computational
+regulation: maintainability
+phase: on-demand
+determinism: high
+output: single
+cost:
+  class: cheap
+  compute: { cpu: low, memory_mb: 64 }
+  latency: { p50_ms: 10, p95_ms: 100, timeout_ms: 5000 }
+triggers:
+  - "on": manual
+execution:
+  command: "true"
+  exit_code_map:
+    - { exit_code: 0, verdict: pass, severity: info }
+use_cases: []
+`)
+	if _, err := loadFromString(t, yamlBody); err == nil {
+		t.Fatal("expected schema error for empty use_cases, got nil")
+	}
+}
+
+func TestLoadRejectsLegacyVerificationField(t *testing.T) {
+	yamlBody := []byte(`
+id: x
+version: 1.0.0
+name: x
+description: x
+kind: assertion
+type: computational
+regulation: maintainability
+phase: on-demand
+determinism: high
+output: single
+cost:
+  class: cheap
+  compute: { cpu: low, memory_mb: 64 }
+  latency: { p50_ms: 10, p95_ms: 100, timeout_ms: 5000 }
+triggers:
+  - "on": manual
+execution:
+  command: "true"
+  exit_code_map:
+    - { exit_code: 0, verdict: pass, severity: info }
+use_cases: [foo]
+verification:
+  golden_cases:
+    - { fixture: x, expected_verdict: pass, expected_severity: info }
+`)
+	if _, err := loadFromString(t, yamlBody); err == nil {
+		t.Fatal("expected schema error for legacy verification field, got nil")
 	}
 }

@@ -21,7 +21,7 @@ type Sensor struct {
 	Requires       []Requirement   `json:"requires,omitempty"`
 	Execution      Execution       `json:"execution"`
 	SelfCorrection *SelfCorrection `json:"self_correction,omitempty"`
-	Verification   Verification    `json:"verification"`
+	UseCases       []string        `json:"use_cases"`
 	BlindSpots     []string        `json:"blind_spots,omitempty"`
 	Calibration    *Calibration    `json:"calibration,omitempty"`
 	References     []string        `json:"references,omitempty"`
@@ -249,18 +249,6 @@ type SelfCorrection struct {
 	OnFail     string `json:"on_fail,omitempty"`
 	OnError    string `json:"on_error,omitempty"`
 	Escalation string `json:"escalation,omitempty"`
-}
-
-type Verification struct {
-	GoldenCases     []GoldenCase `json:"golden_cases"`
-	SelfTestCommand string       `json:"self_test_command,omitempty"`
-}
-
-type GoldenCase struct {
-	Fixture          string `json:"fixture"`
-	ExpectedVerdict  string `json:"expected_verdict"`
-	ExpectedSeverity string `json:"expected_severity"`
-	Notes            string `json:"notes,omitempty"`
 }
 
 type Calibration struct {

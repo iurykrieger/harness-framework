@@ -41,7 +41,7 @@ func writeMidRunConsumer(t *testing.T, root, id, depID string, slowSeconds int) 
 "regulation": "behaviour",
 "phase": "on-demand",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "requires": [{"kind":"sensor","id":"%s"}],
 "cost": {
   "class": "cheap",
