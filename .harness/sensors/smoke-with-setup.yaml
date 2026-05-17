@@ -1,7 +1,7 @@
 id: smoke-with-setup
 version: 0.1.0
 name: smoke-with-setup
-description: Composes smoke-http-roundtrip via a type:sensor step to exercise inline composition.
+description: Composes smoke-typed-pipeline via a type:sensor step to exercise inline composition.
 kind: assertion
 type: computational
 regulation: behaviour
@@ -18,22 +18,22 @@ cost:
     p95_ms: 1000
     timeout_ms: 10000
 blind_spots:
-  - Inherits every blind spot of smoke-http-roundtrip; adds no new coverage on its own.
+  - Inherits every blind spot of smoke-typed-pipeline; adds no new coverage on its own.
 triggers:
   - "on": manual
 verification:
   golden_cases:
     - fixture: order-valid.json
-      expected_verdict: error
-      expected_severity: critical
+      expected_verdict: pass
+      expected_severity: info
       notes: |
-        Verdict propagates from the inner smoke-http-roundtrip run.
-        With no server on http://localhost:8080 the inner http step
-        errors, the inner aggregate is error, and the outer aggregate
-        folds to the same verdict.
+        Exercises type: sensor inline composition. The inner sensor's
+        aggregate verdict (pass) folds into this sensor's verdict.
+        outputs_passthrough surfaces the inner stream of individuals
+        to the outer signal stream.
 execution:
   steps:
-    - id: run-smoke
+    - id: run-pipeline
       type: sensor
-      ref: smoke-http-roundtrip
+      ref: smoke-typed-pipeline
       outputs_passthrough: true
