@@ -105,7 +105,7 @@ func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v
 			aggVerdict, aggSeverity = "error", "high"
 		} else {
 			start := sensor.NowFn()
-			engineRes := runViaEngine(ctx, typed, projectRoot, schemasDir, v, nil, stdout, fxOverride, envOverride)
+			engineRes := runViaEngine(ctx, typed, projectRoot, schemasDir, "", envelope, v, nil, stdout, fxOverride, envOverride)
 			elapsedMS = int(sensor.NowFn().Sub(start) / time.Millisecond)
 			aggVerdict = engineRes.Verdict
 			aggSeverity = engineRes.Severity
@@ -392,7 +392,7 @@ func runOneWithPersistenceImpl(
 			}()
 
 			start := sensor.NowFn()
-			engineRes := runViaEngine(ctx, typed, projectRoot, schemasDir, v, &root, stdout, fxOverride, envOverride)
+			engineRes := runViaEngine(ctx, typed, projectRoot, schemasDir, runDir, envelope, v, &root, stdout, fxOverride, envOverride)
 			elapsedMS = int(sensor.NowFn().Sub(start) / time.Millisecond)
 			aggVerdict = engineRes.Verdict
 			aggSeverity = engineRes.Severity

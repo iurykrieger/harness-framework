@@ -51,7 +51,7 @@ func TestRunViaEngine_FixtureOverrideMergedIntoPool(t *testing.T) {
 	res := runViaEngine(
 		context.Background(),
 		typed,
-		proj, "", v, nil, &stdout,
+		proj, "", "", sensor.Envelope{}, v, nil, &stdout,
 		map[string]string{"parent-only.json": fxPath},
 		nil,
 	)
@@ -101,7 +101,7 @@ func TestRunViaEngine_EnvOverrideMergedIntoSealedSnapshot(t *testing.T) {
 	res := runViaEngine(
 		context.Background(),
 		typed,
-		proj, "", v, nil, &stdout,
+		proj, "", "", sensor.Envelope{}, v, nil, &stdout,
 		nil,
 		map[string]string{overrideKey: overrideVal},
 	)
