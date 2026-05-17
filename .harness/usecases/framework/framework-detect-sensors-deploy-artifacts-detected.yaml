@@ -1,0 +1,53 @@
+id: framework-detect-sensors-deploy-artifacts-detected
+version: 0.1.0
+name: /detect-sensors surfaces deploy and CI artifacts as Components
+journey_id: framework
+description: |
+  When the project contains deploy artifacts (Dockerfile, Helm
+  chart, k8s manifests, terraform, CI workflows), Phase A persists
+  one Component per artifact using the new Role values introduced
+  in Spec C — so Phase B can draft building blocks like
+  `assert-image-builds`, `assert-helm-lint-pass`,
+  `assert-workflow-lint` on top of them.
+trigger:
+  shape: harness skill invocation
+  summary: /detect-sensors runs on a project that has at least one of (Dockerfile, helm/Chart.yaml, .github/workflows/, *.tf).
+  fixture:
+    project_state:
+      Dockerfile: present
+      .github/workflows/test.yml: present
+behavior:
+  summary: |
+    Phase A inspects the listed deploy/CI files, persists one
+    Component per kind using the new role values, and pairs each
+    with the self-containment fields (`category`, `capabilities`,
+    `observable_surface`).
+  business_rules:
+    - A Dockerfile becomes `role: container-runtime` Component named `docker`.
+    - A Helm Chart.yaml becomes `role: deployment-tool` Component named `helm`.
+    - A GitHub workflow becomes `role: ci-cd` Component named `github-actions`.
+    - Each surfaced Component carries category/capabilities/observable_surface.
+expected_outcome:
+  shape: stack.yaml contains one Component per detected deploy/CI artifact
+  summary: For each present artifact, exactly one Component with the right role and self-containment fields.
+  fixture:
+    expected_components:
+      - role: container-runtime
+        category: runtime/container
+      - role: ci-cd
+        category_prefix: ci/
+  invariants:
+    - .harness/stack.yaml parses against schemas/stack.yaml.
+    - For every detected deploy/CI artifact, components[] contains an entry with a matching role.
+    - No deploy/CI Component lacks the 3 self-containment fields.
+  side_effects:
+    - Creates .harness/stack.yaml.
+evidence:
+  - file: skills/detect-sensors/SKILL.md
+    rationale: Phase A "Beyond code manifests" bullet enumerates the deploy/CI artifact → role mapping.
+  - file: schemas/stack.yaml
+    rationale: $defs/Role enum includes container-runtime, deployment-tool, ci-cd values.
+regression_priority: high
+tags:
+  - framework-detect-sensors
+  - deploy-artifacts

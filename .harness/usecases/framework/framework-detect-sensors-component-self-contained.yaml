@@ -1,0 +1,54 @@
+id: framework-detect-sensors-component-self-contained
+version: 0.1.0
+name: /detect-sensors produces self-contained Components in stack.yaml
+journey_id: framework
+description: |
+  After `/detect-sensors` finishes Phase A, every Component it
+  persists to stack.yaml carries the three self-containment fields
+  (`category`, `capabilities`, `observable_surface`) populated, so
+  Phase B can draft building-block sensors from the Component alone
+  without re-deriving everything from raw evidence.
+trigger:
+  shape: harness skill invocation
+  summary: /detect-sensors completes Phase A on a project with at least one detectable Component.
+  fixture:
+    project_state:
+      go.mod: present
+      .harness/stack.yaml: absent
+behavior:
+  summary: |
+    Phase A scans manifests + deploy/observability artifacts,
+    populates `category`/`capabilities`/`observable_surface` for
+    each detected Component, and persists via write-stack.go.
+  business_rules:
+    - Every Component in the persisted stack.yaml has a non-empty `category` string.
+    - Every Component has at least one entry in `capabilities[]`.
+    - Every Component has at least one entry in `observable_surface[]`.
+    - `category` follows the `<domain>/<role>` slug convention.
+expected_outcome:
+  shape: One persisted .harness/stack.yaml + schema validation pass
+  summary: stack.yaml exists, parses against schemas/stack.yaml, and every Component has all 3 self-containment fields non-empty.
+  fixture:
+    persisted_file: .harness/stack.yaml
+    every_component:
+      category: non-empty string
+      capabilities: array with >= 1 entry
+      observable_surface: array with >= 1 entry
+  invariants:
+    - .harness/stack.yaml parses against schemas/stack.yaml.
+    - For every entry in components[], `.category` is a non-empty string.
+    - For every entry in components[], `(.capabilities | length)` is >= 1.
+    - For every entry in components[], `(.observable_surface | length)` is >= 1.
+  side_effects:
+    - Creates .harness/stack.yaml.
+evidence:
+  - file: schemas/stack.yaml
+    rationale: Schema defines the 3 optional self-containment fields on $defs/Component.
+  - file: skills/detect-sensors/SKILL.md
+    rationale: Phase A prose instructs the agent to populate all 3 fields per Component.
+  - file: lib/stack/shape.go
+    rationale: Go struct mirrors the schema; Component.Category/Capabilities/ObservableSurface decode from YAML.
+regression_priority: high
+tags:
+  - framework-detect-sensors
+  - self-contained-component
