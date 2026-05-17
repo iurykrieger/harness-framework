@@ -47,6 +47,7 @@ execution:
       run: |
         set -e
         for f in .harness/sensors/assert-tail-sensor-*.yaml; do
+          [ -e "$f" ] || { echo "FAIL: no produced sensor matching .harness/sensors/assert-tail-sensor-*.yaml"; exit 1; }
           go run -tags=write_sensor "${CLAUDE_PLUGIN_ROOT}/skills/create-sensor/scripts" \
             --out "$(mktemp -d)" --schemas-dir "${CLAUDE_PLUGIN_ROOT}/schemas" "$f" >/dev/null
         done
@@ -58,6 +59,7 @@ execution:
       run: |
         set -e
         for f in .harness/sensors/assert-tail-sensor-*.yaml; do
+          [ -e "$f" ] || { echo "FAIL: no produced sensor matching .harness/sensors/assert-tail-sensor-*.yaml"; exit 1; }
           # Count execution.steps entries via yq if available, else a coarse grep.
           n=$(grep -cE '^    - id:' "$f")
           if [ "$n" -lt 2 ]; then
@@ -73,6 +75,7 @@ execution:
       run: |
         set -e
         for f in .harness/sensors/assert-tail-sensor-*.yaml; do
+          [ -e "$f" ] || { echo "FAIL: no produced sensor matching .harness/sensors/assert-tail-sensor-*.yaml"; exit 1; }
           if ! grep -q '^use_cases:' "$f"; then
             echo "FAIL: $f missing use_cases"
             exit 1
@@ -90,6 +93,7 @@ execution:
         # or a top-level resource pointer matching .harness/fixtures/<sensor-id>/.
         found=0
         for f in .harness/sensors/assert-tail-sensor-*.yaml; do
+          [ -e "$f" ] || { echo "FAIL: no produced sensor matching .harness/sensors/assert-tail-sensor-*.yaml"; exit 1; }
           sid="$(basename "$f" .yaml)"
           if grep -qE '(^|[[:space:]])fixture:' "$f" && \
              [ -d ".harness/fixtures/$sid" ] && \
