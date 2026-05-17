@@ -24,7 +24,7 @@ behavior:
     - The persisted sensor YAML parses against schemas/sensor.yaml.
     - len(execution.steps) >= 2.
     - len(use_cases) >= 1.
-    - At least one step references a fixture under .harness/fixtures/, OR no step needs a fixture (legitimate for pure shell-only sensors).
+    - At least one step references a fixture under .harness/fixtures/<sensor-id>/.
 expected_outcome:
   shape: One sensor YAML file on disk + the create-sensor Signal verdict=pass
   summary: A schema-valid sensor at the expected path with structural multi-angle properties.
@@ -36,6 +36,7 @@ expected_outcome:
     - Sensor YAML parses against schemas/sensor.yaml.
     - len(execution.steps) >= 2.
     - len(use_cases) >= 1.
+    - At least one step in the produced sensor references a fixture file under .harness/fixtures/<sensor-id>/.
   side_effects:
     - "write: .harness/sensors/<sensor-id>.yaml"
     - "write: .harness/fixtures/<sensor-id>/*"

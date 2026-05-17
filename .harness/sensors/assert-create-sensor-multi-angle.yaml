@@ -81,3 +81,27 @@ execution:
       exit_code_map:
         "0": pass
         "*": fail
+    - id: assert-fixture-referenced
+      type: shell
+      run: |
+        set -e
+        # At least one produced sensor must reference a fixture under .harness/fixtures/.
+        # We accept either an inline `fixture:` reference inside execution.steps[].with
+        # or a top-level resource pointer matching .harness/fixtures/<sensor-id>/.
+        found=0
+        for f in .harness/sensors/assert-tail-sensor-*.yaml; do
+          sid="$(basename "$f" .yaml)"
+          if grep -qE '(^|[[:space:]])fixture:' "$f" && \
+             [ -d ".harness/fixtures/$sid" ] && \
+             [ "$(ls -A ".harness/fixtures/$sid" 2>/dev/null)" ]; then
+            found=1
+            break
+          fi
+        done
+        if [ "$found" -eq 0 ]; then
+          echo "FAIL: no produced sensor declares a fixture under .harness/fixtures/<sensor-id>/"
+          exit 1
+        fi
+      exit_code_map:
+        "0": pass
+        "*": fail
