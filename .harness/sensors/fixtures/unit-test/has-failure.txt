@@ -1,8 +1,0 @@
-=== RUN   TestExample
-    foo_test.go:12: assertion failed: expected 1, got 2
---- FAIL: TestExample (0.00s)
-=== RUN   TestExampleStillRuns
---- PASS: TestExampleStillRuns (0.00s)
-FAIL
-exit status 1
-FAIL	example.com/x	0.013s

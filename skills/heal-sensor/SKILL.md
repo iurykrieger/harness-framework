@@ -32,6 +32,8 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
 
 The output contains: the failing Signal verbatim, the sensor body (converted to JSON for the heal-input envelope), the contents of README/CLAUDE/AGENTS/GEMINI/CONTRIBUTING (capped to 16 KB each), and the list of `.example` template files in the tree.
 
+When healing a sensor with `execution.steps:`, read the aggregate signal's `metadata.steps[]` array. Each entry has `{id, type, verdict, duration_ms}`. The failing step is the last one whose `verdict` is `fail` or `error` (fail-fast guarantees only one such entry). `diagnose.go` surfaces that entry as `failing_step` in `/tmp/heal-input.json`; treat its `id` as the `<step-id>` to cite in heal output and scope your proposed edits to that step. For sensors with `execution.command:` shortcut, `failing_step` is absent and behavior is unchanged.
+
 ### 2. Build the Setup Plan
 
 Read `/tmp/heal-input.json` and write a Setup Plan to `/tmp/heal-plan.json` that conforms to the contract in `lib/heal/plan.go`:
@@ -66,7 +68,7 @@ Rules for filling in the slots:
 
 - `shape`: pick from the closed enum. Match the rule that fired (the hook's injection message names it).
 - `auto_apply[]`: only the four kinds listed above. Anything else (`pnpm install`, `docker compose up`, `gcloud auth login`, custom Makefile targets) goes into `propose_only[]`. The `lib/heal.Apply` allowlist will reject anything else even if you list it.
-- `sensor_patches[]`: when the failing sensor would benefit from declaring an additional `requires[kind=env]` entry or wiring a `requires[kind=sensor]` reference to a new setup sensor — emit the patched full sensor object. Don't emit a JSON patch document; emit the new full sensor object. `apply-sensors.go` will run `lib/heal/version.BumpPatch` before persisting.
+- `sensor_patches[]`: when the failing sensor would benefit from declaring an additional `requires[kind=env]` entry or wiring a `requires[kind=sensor]` reference to a new setup sensor — emit the patched full sensor object. Don't emit a JSON patch document; emit the new full sensor object. `apply-sensors.go` will run `lib/heal/version.BumpPatch` before persisting. When the heal-input names a `failing_step`, scope edits inside `execution.steps[]` to the entry whose `id` matches `failing_step.id`; leave sibling steps untouched.
 - `new_setup_sensors[]`: when the project would benefit from a reusable setup sensor (e.g., `setup-env-from-example`) — emit the full new sensor object at version `0.1.0` with `kind: "setup"`.
 
 ### 3. Apply file mutations

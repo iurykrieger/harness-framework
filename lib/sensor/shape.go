@@ -25,6 +25,26 @@ type Sensor struct {
 	BlindSpots     []string        `json:"blind_spots,omitempty"`
 	Calibration    *Calibration    `json:"calibration,omitempty"`
 	References     []string        `json:"references,omitempty"`
+
+	// Fixtures is the resolved fixture-name → absolute-path pool for this
+	// sensor run. Populated by the caller (orchestrator / runner) after
+	// Load via fixture.Discover; absent from the on-disk schema and
+	// therefore tagged `json:"-"` so a round-trip through AsMap or Persist
+	// never leaks it back into YAML. The engine threads it into
+	// step.ExecContext.Fixtures.
+	Fixtures map[string]string `json:"-"`
+
+	// Cwd is the working directory subprocess-spawning steps inherit for
+	// this sensor run. Populated by the caller (orchestrator / runner)
+	// from the resolved project root; absent from the on-disk schema and
+	// therefore tagged `json:"-"`. The engine threads it into
+	// step.ExecContext.Cwd.
+	Cwd string `json:"-"`
+
+	// Warnings carries non-fatal advisory diagnostics produced by
+	// cross-field validation (lib/sensor/validate.go). Runtime-only;
+	// absent from the on-disk schema and never serialized.
+	Warnings []string `json:"-"`
 }
 
 type Cost struct {
@@ -85,7 +105,7 @@ type Requirement struct {
 }
 
 type Execution struct {
-	Command            string             `json:"command"`
+	Command            string             `json:"command,omitempty"`
 	Env                map[string]string  `json:"env,omitempty"`
 	Blocking           bool               `json:"blocking,omitempty"`
 	GracefulTimeoutMS  *int               `json:"graceful_timeout_ms,omitempty"`
@@ -96,6 +116,72 @@ type Execution struct {
 	SystemPrompt       string             `json:"system_prompt,omitempty"`
 	UserPromptTemplate string             `json:"user_prompt_template,omitempty"`
 	Decoding           *Decoding          `json:"decoding,omitempty"`
+	// Steps is the typed-execution shape (mutually exclusive with Command
+	// per schemas/sensor.yaml execution.oneOf). When the on-disk YAML
+	// declares command:, Load() normalizes it into a single-element Steps
+	// in memory; the YAML on disk keeps its declared shape.
+	Steps []StepConfig `json:"steps,omitempty"`
+}
+
+// StepConfig is the YAML-decoded form of an execution.steps[] entry.
+// Type-specific fields are tagged omitempty so the same struct serves
+// every union arm; cross-field validation in lib/sensor/validate.go
+// (Task 9) ensures only the fields valid for the declared Type are
+// populated.
+type StepConfig struct {
+	ID   string                 `json:"id"`
+	Type string                 `json:"type"`
+	With map[string]interface{} `json:"with,omitempty"`
+
+	// Shell fields
+	Run         string             `json:"run,omitempty"`
+	ExitCodeMap map[string]Verdict `json:"exit_code_map,omitempty"`
+	Parse       *ParseConfig       `json:"parse,omitempty"`
+
+	// HTTP fields
+	Method   string            `json:"method,omitempty"`
+	URL      string            `json:"url,omitempty"`
+	Headers  map[string]string `json:"headers,omitempty"`
+	BodyFrom *BodyFromConfig   `json:"body_from,omitempty"`
+	Timeout  string            `json:"timeout,omitempty"`
+	Expect   interface{}       `json:"expect,omitempty"`
+
+	// Sensor fields
+	Ref                string `json:"ref,omitempty"`
+	OutputsPassthrough bool   `json:"outputs_passthrough,omitempty"`
+
+	// Common output declaration
+	Outputs map[string]OutputSpec `json:"outputs,omitempty"`
+}
+
+// Verdict is a local string alias used for readability of the keys that
+// reference signal verdicts (e.g. in ExitCodeMap entries). The actual
+// signal verdict enum is enforced by the JSON Schema in schemas/sensor.yaml,
+// not by Go types.
+type Verdict string
+
+// ParseConfig is the shell step `parse:` block: line-by-line output
+// parsing rules. Mirrors execution.output_parsing structurally so the
+// legacy command shortcut can be normalized into a step at load time.
+type ParseConfig struct {
+	Patterns []Pattern `json:"patterns"`
+}
+
+// BodyFromConfig is the discriminated union for http step body sources;
+// exactly one of Fixture / Template / Inline is populated per schema.
+type BodyFromConfig struct {
+	Fixture  string      `json:"fixture,omitempty"`
+	Template string      `json:"template,omitempty"`
+	Inline   interface{} `json:"inline,omitempty"`
+}
+
+// OutputSpec describes a single named output extraction. Modifiers
+// (Regex, JSONPath, Trim) are mutually exclusive per schema.
+type OutputSpec struct {
+	From     string `json:"from"`
+	Regex    string `json:"regex,omitempty"`
+	JSONPath string `json:"jsonpath,omitempty"`
+	Trim     bool   `json:"trim,omitempty"`
 }
 
 type LifecycleStep struct {

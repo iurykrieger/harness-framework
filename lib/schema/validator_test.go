@@ -8,11 +8,29 @@ import (
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
+	"sigs.k8s.io/yaml"
 
 	"github.com/iurykrieger/harness-framework/lib/schema"
 	"github.com/iurykrieger/harness-framework/lib/schema/schematest"
 	"github.com/iurykrieger/harness-framework/lib/sensor/sensortest"
 )
+
+// yamlInstance decodes a YAML literal into the loosely-typed shape the
+// validator accepts (map[string]interface{}). Mirrors the conversion path
+// used by lib/sensor/persist.go and lib/schema.ReadAsJSON so the test sees
+// the same instance shape as production code.
+func yamlInstance(t *testing.T, body []byte) map[string]interface{} {
+	t.Helper()
+	jsonBytes, err := yaml.YAMLToJSON(body)
+	if err != nil {
+		t.Fatalf("yamlInstance: yaml→json: %v", err)
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &out); err != nil {
+		t.Fatalf("yamlInstance: unmarshal: %v", err)
+	}
+	return out
+}
 
 // ──────────────────────────────────────────────────────────────────────
 // Validator (covers cross-file $ref to signal.json#/$defs/{Verdict,Severity})
@@ -545,5 +563,102 @@ func TestValidator_Sensor_RequiresArrayV2_Rejections(t *testing.T) {
 				t.Fatalf("expected validation to fail for case %q, but it passed", tc.name)
 			}
 		})
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// steps[] shape (typed-step execution) — added by complex-commands plan
+// ──────────────────────────────────────────────────────────────────────
+
+func TestValidateSensor_StepsShape(t *testing.T) {
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`
+id: example-steps
+version: 0.1.0
+name: smoke
+description: smoke
+kind: assertion
+type: computational
+regulation: maintainability
+phase: on-demand
+determinism: high
+output: single
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 64
+  latency:
+    p50_ms: 10
+    p95_ms: 100
+    timeout_ms: 5000
+triggers:
+  - "on": manual
+verification:
+  golden_cases:
+    - fixture: x
+      expected_verdict: pass
+      expected_severity: info
+execution:
+  steps:
+    - id: ping
+      type: shell
+      run: echo hi
+      exit_code_map:
+        "0": pass
+`)
+	if err := v.Validate(schema.TargetSensor, yamlInstance(t, body)); err != nil {
+		t.Fatalf("steps shape should validate, got: %v", err)
+	}
+}
+
+func TestValidateSensor_StepsAndCommandReject(t *testing.T) {
+	v, err := schema.NewValidator(schematest.RepoSchemasDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`
+id: bad
+version: 0.1.0
+name: smoke
+description: x
+kind: assertion
+type: computational
+regulation: maintainability
+phase: on-demand
+determinism: high
+output: single
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 64
+  latency:
+    p50_ms: 10
+    p95_ms: 100
+    timeout_ms: 5000
+triggers:
+  - "on": manual
+verification:
+  golden_cases:
+    - fixture: x
+      expected_verdict: pass
+      expected_severity: info
+execution:
+  command: echo hi
+  exit_code_map:
+    - exit_code: 0
+      verdict: pass
+      severity: info
+  steps:
+    - id: dup
+      type: shell
+      run: echo also
+`)
+	if err := v.Validate(schema.TargetSensor, yamlInstance(t, body)); err == nil {
+		t.Fatalf("declaring both command and steps must reject")
 	}
 }

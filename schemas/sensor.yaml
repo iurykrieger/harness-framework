@@ -1,4 +1,18 @@
 $defs:
+  AssertStep:
+    description: Pure verdict gate; consumes prior step outputs via expect.value.
+      Rule 10 (cross-field validation) forbids declaring `with:` on an assert step.
+    not:
+      required:
+      - with
+    properties:
+      expect:
+        $ref: '#/$defs/Matcher'
+      type:
+        const: assert
+    required:
+    - expect
+    type: object
   ExitCodeMapEntry:
     additionalProperties: false
     properties:
@@ -16,6 +30,262 @@ $defs:
     - exit_code
     - verdict
     - severity
+    type: object
+  HttpExpect:
+    description: Assertion shape for HTTP responses. body accepts either one matcher
+      (single-shot) or an array of matchers (AND-combined).
+    properties:
+      body:
+        oneOf:
+        - $ref: '#/$defs/Matcher'
+        - items:
+            $ref: '#/$defs/Matcher'
+          type: array
+      headers:
+        additionalProperties:
+          $ref: '#/$defs/Matcher'
+        type: object
+      status:
+        $ref: '#/$defs/Matcher'
+    type: object
+  HttpStep:
+    description: Issue one HTTP request and (optionally) assert on the response.
+      Body source is exactly one of fixture / template / inline; timeout is a
+      duration string (e.g. "30s").
+    properties:
+      body_from:
+        oneOf:
+        - properties:
+            fixture:
+              type: string
+          required:
+          - fixture
+        - properties:
+            template:
+              type: string
+          required:
+          - template
+        - properties:
+            inline: {}
+          required:
+          - inline
+      expect:
+        $ref: '#/$defs/HttpExpect'
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      method:
+        enum:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - HEAD
+        type: string
+      outputs:
+        $ref: '#/$defs/StepOutputs'
+      timeout:
+        pattern: ^[0-9]+(ms|s|m)$
+        type: string
+      type:
+        const: http
+      url:
+        minLength: 1
+        type: string
+    required:
+    - method
+    - url
+    type: object
+  Matcher:
+    additionalProperties: false
+    description: Generic value matcher; accessor under jsonpath extracts before
+      comparing. Modifiers are independent (equals, matches, gte, lte, type,
+      min_length, max_length, contains, value).
+    properties:
+      contains:
+        type: string
+      equals: {}
+      gte:
+        type: number
+      jsonpath:
+        type: string
+      lte:
+        type: number
+      matches:
+        type: string
+      max_length:
+        minimum: 0
+        type: integer
+      min_length:
+        minimum: 0
+        type: integer
+      type:
+        enum:
+        - string
+        - number
+        - boolean
+        - array
+        - object
+        - 'null'
+        type: string
+      value: {}
+    type: object
+  Pattern:
+    additionalProperties: false
+    description: Single match rule for line-by-line output parsing. Identical
+      shape to execution.output_parsing.patterns[] items; factored out so step
+      `parse:` blocks reuse it.
+    properties:
+      captures:
+        additionalProperties: false
+        description: Map a Signal.evidence field to a 1-based capture-group index
+          in regex.
+        properties:
+          excerpt:
+            minimum: 1
+            type: integer
+          file:
+            minimum: 1
+            type: integer
+          line_end:
+            minimum: 1
+            type: integer
+          line_start:
+            minimum: 1
+            type: integer
+          rationale:
+            minimum: 1
+            type: integer
+        type: object
+      regex:
+        description: Go regexp (RE2).
+        type: string
+      severity:
+        $ref: signal.yaml#/$defs/Severity
+      verdict:
+        $ref: signal.yaml#/$defs/Verdict
+    required:
+    - regex
+    - verdict
+    - severity
+    type: object
+  SensorStep:
+    description: Inline sub-run of another sensor. ref points at a sensor id;
+      outputs_passthrough re-emits the child's signals into this sensor's
+      stream when true.
+    properties:
+      outputs:
+        $ref: '#/$defs/StepOutputs'
+      outputs_passthrough:
+        type: boolean
+      ref:
+        pattern: ^[a-z][a-z0-9-]*$
+        type: string
+      type:
+        const: sensor
+    required:
+    - ref
+    type: object
+  ShellStep:
+    description: Run a shell command. exit_code_map keys are stringified exit
+      codes (e.g. "0", "1", "*"). parse declares optional line-by-line output
+      parsing for stream output.
+    properties:
+      exit_code_map:
+        additionalProperties:
+          $ref: signal.yaml#/$defs/Verdict
+        type: object
+      outputs:
+        $ref: '#/$defs/StepOutputs'
+      parse:
+        properties:
+          patterns:
+            items:
+              $ref: '#/$defs/Pattern'
+            minItems: 1
+            type: array
+        required:
+        - patterns
+        type: object
+      run:
+        minLength: 1
+        type: string
+      type:
+        const: shell
+    required:
+    - run
+    type: object
+  Step:
+    description: One entry in execution.steps[]. Discriminated by `type` into
+      one of shell, http, assert, sensor.
+    oneOf:
+    - $ref: '#/$defs/ShellStep'
+    - $ref: '#/$defs/HttpStep'
+    - $ref: '#/$defs/AssertStep'
+    - $ref: '#/$defs/SensorStep'
+    properties:
+      id:
+        pattern: ^[a-z][a-z0-9-]*$
+        type: string
+      type:
+        enum:
+        - shell
+        - http
+        - assert
+        - sensor
+      with:
+        $ref: '#/$defs/StepInputs'
+    required:
+    - id
+    - type
+    type: object
+  StepInputs:
+    additionalProperties:
+      oneOf:
+      - type: string
+      - type: number
+      - type: boolean
+      - properties:
+          fixture:
+            type: string
+        required:
+        - fixture
+        type: object
+    type: object
+  StepOutputs:
+    additionalProperties:
+      oneOf:
+      - required:
+        - regex
+      - required:
+        - jsonpath
+      - required:
+        - trim
+      - allOf:
+        - not:
+            required:
+            - regex
+        - not:
+            required:
+            - jsonpath
+        - not:
+            required:
+            - trim
+      properties:
+        from:
+          minLength: 1
+          type: string
+        jsonpath:
+          type: string
+        regex:
+          type: string
+        trim:
+          type: boolean
+      required:
+      - from
+      type: object
     type: object
   LifecycleStep:
     additionalProperties: false
@@ -160,6 +430,22 @@ allOf:
             - user_prompt_template
           - required:
             - decoding
+- if:
+    allOf:
+    - properties:
+        type:
+          const: computational
+      required:
+      - type
+    - properties:
+        execution:
+          required:
+          - command
+      required:
+      - execution
+  then:
+    properties:
+      execution:
         required:
         - command
         - exit_code_map
@@ -177,6 +463,23 @@ allOf:
           - compute
         required:
         - tokens
+    required:
+    - calibration
+- if:
+    allOf:
+    - properties:
+        type:
+          const: inferential
+      required:
+      - type
+    - properties:
+        execution:
+          required:
+          - command
+      required:
+      - execution
+  then:
+    properties:
       execution:
         required:
         - command
@@ -184,8 +487,6 @@ allOf:
         - system_prompt
         - user_prompt_template
         - decoding
-    required:
-    - calibration
 - if:
     properties:
       output:
@@ -199,11 +500,18 @@ allOf:
           required:
           - output_parsing
 - if:
-    properties:
-      output:
-        const: stream
-    required:
-    - output
+    allOf:
+    - properties:
+        output:
+          const: stream
+      required:
+      - output
+    - properties:
+        execution:
+          required:
+          - command
+      required:
+      - execution
   then:
     properties:
       execution:
@@ -412,6 +720,19 @@ properties:
     additionalProperties: false
     description: Discriminated by sensor.type via the top-level allOf/if-then-else.
       Computational fields and inferential fields are mutually exclusive.
+      The execution shape is itself a oneOf between the legacy `command:`
+      shortcut and the typed `steps:` array (see oneOf below).
+    oneOf:
+    - not:
+        required:
+        - steps
+      required:
+      - command
+    - not:
+        required:
+        - command
+      required:
+      - steps
     properties:
       blocking:
         default: false
@@ -485,46 +806,21 @@ properties:
           patterns:
             description: Ordered match rules. First pattern that matches a line wins.
             items:
-              additionalProperties: false
-              properties:
-                captures:
-                  additionalProperties: false
-                  description: Map a Signal.evidence field to a 1-based capture-group
-                    index in regex.
-                  properties:
-                    excerpt:
-                      minimum: 1
-                      type: integer
-                    file:
-                      minimum: 1
-                      type: integer
-                    line_end:
-                      minimum: 1
-                      type: integer
-                    line_start:
-                      minimum: 1
-                      type: integer
-                    rationale:
-                      minimum: 1
-                      type: integer
-                  type: object
-                regex:
-                  description: Go regexp (RE2).
-                  type: string
-                severity:
-                  $ref: signal.yaml#/$defs/Severity
-                verdict:
-                  $ref: signal.yaml#/$defs/Verdict
-              required:
-              - regex
-              - verdict
-              - severity
-              type: object
+              $ref: '#/$defs/Pattern'
             minItems: 1
             type: array
         required:
         - patterns
         type: object
+      steps:
+        description: 'Typed execution pipeline (shell / http / assert / sensor).
+          Mutually exclusive with execution.command via the oneOf gate. When
+          steps[] is declared, output_parsing is forbidden — line-by-line
+          parsing is declared per shell step under its own parse: block.'
+        items:
+          $ref: '#/$defs/Step'
+        minItems: 1
+        type: array
       system_prompt:
         description: Inferential only. Role-defining system message, no example contamination.
         type: string
