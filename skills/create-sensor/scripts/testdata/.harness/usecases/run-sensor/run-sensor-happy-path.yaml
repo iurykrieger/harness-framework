@@ -1,0 +1,29 @@
+id: run-sensor-happy-path
+version: 0.1.0
+name: /run-sensor pass on a green sensor
+journey_id: run-sensor
+description: green sensor produces verdict=pass aggregate.
+trigger:
+  shape: CLI invocation
+  summary: /run-sensor against a known-green sensor.
+  fixture:
+    argv: [run-sensor, smoke-typed-pipeline]
+behavior:
+  summary: aggregate verdict=pass for a sensor whose steps all pass.
+  business_rules:
+    - All steps emit verdict=pass.
+    - Aggregate is verdict=pass.
+expected_outcome:
+  shape: JSON aggregate on stdout + exit code 0
+  summary: verdict=pass aggregate.
+  fixture:
+    exit_code: 0
+  invariants:
+    - Aggregate verdict is pass.
+  side_effects: []
+evidence:
+  - file: skills/run-sensor/scripts/run-computational.go
+    rationale: Main entrypoint for /run-sensor.
+regression_priority: critical
+tags:
+  - happy-path
