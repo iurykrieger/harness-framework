@@ -18,6 +18,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -78,9 +79,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	validator, code := schema.LoadValidator("", stderr)
+	var validatorErr bytes.Buffer
+	validator, code := schema.LoadValidator("", &validatorErr)
 	if code != 0 {
-		emit(stdout, errSignal("usage", "schema validator init failed"))
+		detail := strings.TrimSpace(validatorErr.String())
+		rationale := "schema validator init failed"
+		if detail != "" {
+			rationale = fmt.Sprintf("%s: %s", rationale, detail)
+		}
+		// Surface the captured stderr to the script's own stderr too, so
+		// interactive invocations still see it alongside the Signal.
+		if detail != "" {
+			fmt.Fprintln(stderr, detail)
+		}
+		emit(stdout, errSignal("schema_validator_init_failed", rationale))
 		return 2
 	}
 
@@ -165,12 +177,12 @@ func loadUsecases(projectRoot string, ids []string, validator *schema.Validator)
 		}
 		body, err := os.ReadFile(path)
 		if err != nil {
-			warns = append(warns, warnSignal("usecase_schema_invalid", fmt.Sprintf("read %s: %v", path, err)))
+			warns = append(warns, warnSignal("usecase_read_failed", fmt.Sprintf("read %s: %v", path, err)))
 			continue
 		}
 		var instance interface{}
 		if err := yaml.Unmarshal(body, &instance); err != nil {
-			warns = append(warns, warnSignal("usecase_schema_invalid", fmt.Sprintf("%s: parse: %v", path, err)))
+			warns = append(warns, warnSignal("usecase_parse_failed", fmt.Sprintf("%s: parse: %v", path, err)))
 			continue
 		}
 		if err := validator.Validate(schema.TargetUseCase, instance); err != nil {
@@ -179,7 +191,7 @@ func loadUsecases(projectRoot string, ids []string, validator *schema.Validator)
 		}
 		var uc ledger.Usecase
 		if err := yaml.Unmarshal(body, &uc); err != nil {
-			warns = append(warns, warnSignal("usecase_schema_invalid", fmt.Sprintf("%s: decode: %v", path, err)))
+			warns = append(warns, warnSignal("usecase_parse_failed", fmt.Sprintf("%s: decode: %v", path, err)))
 			continue
 		}
 		uc.SourcePath = mustRel(projectRoot, path)
