@@ -1,0 +1,19 @@
+components:
+- config_summary: pretends to be a known component.
+  evidence:
+  - file: src/main.go
+    rationale: not really used anywhere
+  name: my-fake-component
+  role: garbage-role-that-does-not-exist
+detected_at: "2026-05-17T10:00:00Z"
+detected_by: manual
+languages:
+- name: go
+  version: "1.25"
+log_shapes:
+- format: plain
+  id: dummy
+  produced_by:
+  - my-fake-component
+  sample: 'a line of plain output'
+version: 0.1.0

@@ -1,7 +1,12 @@
 archetypes:
 - cli-tool
 components:
-- config_summary: Go standard testing package. Tests are invoked via `go test -race
+- capabilities:
+  - Runs the framework's Go unit tests via `go test`.
+  - Reports per-test outcomes as actionable lines on stdout (`--- PASS:`, `--- FAIL:`,
+    `--- SKIP:`).
+  category: testing/runner
+  config_summary: Go standard testing package. Tests are invoked via `go test -race
     -count=1 ./lib/...` and `go test -race -count=1 -tags=<tag> ./skills/...` in CI;
     sensors that observe these runs add `-v` so each test result becomes an individually-actionable
     `--- PASS:`, `--- FAIL:`, or `--- SKIP:` line on stdout. Table-driven tests are
@@ -14,9 +19,18 @@ components:
   - file: lib/sensor/envelope_test.go
     rationale: Representative table-driven test using the standard testing package.
   name: testing
+  observable_surface:
+  - "`go test` exit code (0 = pass, 1 = fail, 2 = build error)."
+  - "`--- PASS:`, `--- FAIL:`, `--- SKIP:` lines on stdout under `-v`."
+  - Build-time compilation errors emitted before any test runs.
   role: test-runner
   version: 1.25.3
-- config_summary: 'Go toolchain compiler and vet. Invoked via `go build -o /dev/null
+- capabilities:
+  - Compiles Go source into binaries used by every framework script.
+  - Emits diagnostic lines during `go build` and `go vet` for type errors and lint
+    findings.
+  category: tooling/compiler
+  config_summary: 'Go toolchain compiler and vet. Invoked via `go build -o /dev/null
     ./skills/...` and `go vet -tags=<tag> ./...`; emits diagnostic lines in the form
     `<file>:<line>:<col>: <message>` to stderr (and stdout when piped). Same diagnostic
     shape across vet and build.'
@@ -26,9 +40,17 @@ components:
     rationale: CI runs `go vet -tags=run_computational ./...` and `go build -tags=...
       -o /dev/null` to surface diagnostics.
   name: go-tool-compiler
+  observable_surface:
+  - "Diagnostic lines of the form `<file>:<line>:<col>: <message>` on stderr."
+  - Exit code 0 on success, non-zero on any diagnostic.
   role: log-encoder
   version: 1.25.3
-- config_summary: The harness sensor runner emits one Signal JSON object per matched
+- capabilities:
+  - Encodes one JSONL Signal per matched stream line during sensor execution.
+  - Encodes a final aggregate Signal as the LAST JSONL line on stdout.
+  - Conforms to schemas/signal.yaml for cross-sensor routing.
+  category: observability/logger
+  config_summary: The harness sensor runner emits one Signal JSON object per matched
     line (stream mode) plus one final aggregate Signal on stdout as JSONL; objects
     conform to schemas/signal.json. Carrier of verdict/severity for cross-sensor routing.
   evidence:
@@ -37,6 +59,10 @@ components:
   - file: schemas/signal.json
     rationale: Contract for the JSON shape.
   name: harness-signal-encoder
+  observable_surface:
+  - Every stdout line of every sensor invocation parses as a Signal JSON object.
+  - The LAST JSONL line is always the aggregate Signal.
+  - "Aggregate Signal carries `metadata.counts: {pass, warn, fail, error}`."
   role: logger
   version: 1.1.0
 detected_at: "2026-05-14T15:00:00Z"

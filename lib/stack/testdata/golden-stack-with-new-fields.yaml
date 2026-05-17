@@ -1,0 +1,53 @@
+components:
+- category: observability/logger
+  capabilities:
+  - Emits structured JSON logs to stderr via Zap production preset.
+  - Tags every line with a severity field consumed by downstream regexes.
+  config_summary: zap.NewProductionConfig() with default encoder.
+  evidence:
+  - file: cmd/server/main.go
+    line_end: 50
+    line_start: 42
+    rationale: zap.NewProductionConfig() call site
+  name: go.uber.org/zap
+  observable_surface:
+  - Every stdout line of the running service.
+  - Process exit code on panic propagated through Fatal.
+  role: logger
+  version: 1.27.0
+- category: deployment/helm
+  capabilities:
+  - Packages the service into a Helm chart for staging and production.
+  - Renders Kubernetes manifests via `helm template`.
+  config_summary: Chart.yaml plus values.yaml at repo root under helm/.
+  evidence:
+  - file: helm/Chart.yaml
+    rationale: Chart metadata
+  name: helm
+  observable_surface:
+  - "`helm template` stdout (rendered manifests)."
+  - "`helm install --dry-run` exit code and stderr."
+  role: deployment-tool
+  version: 3.14.0
+detected_at: "2026-05-17T10:00:00Z"
+detected_by: manual
+languages:
+- name: go
+  version: "1.25"
+log_shapes:
+- fields:
+  - key: severity
+    meaning: severity
+  - key: msg
+    meaning: message
+  format: json
+  id: zap-prod-json
+  produced_by:
+  - go.uber.org/zap
+  sample: '{"severity":"INFO","msg":"server listening"}'
+  severity_values:
+  - DEBUG
+  - INFO
+  - WARN
+  - ERROR
+version: 0.1.0

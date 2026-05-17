@@ -15,8 +15,10 @@ func TestLoadStackFile(t *testing.T) {
 	}{
 		{name: "golden", fixture: "golden-stack.yaml", wantCode: 0},
 		{name: "with journeys", fixture: "golden-stack-with-journeys.yaml", wantCode: 0},
+		{name: "with new component fields", fixture: "golden-stack-with-new-fields.yaml", wantCode: 0},
 		{name: "missing required", fixture: "invalid-missing-required.yaml", wantCode: 1, wantSubstr: "version"},
 		{name: "bad enum", fixture: "invalid-enum.yaml", wantCode: 1, wantSubstr: "format"},
+		{name: "unknown role", fixture: "invalid-unknown-role.yaml", wantCode: 1, wantSubstr: "role"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
