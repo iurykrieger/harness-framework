@@ -22,11 +22,14 @@ type Language struct {
 }
 
 type Component struct {
-	Role          Role       `json:"role"`
-	Name          string     `json:"name"`
-	Version       string     `json:"version,omitempty"`
-	ConfigSummary string     `json:"config_summary,omitempty"`
-	Evidence      []Evidence `json:"evidence"`
+	Role              Role       `json:"role"`
+	Name              string     `json:"name"`
+	Version           string     `json:"version,omitempty"`
+	ConfigSummary     string     `json:"config_summary,omitempty"`
+	Evidence          []Evidence `json:"evidence"`
+	Category          string     `json:"category,omitempty"`
+	Capabilities      []string   `json:"capabilities,omitempty"`
+	ObservableSurface []string   `json:"observable_surface,omitempty"`
 }
 
 type Evidence struct {
@@ -63,18 +66,26 @@ type Field struct {
 type Role string
 
 const (
-	RoleHTTPServer     Role = "http-server"
-	RoleHTTPRouter     Role = "http-router"
-	RoleHTTPMiddleware Role = "http-middleware"
-	RoleLogger         Role = "logger"
-	RoleLogEncoder     Role = "log-encoder"
-	RoleTracer         Role = "tracer"
-	RoleMetrics        Role = "metrics"
-	RoleQueueConsumer  Role = "queue-consumer"
-	RoleQueueProducer  Role = "queue-producer"
-	RoleDBClient       Role = "db-client"
-	RoleRPC            Role = "rpc"
-	RoleTestRunner     Role = "test-runner"
+	RoleHTTPServer          Role = "http-server"
+	RoleHTTPRouter          Role = "http-router"
+	RoleHTTPMiddleware      Role = "http-middleware"
+	RoleLogger              Role = "logger"
+	RoleLogEncoder          Role = "log-encoder"
+	RoleTracer              Role = "tracer"
+	RoleMetrics             Role = "metrics"
+	RoleQueueConsumer       Role = "queue-consumer"
+	RoleQueueProducer       Role = "queue-producer"
+	RoleDBClient            Role = "db-client"
+	RoleRPC                 Role = "rpc"
+	RoleTestRunner          Role = "test-runner"
+	RoleErrorTracker        Role = "error-tracker"
+	RoleCacheClient         Role = "cache-client"
+	RoleObjectStore         Role = "object-store"
+	RoleJobRunner           Role = "job-runner"
+	RoleContainerRuntime    Role = "container-runtime"
+	RoleDeploymentTool      Role = "deployment-tool"
+	RoleCICD                Role = "ci-cd"
+	RoleExternalIntegration Role = "external-integration"
 )
 
 // Format is the enum from $defs/Format.

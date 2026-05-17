@@ -217,6 +217,15 @@ jobs:
               continue
             fi
 
+            # assert-detect-sensors-self-contained is the Spec C manual
+            # acceptance sensor: it asserts /detect-sensors filled the
+            # 3 self-containment fields on every Component, which is a
+            # workflow run by humans/LLMs interactively, not by CI.
+            if [ "$id" = "assert-detect-sensors-self-contained" ]; then
+              echo "skip $id (manual acceptance — needs /detect-sensors invocation first)"
+              continue
+            fi
+
             row=$(run_one "$id" "$blocking" | tail -n 1)
             results+=("$row")
             verdict=$(echo "$row" | cut -d'|' -f2)

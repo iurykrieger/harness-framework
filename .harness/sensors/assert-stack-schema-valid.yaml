@@ -1,0 +1,43 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 128
+  latency:
+    p50_ms: 500
+    p95_ms: 5000
+    timeout_ms: 30000
+description: |
+  Schema validation of the framework's own stack.yaml. Runs in CI on
+  every PR — a regression in the Component shape (missing required
+  fields, unknown role values, malformed capabilities[]) trips this
+  sensor before the rest of the CI gate runs sensors that consume
+  stack.yaml.
+determinism: high
+execution:
+  command: |
+    HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+      go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=write_stack \
+      ./skills/detect-sensors/scripts \
+      --out=/tmp/assert-stack-schema-valid \
+      --schemas-dir="${CLAUDE_PLUGIN_ROOT}/schemas" \
+      .harness/stack.yaml >/dev/null
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+id: assert-stack-schema-valid
+kind: assertion
+name: assert .harness/stack.yaml parses against schemas/stack.yaml
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+type: computational
+use_cases:
+- framework-detect-sensors-component-self-contained
+version: 0.1.0

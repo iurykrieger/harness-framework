@@ -30,10 +30,26 @@ Before drafting any observation sensor, synthesize a structured description of t
 **What to discover:**
 
 1. **Languages** — read `go.mod`, `package.json` engines, `pyproject.toml` requires-python, `Cargo.toml`, `pom.xml`, `build.gradle`, `Gemfile`. Capture name + version per language present.
-2. **Components** — for each runtime-observable role (`logger`, `log-encoder`, `http-server`, `http-router`, `http-middleware`, `tracer`, `metrics`, `queue-consumer`, `queue-producer`, `db-client`, `rpc`, `test-runner`):
+2. **Components** — for each runtime-observable role declared in `$defs/Role` of `schemas/stack.yaml` (the schema is the single source of truth — do not duplicate the value list in this prose):
    - Identify the library actually used (Zap, Logrus, Pino, Winston, Logback, structlog, …).
    - **Open the initialization site** (`cmd/server/main.go`, `src/main.ts`, `app/__init__.py`, etc.) and read enough code to determine the CONCRETE config — not just "Zap is used" but "`zap.NewProductionConfig()` is called and `EncoderConfig.LevelKey` is overridden to `severity`".
    - Record an `evidence[]` entry pointing at the file (with line numbers when feasible) and a one-sentence `rationale`.
+   - **Beyond code manifests, inspect deploy and observability artifacts:**
+     - `Dockerfile`, `docker-compose.yml` → `role: container-runtime`, category `runtime/container`.
+     - `Chart.yaml`, `helm/`, `charts/` directories → `role: deployment-tool`, category `deployment/helm`.
+     - `kubernetes/`, `k8s/` directories or any YAML with `apiVersion:` + `kind: Deployment|Service|StatefulSet|…` → `role: deployment-tool`, category `deployment/k8s`.
+     - `*.tf` / `terraform/` → `role: deployment-tool`, category `iac/terraform`.
+     - `.github/workflows/*.yml`, `.gitlab-ci.yml`, `.circleci/config.yml`, `Jenkinsfile`, `azure-pipelines.yml` → `role: ci-cd`, category `ci/<vendor>`.
+     - `otel-collector*.yaml`, `otel-config.yaml`, OpenTelemetry SDK initialization → `role: tracer` or `role: metrics`, category `observability/<tracer-collector|metrics>`.
+     - `sentry.properties`, `.sentryclirc`, `sentry.client.config.*`, Sentry SDK initialization → `role: error-tracker`, category `observability/errors`.
+     - `datadog.yaml`, `datadog-agent.yaml`, `dd-trace-*` package presence → `role: tracer` or `role: metrics`, category `observability/datadog`.
+     - Stripe/SendGrid/Twilio/AWS-SDK service-client initialization (any language) → `role: external-integration`, category `integration/<vendor>`.
+
+     Evidence rules apply unchanged: every Component MUST have an `evidence[]` entry pointing at a real file. If a Helm chart isn't there, Helm isn't a Component.
+   - **For every detected Component, populate the three self-containment fields** in addition to `role`, `name`, `version`, `config_summary`, `evidence`:
+     - **`category`** — canonical taxonomy slug from the convention `<domain>/<role>` (e.g., `observability/tracer`, `http/framework`, `deployment/helm`). Free-form by the schema, conventional by this skill.
+     - **`capabilities[]`** — what this Component does **for this project specifically**, not generic library capabilities. Derive from the Component's evidence + your knowledge of the library. If OTel is present but `main.go` only calls `otel.SetTracerProvider` and never `otel.SetMeterProvider`, list traces and NOT metrics. Capabilities the project doesn't exercise MUST NOT be listed.
+     - **`observable_surface[]`** — where evidence of this Component's behavior appears: log lines, config files, endpoints, commands, env vars. Keep entries as short prose pointers — Phase B sensor authoring converts them into concrete regex patterns or probe commands. Do NOT pre-shape into regex/command syntax here.
 3. **Log shapes** — for each distinct stdout shape the components produce:
    - Pick a kebab-case `id` (e.g. `zap-prod-json`, `chi-access-log`, `panic-stack-trace`).
    - List the `produced_by[]` component names (verbatim from `components[].name`).
@@ -62,7 +78,7 @@ It validates against `schemas/stack.yaml`, cross-checks that every `log_shapes[]
 
 ### 0.5 Stack discovery — degraded path
 
-If after a thorough search you cannot identify any logger or HTTP middleware (project is exotic, no readable manifests, no clear initialization site), persist a **minimal stack** anyway:
+If after a thorough search you cannot identify any logger, HTTP middleware, OR runtime-observable component, but Phase A's evidence sweep surfaced at least one deploy/CI/runtime artifact (`Dockerfile`, `Chart.yaml`/`helm/`, `k8s/`, `*.tf`, `.github/workflows/`), persist a **deploy-only stack**:
 
 ```yaml
 version: "0.1.0"
@@ -70,11 +86,24 @@ detected_at: "<now>"
 detected_by: "<your-model-id-or-manual>"
 languages:
   - name: "<best-guess>"
-components: []
+components:
+  # Whatever artifacts you found — populated with the three
+  # self-containment fields per the rules above. Even a single
+  # Dockerfile is enough to author `assert-image-builds`.
+  - role: container-runtime
+    name: docker
+    category: runtime/container
+    capabilities:
+      - Builds a container image from `Dockerfile`.
+    observable_surface:
+      - "`docker build` exit code and stderr."
+    evidence:
+      - file: Dockerfile
+        rationale: Present at repo root.
 log_shapes: []
 ```
 
-This is intentionally degenerate. Phase B (§4 below) will see an empty `log_shapes[]` and fall back to generic patterns (panic/error keyword matchers) annotated in the sensor's `blind_spots[]` as "stack discovery returned empty; refine patterns manually after observing real stdout".
+If after the thorough search NO components and NO deploy artifacts are found at all, persist the truly minimal degenerate stack (empty `components`, empty `log_shapes`) — Phase B will note this in `blind_spots[]` of every drafted sensor and the user iterates manually after observing real output.
 
 ### Phase A.5: Usecase ledger check
 
@@ -165,6 +194,38 @@ Add or drop capabilities to match what you see. If the project sets up Sentry, d
 
 ### 4. Draft each sensor
 
+**Authoring model — sensors as building blocks per Component.** For each Component in `<project>/.harness/stack.yaml`, draft 1+ reusable building-block sensors that exercise its `capabilities` and probe its `observable_surface`. A building-block sensor:
+
+- Targets a single Component, or composes other sensors that target Components (via `execution.steps[type=sensor]`).
+- Lists **every** usecase it helps validate in `use_cases[]` — not just one. The 1:N is intentional: a sensor reused across 5 usecases is healthier than 5 near-identical sensors.
+- Is named to communicate its role: `assert-*` for deterministic checks, `observe-*` for runtime observation, `setup-*` for idempotent preconditions (the naming conventions in §1.5 carry over).
+
+When a usecase requires a chain (trigger → side-effect → assertion), do NOT draft a monolithic sensor that conflates the trigger with the assertion. Draft separate building blocks and compose:
+
+- `observe-http-request-roundtrip` — trigger primitive; takes URL + method, captures status + latency.
+- `assert-log-line-matches` — assertion primitive; takes a regex and a tail target.
+- A usecase-validating sensor uses `execution.steps[type=sensor]` to chain them.
+
+Component-to-archetype starter heuristic (LLM judgment, prose — Rule #6 carve-out for genuinely non-deterministic reasoning):
+
+| Component category | Typical building blocks |
+|---|---|
+| `observability/tracer` (OTel) | `observe-trace-export-health`, `assert-trace-context-propagated`, `assert-sampler-config-valid` |
+| `observability/errors` (Sentry, Bugsnag) | `observe-error-capture-rate`, `assert-dsn-reachable`, `assert-before-send-no-pii` |
+| `observability/datadog` | `observe-datadog-agent-forward`, `assert-dd-trace-injected` |
+| `http/framework` (Gin/Echo/FastAPI/Express) | `observe-http-request-roundtrip`, `assert-route-404-rate`, `assert-handler-panic-recovered`, `assert-validation-rejection`, `assert-middleware-error-propagation` |
+| `messaging/queue-consumer` | `observe-consume-error-rate`, `observe-dlq-rate`, `assert-rebalance-completes`, `setup-start-local-queue` |
+| `messaging/queue-producer` | `observe-publish-success-rate`, `assert-nack-handled` |
+| `cache/client` (Redis, Memcached) | `observe-cache-miss-rate`, `observe-connection-error`, `assert-eviction-policy-set` |
+| `deployment/helm` | `assert-helm-lint-pass`, `assert-helm-template-renders`, `assert-helm-install-dryrun-pass`, `assert-values-schema-valid` |
+| `deployment/k8s` | `assert-manifests-kubectl-apply-dryrun`, `assert-namespace-isolation` |
+| `iac/terraform` | `assert-terraform-validate`, `assert-tfsec-clean`, `observe-terraform-plan-diff` |
+| `ci/<vendor>` | `assert-workflow-lint`, `assert-workflow-no-secret-in-logs` |
+| `runtime/container` (Dockerfile) | `assert-image-builds`, `assert-image-no-root`, `assert-healthcheck-defined` |
+| `integration/<vendor>` | `observe-<vendor>-api-error-rate`, `assert-<vendor>-credentials-refresh`, `assert-<vendor>-webhook-signature` (when applicable) |
+
+The table is a starter heuristic, not a closed list. Real Components yield real building blocks shaped by their `observable_surface`.
+
 **Mandate: never skip a sensor.** Emit one for every capability the project plausibly has, even when:
 
 - The exact command isn't 100% determined — pick the closest production-shaped invocation (Dockerfile `CMD`, CI step, README "Run locally" recipe), put it in `execution.command`, and document the assumption in `blind_spots[]`.
@@ -187,7 +248,7 @@ Use these defaults unless the project tells you otherwise:
 - `execution.exit_code_map` defaults to `[{exit_code: 0, verdict: pass, severity: info}, {exit_code: "*", verdict: fail, severity: <medium|high>}]`. Override per capability.
 - **For `kind=observation` + `output=stream` sensors (Phase B):** do NOT hand-craft regexes. Instead:
   1. Load `<project>/.harness/stack.yaml` (produced by §0; if missing or empty, fall through to the degraded path below).
-  2. Filter `log_shapes[]` to the shapes relevant to the sensor's command. For `run-*` / `watch-*` sensors observing a running service, that typically means shapes produced by any runtime-observable component role: `logger`, `log-encoder`, `http-server`, `http-router`, `http-middleware`, `queue-consumer`, `queue-producer`, `rpc`, `db-client`. For `tail-*` / `fetch-*` sensors against external log stores, pick the shape whose encoder matches what the store emits.
+  2. Filter `log_shapes[]` to the shapes relevant to the sensor's command. For `run-*` / `watch-*` sensors observing a running service, that typically means shapes produced by any runtime-observable component role — i.e. roles describing services that emit stdout/stderr (or otherwise observable lines) at runtime, as enumerated by `$defs/Role` in `schemas/stack.yaml`. For `tail-*` / `fetch-*` sensors against external log stores, pick the shape whose encoder matches what the store emits.
   3. For each selected shape, derive patterns from TWO orthogonal axes (severity classes AND per-event observation). A shape may satisfy one, the other, or both — emit the union, severity-first so a logger-labelled crash beats the per-event catch-all when both match the same line. Aim for 2–6 patterns per shape total (don't fan out beyond that).
      - **Severity-based patterns** (only when the shape declares `severity_values[]`). For each tier present in `severity_values`, anchor the regex on the literal severity key (`fields[].key` where `meaning == "severity"`) plus the value. Map values to verdicts:
        - `severity ∈ {ERROR, FATAL, DPANIC, PANIC}` (or library equivalent — `critical`, `60` for Pino numeric, etc.) → `verdict: fail, severity: high`.

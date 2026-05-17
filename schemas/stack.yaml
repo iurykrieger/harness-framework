@@ -17,6 +17,25 @@ $defs:
   Component:
     additionalProperties: false
     properties:
+      capabilities:
+        description: |
+          What this component does for this project. Short complete
+          sentences, each a discrete claim that downstream sensors can
+          validate. Capabilities not exercised by the project MUST NOT
+          be listed. Optional — manual stack.yaml entries may omit;
+          /detect-sensors populates.
+        items:
+          type: string
+        type: array
+      category:
+        description: |
+          Canonical taxonomy slug, "<domain>/<role>" style. Examples:
+          'observability/tracer', 'observability/errors',
+          'http/framework', 'deployment/helm', 'deployment/k8s',
+          'ci/github-actions', 'messaging/queue-consumer',
+          'cache/client', 'integration/stripe'. Free-form by schema;
+          convention by SKILL.md. Optional — /detect-sensors fills.
+        type: string
       config_summary:
         description: 'One paragraph describing how this component is configured in
           the project, in enough detail that the LogShape it produces is unambiguous.
@@ -34,6 +53,17 @@ $defs:
         description: 'Library import path or canonical name. Examples: ''go.uber.org/zap'',
           ''pino'', ''logback-classic'', ''github.com/go-chi/chi/middleware'', ''@nestjs/common.Logger''.'
         type: string
+      observable_surface:
+        description: |
+          Where evidence of this component's behavior appears — log
+          lines, config files, endpoints, commands, env vars. Each
+          entry is a short prose pointer downstream sensor authoring
+          can convert into a regex pattern, a probe command, or a
+          file assertion. Free-form prose; concrete regex/command
+          choices are sensor-level concerns.
+        items:
+          type: string
+        type: array
       role:
         $ref: '#/$defs/Role'
       version:
@@ -245,6 +275,14 @@ $defs:
     - db-client
     - rpc
     - test-runner
+    - error-tracker
+    - cache-client
+    - object-store
+    - job-runner
+    - container-runtime
+    - deployment-tool
+    - ci-cd
+    - external-integration
     type: string
 $id: https://harness-framework/schemas/stack.yaml
 $schema: https://json-schema.org/draft/2020-12/schema
