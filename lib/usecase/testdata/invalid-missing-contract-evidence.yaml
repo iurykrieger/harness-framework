@@ -1,0 +1,25 @@
+behavior:
+  summary: x
+description: x
+evidence:
+- file: src/users/users.controller.ts
+  rationale: POST /users handler
+expected_outcome:
+  fixture:
+    body:
+      id: uuid
+    status: 201
+  shape: HTTP response
+  summary: x
+id: create-user-with-email
+journey_id: user-registration
+name: x
+trigger:
+  fixture:
+    body:
+      email: alice@example.com
+    method: POST
+    path: /users
+  shape: HTTP request
+  summary: x
+version: 0.1.0

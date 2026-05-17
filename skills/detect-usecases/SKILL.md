@@ -59,25 +59,34 @@ Before doing any drafting, write the **journey ledger** to scratch: enumerate `s
 For each `journey` in `stack.journeys[]`:
 
 1. **Read the source** pointed to by `entry_points[].evidence` — the handler, the service it delegates to, the use-case/domain layer below it.
-2. **Identify variation sources**:
+2. **Extract the typed contract declarations** that determine `trigger.fixture` and `expected_outcome.fixture`. The handler signature names the request body type, the response type, and any path/query/header param schemas; open each one in source and record its file path. The fixture YAML MUST use the field names declared there — do not infer field names from prose or from the controller body alone. Common contract locations by stack:
+   - **NestJS / TypeScript** — `*.dto.ts`, `*.model.ts`, `*.schema.ts` (Joi/Zod), class-validator decorators, types passed to `@Body(new JoiValidationPipe(...))`.
+   - **Go** — struct definitions adjacent to the handler (often `<feature>/types.go`, `<feature>/dto.go`) with `json:"…"` tags.
+   - **Python** — Pydantic models, dataclasses, marshmallow schemas.
+   - **Java / Kotlin** — `@RequestBody` parameter types + `@JsonProperty` annotations.
+   - **CLI tools** — Cobra command definitions, argparse declarations, click decorators.
+   - **Queue consumers / producers** — Avro/Protobuf schemas, JSON Schema registry refs, message-type declarations.
+
+   Each contract file becomes an `evidence[]` row on the drafted UseCase with `kind: contract` and a rationale naming the declared type (e.g. *"ChargeCreateRequest DTO declaring payment_method/amount/local_datetime/pix_transaction"*). Evidence rows that point at handler/service/domain code remain `kind: implementation` (the default). When `trigger.fixture` or `expected_outcome.fixture` carries any non-primitive value (map/list), the `write-usecase` validator rejects the draft if no `kind: contract` row is present — there is no escape hatch, cite the inline type declaration on the handler itself if the project genuinely declares the shape there.
+3. **Identify variation sources**:
    - **Input validation** — schemas declared in Zod/Joi/class-validator/Pydantic/struct tags. Each rule that can fail is a variation (`missing-required-field`, `invalid-format`, `out-of-range`, `wrong-type`).
    - **Branches in handler/service** — `if (existing)`, `if (!user)`, `try/catch`, domain-error returns. Each branch is a distinct observable path.
    - **Pre-condition states** — existing vs absent records, feature flags, authorization (authenticated vs anonymous, role-gated).
    - **Conditionally-emitted events** — `if (orderTotal > 100) emit('high-value-order')`. A side-effect that only fires under specific conditions deserves its own UseCase.
    - **Existing tests** (`*.spec.ts`, `*_test.go`, `test_*.py`) and OpenAPI/Swagger files in the entry-point's neighborhood — *used as oracle for what variations the team considers important*. The UseCase does **not** reference the test or the spec file in its `evidence[]` — evidence points at the implementation, not the spec.
-3. **Minimum-variations checklist.** A journey is *covered* when **all** of the following hold for that journey:
+4. **Minimum-variations checklist.** A journey is *covered* when **all** of the following hold for that journey:
    - One `happy-path` UseCase is persisted (always required, no exceptions).
    - One UseCase per failure path of any `try/catch` block or domain-error return found in the handler/service (`error-handling`).
    - One UseCase per declared validator rule (Zod/Joi/class-validator/Pydantic/struct tag) reachable from the entry point (`validation`).
 
    If a rule on the checklist has no observable variation in the source (no validator, no catch), it is satisfied vacuously — but the absence must be confirmed by reading the code, not assumed.
-4. **Draft a UseCase per variation**:
+5. **Draft a UseCase per variation**:
    - `id`: kebab-case, `<verb>-<entity>-<discriminator>` pattern (`create-user-with-email`, `create-user-duplicate-email-conflict`, `login-with-wrong-password`).
    - `journey_id`: the `journey.id` from `stack.journeys[]`.
    - `trigger`: prose summary + free-form `shape` label (`HTTP request`, `Kafka message`, `CLI invocation`, `scheduled tick`) + concrete fixture.
    - `behavior`: prose summary + extracted business rules.
    - `expected_outcome`: prose summary + free-form `shape` + concrete fixture + `invariants[]` (verifiable rules in prose) + `side_effects[]`.
-   - `evidence[]`: pointers to handler and service code that implements the variation. Minimum one entry.
+   - `evidence[]`: at least one row pointing at the handler/service/domain code that implements the variation (default `kind: implementation`), PLUS at least one row pointing at the typed contract declaration drafted in step 2 (`kind: contract`, rationale naming the declared type). The contract row is mandatory whenever either fixture is non-primitive; the same contract file may be cited twice with distinct rationales when the request and response types live in the same module.
    - `regression_priority`: heuristic — `critical` for happy-path nuclear journeys; `high` for error variations with side-effects; `medium` for common validation; `low` for obscure edges.
    - `tags`: stable convention — `happy-path`, `error-handling`, `validation`, `authz`, `idempotent`, `side-effects`.
 
@@ -95,7 +104,7 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   /tmp/<draft-name>.yaml
 ```
 
-The script reads `<project>/.harness/stack.yaml`, validates the draft against `schemas/usecase.yaml`, cross-checks `journey_id` against `stack.journeys[].id`, verifies every `evidence[].file` exists, then writes canonical YAML to `<out>/<journey_id>/<id>.yaml` atomically (the per-journey subdirectory is created on first write for that journey).
+The script reads `<project>/.harness/stack.yaml`, validates the draft against `schemas/usecase.yaml`, cross-checks `journey_id` against `stack.journeys[].id`, verifies every `evidence[].file` exists, enforces that at least one `evidence[]` row carries `kind: contract` whenever `trigger.fixture` or `expected_outcome.fixture` is non-primitive (rejecting with `contract_evidence_missing`), then writes canonical YAML to `<out>/<journey_id>/<id>.yaml` atomically (the per-journey subdirectory is created on first write for that journey).
 
 Exit codes:
 - `0` — written.

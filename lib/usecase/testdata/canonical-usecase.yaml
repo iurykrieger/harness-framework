@@ -8,6 +8,10 @@ evidence:
   line_end: 68
   line_start: 42
   rationale: POST /users handler
+- file: src/users/dto/create-user.dto.ts
+  kind: contract
+  rationale: CreateUserDto declaring the email field that backs trigger.fixture.body
+    and expected_outcome.fixture.body
 expected_outcome:
   fixture:
     body:

@@ -50,3 +50,10 @@ const (
 	PriorityMedium   RegressionPriority = "medium"
 	PriorityLow      RegressionPriority = "low"
 )
+
+// EvidenceKind values mirror the enum on schemas/usecase.yaml's Evidence.
+// An empty string is treated as EvidenceKindImplementation by callers.
+const (
+	EvidenceKindImplementation = "implementation"
+	EvidenceKindContract       = "contract"
+)
