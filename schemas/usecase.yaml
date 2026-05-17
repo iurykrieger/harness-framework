@@ -16,6 +16,22 @@ $defs:
     properties:
       file:
         type: string
+      kind:
+        default: implementation
+        description: |
+          Role this evidence row plays for the UseCase. `implementation` points at the
+          code that implements the variation (handler, service, domain logic) — the
+          default for most rows. `contract` points at the typed declaration that
+          determines the field names of trigger.fixture or expected_outcome.fixture
+          (DTO classes, JSON/Zod/Joi schemas, Pydantic models, struct definitions with
+          JSON tags, OpenAPI components, CLI flag/Cobra command definitions, message
+          schemas). At least one `kind: contract` row is required whenever
+          trigger.fixture or expected_outcome.fixture is a non-primitive value — the
+          write-usecase validator rejects drafts that omit it.
+        enum:
+        - implementation
+        - contract
+        type: string
       line_end:
         minimum: 1
         type:

@@ -32,7 +32,7 @@ func TestUseCase_RoundTrip(t *testing.T) {
 	if len(uc.ExpectedOutcome.Invariants) == 0 {
 		t.Errorf("invariants lost")
 	}
-	if len(uc.Evidence) != 1 || uc.Evidence[0].File == "" {
+	if len(uc.Evidence) != 2 || uc.Evidence[0].File == "" || uc.Evidence[1].Kind != EvidenceKindContract {
 		t.Errorf("evidence lost: %+v", uc.Evidence)
 	}
 	out, err := json.Marshal(uc)

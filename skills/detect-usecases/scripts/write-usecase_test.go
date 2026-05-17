@@ -63,12 +63,17 @@ func writeStackYAML(t *testing.T, projectRoot string) {
 
 func writeEvidenceFile(t *testing.T, projectRoot string) {
 	t.Helper()
-	target := filepath.Join(projectRoot, "src", "users", "users.controller.ts")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(target, []byte("//"), 0o644); err != nil {
-		t.Fatal(err)
+	for _, rel := range []string{
+		filepath.Join("src", "users", "users.controller.ts"),
+		filepath.Join("src", "users", "dto", "create-user.dto.ts"),
+	} {
+		full := filepath.Join(projectRoot, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("//"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -172,6 +177,47 @@ func TestRun_JourneyOrphan(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "ghost") {
 		t.Errorf("stderr %q must name the bad journey", stderr.String())
+	}
+}
+
+func TestRun_ContractEvidenceMissing(t *testing.T) {
+	projectRoot := t.TempDir()
+	writeStackYAML(t, projectRoot)
+	writeEvidenceFile(t, projectRoot)
+	schemasDir := schematest.RepoSchemasDir(t)
+	out := filepath.Join(projectRoot, ".harness", "usecases")
+
+	var doc map[string]interface{}
+	if err := json.Unmarshal(usecasetest.CanonicalBody(t), &doc); err != nil {
+		t.Fatal(err)
+	}
+	// Strip every kind=contract evidence row — the LLM-from-prose bug
+	// from issue #64 manifests as this exact shape.
+	evRaw, _ := doc["evidence"].([]interface{})
+	var kept []interface{}
+	for _, item := range evRaw {
+		m := item.(map[string]interface{})
+		if m["kind"] == "contract" {
+			continue
+		}
+		kept = append(kept, m)
+	}
+	doc["evidence"] = kept
+	bad, _ := json.Marshal(doc)
+	draft := writeDraftAt(t, t.TempDir(), bad)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"--out", out,
+		"--project-root", projectRoot,
+		"--schemas-dir", schemasDir,
+		draft,
+	}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("code=%d want 1 (cross-check fail); stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "contract") {
+		t.Errorf("stderr should mention the missing contract citation; got %q", stderr.String())
 	}
 }
 
