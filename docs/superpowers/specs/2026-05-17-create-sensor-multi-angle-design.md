@@ -488,11 +488,7 @@ No rollout. Users on the plugin take the cut at upgrade time and regenerate.
 
 This spec hands off to `/writing-plans`; the plan will sequence tasks. The ordering below is the spec author's anticipation and is not binding. **The sequence matters** because the schema change invalidates the existing smoke sensors AND the existing `run-golden.go` + its tests AND the existing CI workflow. `.github/workflows/test.yml` triggers on push to `main` and on every pull request — so any step that leaves `go test` red would block all subsequent PRs. Everything that the schema flip invalidates must land in a single atomic commit.
 
-1. **Delete** `skills/detect-sensors/scripts/run-golden.go` + `_test.go` only (not the workflow yet). After this commit the workflow's `run_golden` step compiles against the missing files and fails — so this step is itself part of the next atomic commit unless the workflow step is also patched.
-
-   *Better:* fold step 1 into step 2 as a single atomic commit. Listed separately here for clarity of what changes within it.
-
-2. **Single atomic commit covering everything the schema change touches:**
+1. **Single atomic commit covering everything the schema change touches:**
    - `schemas/sensor.yaml`: remove `verification`, add `use_cases`.
    - `lib/sensor/{shape,load,validate,persist}.go`: cascade per §Schema changes.
    - `skills/create-sensor/scripts/write-sensor.go`: support `use_cases[]`, add `use_cases_files_exist` check.
@@ -503,8 +499,8 @@ This spec hands off to `/writing-plans`; the plan will sequence tasks. The order
 
    After this commit, `go test ./...` passes, the smoke sensors work via `/run-sensor`, and CI is green.
 
-3. `read-usecases.go` + tests.
-4. `plan-sensors.go` + tests with all heuristic scenarios.
-5. `skills/create-sensor/SKILL.md` rewrite (Phases 1, 1.5, 4, 5; orchestration prose for Phases 2, 3, 3.5).
-6. `skills/detect-sensors/SKILL.md` rewrite (rip out `verification.golden_cases[]` authoring guidance; replace with `use_cases[]` flow).
-7. Acceptance sensor `assert-create-sensor-multi-angle` + its framework usecase.
+2. `read-usecases.go` + tests.
+3. `plan-sensors.go` + tests with all heuristic scenarios.
+4. `skills/create-sensor/SKILL.md` rewrite (Phases 1, 1.5, 4, 5; orchestration prose for Phases 2, 3, 3.5).
+5. `skills/detect-sensors/SKILL.md` rewrite (rip out `verification.golden_cases[]` authoring guidance; replace with `use_cases[]` flow).
+6. Acceptance sensor `assert-create-sensor-multi-angle` + its framework usecase.
