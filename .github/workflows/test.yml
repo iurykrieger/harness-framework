@@ -208,6 +208,15 @@ jobs:
               continue
             fi
 
+            # assert-create-sensor-multi-angle is a manual self-test: it
+            # asserts /create-sensor's output, and there is no produced
+            # sensor on disk in CI to assert against. The sensor itself
+            # documents this precondition in its blind_spots[].
+            if [ "$id" = "assert-create-sensor-multi-angle" ]; then
+              echo "skip $id (manual acceptance — needs /create-sensor invocation first)"
+              continue
+            fi
+
             row=$(run_one "$id" "$blocking" | tail -n 1)
             results+=("$row")
             verdict=$(echo "$row" | cut -d'|' -f2)

@@ -1,0 +1,35 @@
+{
+  "usecases": [
+    {
+      "id": "tail-sensor-no-registry",
+      "journey_id": "tail-sensor",
+      "name": "/tail-sensor errors when the registry file is absent",
+      "regression_priority": "high",
+      "tags": ["error-handling", "registry-discovery"],
+      "trigger": {
+        "shape": "CLI invocation",
+        "summary": "/tail-sensor invoked with no registry on disk.",
+        "fixture": {"argv": ["tail-sensor", "dev-server", "0"]}
+      },
+      "behavior": {
+        "summary": "registry_exists=false branch produces tail_no_registry.",
+        "business_rules": [
+          "Sensor cannot be tailed without a registry entry.",
+          "Verdict is error and exit code is 1."
+        ]
+      },
+      "expected_outcome": {
+        "shape": "One JSON line on stdout + exit code",
+        "summary": "verdict=error, metadata.kind=tail_no_registry, exit code 1.",
+        "fixture": {"exit_code": 1},
+        "invariants": ["Exit code is 1."],
+        "side_effects": []
+      },
+      "evidence": [
+        {"file": "skills/tail-sensor/scripts/tail.go", "line_start": 72, "rationale": "registry_exists=false branch."}
+      ],
+      "source_path": ".harness/usecases/tail-sensor/tail-sensor-no-registry.yaml"
+    }
+  ],
+  "project_root": "/repo"
+}

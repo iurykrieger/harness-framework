@@ -1,8 +1,8 @@
 //go:build read_usecases
 
-// Command read-usecases resolves a set of usecase identifiers (by id or
-// by journey) under <project-root>/.harness/usecases/ and emits a JSON
-// ledger on stdout. Read-only.
+// Command read-usecases resolves a set of usecase identifiers (by id
+// or by journey) under <project-root>/.harness/usecases/ and emits a
+// JSON ledger on stdout. Read-only.
 //
 // Usage:
 //
@@ -15,6 +15,12 @@
 //
 // Exit codes: 0 ledger emitted, 1 usecase_not_found / fatal IO,
 // 2 usage / discovery / validator-init failure.
+//
+// The script is a thin wrapper: usecase loading goes through
+// lib/usecase (canonical types only) and catalog enumeration through
+// lib/sensor.Catalog. The Ledger struct below is local to this
+// script — it is the wire format consumed by plan-sensors and the
+// /create-sensor SKILL, not a reusable lib type.
 package main
 
 import (
@@ -33,9 +39,45 @@ import (
 
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	"github.com/iurykrieger/harness-framework/lib/schema"
+	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
-	"github.com/iurykrieger/harness-framework/skills/create-sensor/scripts/lib/ledger"
+	"github.com/iurykrieger/harness-framework/lib/usecase"
 )
+
+// Ledger is the wire format read-usecases emits. usecase.UseCase and
+// sensor data are the canonical types; only catalogEntry is a thin
+// script-local projection (the planner does not need full Sensor
+// fields and the LLM consumer wants a stable, compact shape).
+type Ledger struct {
+	Usecases    []usecase.UseCase `json:"usecases"`
+	Stack       map[string]any    `json:"stack,omitempty"`
+	Catalog     []catalogEntry    `json:"catalog,omitempty"`
+	ProjectRoot string            `json:"project_root"`
+}
+
+// indexLedger is the thin --list-only output.
+type indexLedger struct {
+	Usecases []listEntry `json:"usecases"`
+}
+
+type listEntry struct {
+	ID   string   `json:"id"`
+	Name string   `json:"name"`
+	Tags []string `json:"tags,omitempty"`
+}
+
+// catalogEntry projects the four shape-discriminator fields plus
+// execution.blocking and the on-disk path. Kept script-local — the
+// canonical *sensor.Sensor is overkill for the JSON ledger consumed
+// downstream, but no lib type captures this exact slice.
+type catalogEntry struct {
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	Type     string `json:"type"`
+	Output   string `json:"output"`
+	Blocking bool   `json:"blocking"`
+	Path     string `json:"path"`
+}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -87,8 +129,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if detail != "" {
 			rationale = fmt.Sprintf("%s: %s", rationale, detail)
 		}
-		// Surface the captured stderr to the script's own stderr too, so
-		// interactive invocations still see it alongside the Signal.
 		if detail != "" {
 			fmt.Fprintln(stderr, detail)
 		}
@@ -106,22 +146,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if listOnly {
-		idx := ledger.IndexLedger{Usecases: []ledger.ListEntry{}}
+		idx := indexLedger{Usecases: []listEntry{}}
 		for _, uc := range loaded {
-			idx.Usecases = append(idx.Usecases, ledger.ListEntry{ID: uc.ID, Name: uc.Name, Tags: uc.Tags})
+			idx.Usecases = append(idx.Usecases, listEntry{ID: uc.ID, Name: uc.Name, Tags: uc.Tags})
 		}
 		emit(stdout, idx)
 		return 0
 	}
 
-	lg := ledger.Ledger{Usecases: loaded, ProjectRoot: projectRoot}
+	lg := Ledger{Usecases: loaded, ProjectRoot: projectRoot}
 	if includeStack {
 		if stackMap, ok := loadStack(projectRoot); ok {
 			lg.Stack = stackMap
 		}
 	}
 	if includeCatalog {
-		lg.Catalog = loadCatalog(projectRoot)
+		lg.Catalog = loadCatalog(projectRoot, validator)
 	}
 	emit(stdout, lg)
 	return 0
@@ -146,7 +186,6 @@ func resolveIDs(projectRoot, usecasesCSV, journey string) ([]string, error) {
 		sort.Strings(out)
 		return out, nil
 	}
-	// --journey mode: enumerate the journey dir.
 	dir := filepath.Join(projectRoot, ".harness", "usecases", journey)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -166,7 +205,7 @@ func resolveIDs(projectRoot, usecasesCSV, journey string) ([]string, error) {
 	return ids, nil
 }
 
-func loadUsecases(projectRoot string, ids []string, validator *schema.Validator) (loaded []ledger.Usecase, warns []map[string]interface{}, missing []string) {
+func loadUsecases(projectRoot string, ids []string, validator *schema.Validator) (loaded []usecase.UseCase, warns []map[string]interface{}, missing []string) {
 	usecasesRoot := filepath.Join(projectRoot, ".harness", "usecases")
 	pathByID := indexUsecaseFiles(usecasesRoot)
 	for _, id := range ids {
@@ -189,12 +228,11 @@ func loadUsecases(projectRoot string, ids []string, validator *schema.Validator)
 			warns = append(warns, warnSignal("usecase_schema_invalid", fmt.Sprintf("%s: %v", path, err)))
 			continue
 		}
-		var uc ledger.Usecase
+		var uc usecase.UseCase
 		if err := yaml.Unmarshal(body, &uc); err != nil {
 			warns = append(warns, warnSignal("usecase_parse_failed", fmt.Sprintf("%s: decode: %v", path, err)))
 			continue
 		}
-		uc.SourcePath = mustRel(projectRoot, path)
 		loaded = append(loaded, uc)
 	}
 	sort.Slice(loaded, func(i, j int) bool { return loaded[i].ID < loaded[j].ID })
@@ -235,41 +273,25 @@ func loadStack(projectRoot string) (map[string]any, bool) {
 	return out, true
 }
 
-func loadCatalog(projectRoot string) []ledger.CatalogEntry {
+// loadCatalog projects the canonical *sensor.Sensor objects returned
+// by lib/sensor.Catalog into the thin wire-format catalogEntry. The
+// projection is script-local (not in lib/) because no other consumer
+// needs this exact shape.
+func loadCatalog(projectRoot string, validator *schema.Validator) []catalogEntry {
 	sensorsDir := filepath.Join(projectRoot, ".harness", "sensors")
-	entries, err := os.ReadDir(sensorsDir)
+	sensors, _, err := sensor.Catalog(sensorsDir, validator)
 	if err != nil {
 		return nil
 	}
-	var out []ledger.CatalogEntry
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-			continue
-		}
-		path := filepath.Join(sensorsDir, e.Name())
-		body, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		var s struct {
-			ID        string `yaml:"id"`
-			Kind      string `yaml:"kind"`
-			Type      string `yaml:"type"`
-			Output    string `yaml:"output"`
-			Execution struct {
-				Blocking bool `yaml:"blocking"`
-			} `yaml:"execution"`
-		}
-		if err := yaml.Unmarshal(body, &s); err != nil {
-			continue
-		}
-		out = append(out, ledger.CatalogEntry{
+	out := make([]catalogEntry, 0, len(sensors))
+	for _, s := range sensors {
+		out = append(out, catalogEntry{
 			ID:       s.ID,
-			Kind:     s.Kind,
-			Type:     s.Type,
-			Output:   s.Output,
+			Kind:     string(s.Kind),
+			Type:     string(s.Type),
+			Output:   string(s.Output),
 			Blocking: s.Execution.Blocking,
-			Path:     mustRel(projectRoot, path),
+			Path:     mustRel(projectRoot, filepath.Join(sensorsDir, s.ID+".yaml")),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
