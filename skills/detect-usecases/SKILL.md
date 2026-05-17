@@ -1,6 +1,6 @@
 ---
 name: detect-usecases
-description: Use when the user invokes /detect-usecases or asks to scan a project for its use cases and persist them under .harness/usecases/. Reads .harness/stack.yaml (errors out if absent — /detect-sensors must run first), augments it with purpose/archetypes/journeys when those fields are missing, then enumerates variations per journey from validation schemas, code branches, pre-condition states, conditionally-emitted events, and the project's tests/OpenAPI as oracle. Drafts one UseCase YAML per variation and persists each via skills/detect-usecases/scripts/write-usecase.go.
+description: Use when the user invokes /detect-usecases or asks to scan a project for its use cases and persist them under .harness/usecases/. Reads .harness/stack.yaml (errors out if absent — /detect-sensors must run first), augments it with purpose/archetypes/journeys when those fields are missing, then enumerates variations per journey from validation schemas, code branches, pre-condition states, conditionally-emitted events, and the project's tests/OpenAPI as oracle. Drafts one UseCase YAML per variation and persists each via skills/detect-usecases/scripts/write-usecase.go. Enforces full journey coverage via the coverage-report.go gate before reporting back — every declared journey must end the run with ≥1 persisted UseCase or be listed in a documented skip section.
 ---
 
 # detect-usecases
@@ -52,6 +52,10 @@ Infer the three top-level fields and persist the augmented `stack.yaml` via the 
 
 ### Phase 1 — Per journey, enumerate variations
 
+**Hard precondition.** Every id in `stack.journeys[]` MUST end Phase 2 with at least one persisted UseCase. The skill is not free to drop a journey because the prompt is long, the codebase is large, or the variations are tedious — the Phase 3 coverage gate will refuse to report success otherwise.
+
+Before doing any drafting, write the **journey ledger** to scratch: enumerate `stack.journeys[].id` in order, one per line, with a `[ ]` checkbox each. Tick each id off as you persist at least one UseCase for it. Do not exit Phase 2 with unticked boxes unless you intend to record the journey in the Phase 4 skip list with a one-sentence reason.
+
 For each `journey` in `stack.journeys[]`:
 
 1. **Read the source** pointed to by `entry_points[].evidence` — the handler, the service it delegates to, the use-case/domain layer below it.
@@ -61,7 +65,13 @@ For each `journey` in `stack.journeys[]`:
    - **Pre-condition states** — existing vs absent records, feature flags, authorization (authenticated vs anonymous, role-gated).
    - **Conditionally-emitted events** — `if (orderTotal > 100) emit('high-value-order')`. A side-effect that only fires under specific conditions deserves its own UseCase.
    - **Existing tests** (`*.spec.ts`, `*_test.go`, `test_*.py`) and OpenAPI/Swagger files in the entry-point's neighborhood — *used as oracle for what variations the team considers important*. The UseCase does **not** reference the test or the spec file in its `evidence[]` — evidence points at the implementation, not the spec.
-3. **Draft a UseCase per variation**:
+3. **Minimum-variations checklist.** A journey is *covered* when **all** of the following hold for that journey:
+   - One `happy-path` UseCase is persisted (always required, no exceptions).
+   - One UseCase per failure path of any `try/catch` block or domain-error return found in the handler/service (`error-handling`).
+   - One UseCase per declared validator rule (Zod/Joi/class-validator/Pydantic/struct tag) reachable from the entry point (`validation`).
+
+   If a rule on the checklist has no observable variation in the source (no validator, no catch), it is satisfied vacuously — but the absence must be confirmed by reading the code, not assumed.
+4. **Draft a UseCase per variation**:
    - `id`: kebab-case, `<verb>-<entity>-<discriminator>` pattern (`create-user-with-email`, `create-user-duplicate-email-conflict`, `login-with-wrong-password`).
    - `journey_id`: the `journey.id` from `stack.journeys[]`.
    - `trigger`: prose summary + free-form `shape` label (`HTTP request`, `Kafka message`, `CLI invocation`, `scheduled tick`) + concrete fixture.
@@ -92,11 +102,40 @@ Exit codes:
 - `1` — schema validation or cross-check failed; nothing written.
 - `2` — usage / I/O / setup error (missing flag, draft unreadable, stack_missing, schemas not found).
 
-### Phase 3 — Report back
+### Phase 3 — Coverage verification (gate)
 
-Surface a grouped list per journey:
+Before drafting the user-facing report, run the deterministic coverage gate:
+
+```bash
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=coverage_report \
+  ./skills/detect-usecases/scripts \
+  --project-root=<project> \
+  [--journey=<id>]                # only when /detect-usecases was invoked with --journey
+```
+
+The script reads `<project>/.harness/stack.yaml`, scans `<project>/.harness/usecases/<journey_id>/*.yaml`, and prints a coverage matrix to stdout. Exit codes:
+
+- `0` — every declared journey (or the single `--journey` selected) has ≥1 persisted UseCase. Skill proceeds to Phase 4.
+- `1` — at least one journey has zero UseCases. **The skill MUST NOT report success.** Branch to one of:
+  1. **Loop back to Phase 1** for each `❌` row in the matrix and draft the missing UseCases (minimum: one `happy-path` per uncovered journey). Re-run the coverage gate afterwards. This is the default branch — do not exit until the gate is green or the row is in the documented skip list below.
+  2. **Document a deliberate skip** *only* when the source is genuinely unreachable from the entry point (third-party route stub, dead code) and you can name the reason in one short sentence. Record each skipped journey in the Phase 4 report under a `Skipped journeys` section with the reason. Skips are an audit trail, not an escape hatch.
+- `2` — setup error (missing flag, stack absent, unknown `--journey` id). Abort and remediate.
+
+The matrix is the source of truth for what to report in Phase 4; do not paraphrase it.
+
+### Phase 4 — Report back
+
+Paste the matrix produced by Phase 3 verbatim into the report, then group the persisted files per journey:
 
 ```
+Coverage matrix (3 of 3 journeys covered, 14 use cases):
+  ✅ user-registration  5 use cases
+  ✅ user-login         4 use cases
+  ✅ user-logout        5 use cases
+
+Full coverage achieved.
+
 Generated 14 use cases at /repo/.harness/usecases/:
 
 journey: user-registration (5 use cases) → /repo/.harness/usecases/user-registration/
@@ -110,6 +149,23 @@ journey: user-login (4 use cases) → /repo/.harness/usecases/user-login/
   - ...
 
 Next: /create-sensor <use-case-id> to generate a deterministic regression sensor for each.
+```
+
+When the gate exits `1` and you have deliberately skipped journeys, paste the matrix as-is and append a `Skipped journeys` section. Do not call this a successful run — the headline must read *"Incomplete coverage: N journeys skipped (see reasons)"*:
+
+```
+Coverage matrix (1 of 3 journeys covered, 1 use case):
+  ✅ user-registration  1 use case
+  ❌ user-login         0 use cases  ← BLOCKER
+  ❌ user-logout        0 use cases  ← BLOCKER
+
+Incomplete coverage: 2 of 3 journeys uncovered.
+
+Skipped journeys:
+  - user-login: entry point delegates to vendor SDK; no observable variation in this repo.
+  - user-logout: handler returns 204 unconditionally; no branch, no validator, no event.
+
+Re-run /detect-usecases --journey=<id> once an observable variation lands for each.
 ```
 
 ## Behavior in projects with weak oracles
