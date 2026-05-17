@@ -84,7 +84,7 @@ Sensors produced by /detect-sensors MUST reference real usecase ids. Before draf
 find .harness/usecases -type f -name '*.yaml' 2>/dev/null
 ```
 
-If no usecases exist yet, **stop and tell the user to run `/detect-usecases` first**. /detect-sensors cannot emit a schema-valid sensor with empty `use_cases[]` (the schema requires `minItems: 1`).
+If no usecases exist yet, emit a Signal with `verdict=error metadata.kind=usecases_missing`, surface the remediation ("run `/detect-usecases` first"), and DO NOT proceed with sensor drafting. /detect-sensors cannot emit a schema-valid sensor with empty `use_cases[]` (the schema requires `minItems: 1`).
 
 If usecases DO exist, build a quick mental index of which usecases belong to which journey — sensors will be wired to the most relevant ones during drafting (Phase B).
 
@@ -284,6 +284,7 @@ execution:
       - regex: '(?i)\bunhandled (?:exception|rejection)\b'
         verdict: fail
         severity: high
+# example — replace with real ids resolved under .harness/usecases/run-project-nest/
 use_cases:
   - run-project-nest-clean-boot
   - run-project-nest-port-collision
@@ -488,7 +489,7 @@ When step 7's smoke run produces an aggregate Signal that is setup-shape (missin
 - If the retry passed: continue the draft loop — your sensor is healthy.
 - If `/heal-sensor` couldn't recover: the failure is genuinely outside the harness's reach (needs `pnpm install`, `gcloud login`, etc.). Read the remediation it emitted, surface it to the user, and continue with the OTHER sensors. Don't block this skill on credentials the harness can't synthesize.
 
-Setup-shape recovery used to be the responsibility of this skill's prose ("if credentials are missing, declare them and proceed"). It is now `/heal-sensor`'s job — exclusively. This skill stays focused on shape correctness.
+Setup-shape recovery is exclusively `/heal-sensor`'s job. This skill stays focused on shape correctness.
 
 ### 8. Report back to the user
 
