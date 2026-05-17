@@ -148,6 +148,31 @@ func TestPlanShapeSplitProducesDistinctIDs(t *testing.T) {
 	}
 }
 
+func TestPlanFissionPartsShareInferredShape(t *testing.T) {
+	in, err := os.Open(filepath.Join("testdata", "ledgers", "bucket-too-large.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	var stdout, stderr bytes.Buffer
+	if code := run(in, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	plans, _ := parseStdout(t, stdout.Bytes())
+	if len(plans) < 2 {
+		t.Fatalf("expected ≥2 plans from fission; got %d", len(plans))
+	}
+	// All fission parts of the same bucket must agree on output/kind/type.
+	for _, key := range []string{"output", "kind", "type"} {
+		first := plans[0][key]
+		for i, p := range plans[1:] {
+			if p[key] != first {
+				t.Fatalf("plans disagree on %q: plans[0]=%v plans[%d]=%v", key, first, i+1, p[key])
+			}
+		}
+	}
+}
+
 func runSnapshot(t *testing.T, name string) {
 	t.Helper()
 	in, err := os.Open(filepath.Join("testdata", "ledgers", name+".json"))

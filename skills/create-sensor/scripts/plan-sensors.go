@@ -256,8 +256,15 @@ func materialize(b bucket) []ledger.Plan {
 	// Sort usecases by id ascending — required for deterministic split.
 	sort.Slice(b.usecases, func(i, j int) bool { return b.usecases[i].ID < b.usecases[j].ID })
 
+	// Infer the bucket's shape ONCE on the full usecase set so that every
+	// fission chunk shares identical kind/type/output. Computing these
+	// per-chunk would let two halves of the same bucket disagree.
+	bucketKind := inferKind(b.usecases)
+	bucketType, inferentialWarn := inferType(b.usecases)
+	bucketOutput := inferOutput(b.usecases)
+
 	if len(b.usecases) <= bucketLimit {
-		return []ledger.Plan{buildPlan(b.usecases, b.journeyID, b.shape, b.discriminator, "")}
+		return []ledger.Plan{buildPlan(b.usecases, b.journeyID, b.shape, b.discriminator, "", bucketKind, bucketType, bucketOutput, inferentialWarn)}
 	}
 	// Fission by id-sorted chunks.
 	var plans []ledger.Plan
@@ -266,16 +273,12 @@ func materialize(b bucket) []ledger.Plan {
 		if end > len(b.usecases) {
 			end = len(b.usecases)
 		}
-		plans = append(plans, buildPlan(b.usecases[start:end], b.journeyID, b.shape, b.discriminator, fmt.Sprintf("-part-%d", i)))
+		plans = append(plans, buildPlan(b.usecases[start:end], b.journeyID, b.shape, b.discriminator, fmt.Sprintf("-part-%d", i), bucketKind, bucketType, bucketOutput, inferentialWarn))
 	}
 	return plans
 }
 
-func buildPlan(group []ledger.Usecase, journey, shape, discriminator, partSuffix string) ledger.Plan {
-	kind := inferKind(group)
-	typ, inferentialWarn := inferType(group)
-	output := inferOutput(group)
-
+func buildPlan(group []ledger.Usecase, journey, shape, discriminator, partSuffix, kind, typ, output string, inferentialWarn bool) ledger.Plan {
 	useCaseIDs := make([]string, 0, len(group))
 	for _, uc := range group {
 		useCaseIDs = append(useCaseIDs, uc.ID)
