@@ -115,6 +115,39 @@ func TestPlanBucketTooLarge(t *testing.T)       { runSnapshot(t, "bucket-too-lar
 func TestPlanInferential(t *testing.T)          { runSnapshot(t, "inferential") }
 func TestPlanObservation(t *testing.T)          { runSnapshot(t, "observation") }
 
+// TestPlanShapeSplitProducesDistinctIDs asserts that when one journey
+// emits multiple buckets (here: two distinct trigger.shape values),
+// every plan line carries a unique sensor_id. Without the
+// per-bucket discriminator, both plans would collide on
+// "assert-j" and Phase 4 of /create-sensor would overwrite one
+// persisted sensor with the other.
+func TestPlanShapeSplitProducesDistinctIDs(t *testing.T) {
+	in, err := os.Open(filepath.Join("testdata", "ledgers", "two-split-trigger-shape.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	var stdout, stderr bytes.Buffer
+	if code := run(in, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	plans, _ := parseStdout(t, stdout.Bytes())
+	if len(plans) < 2 {
+		t.Fatalf("want at least 2 plan lines, got %d", len(plans))
+	}
+	seen := map[string]struct{}{}
+	for _, p := range plans {
+		id, _ := p["sensor_id"].(string)
+		if id == "" {
+			t.Fatalf("plan with empty sensor_id: %v", p)
+		}
+		if _, dup := seen[id]; dup {
+			t.Fatalf("duplicate sensor_id %q across plans", id)
+		}
+		seen[id] = struct{}{}
+	}
+}
+
 func runSnapshot(t *testing.T, name string) {
 	t.Helper()
 	in, err := os.Open(filepath.Join("testdata", "ledgers", name+".json"))

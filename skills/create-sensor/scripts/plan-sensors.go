@@ -40,6 +40,7 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	buckets := group(lg.Usecases)
+	assignDiscriminators(buckets)
 	var plans []ledger.Plan
 	for _, b := range buckets {
 		plans = append(plans, materialize(b)...)
@@ -62,9 +63,10 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 
 // bucket is a tentative grouping of usecases sharing journey+shape.
 type bucket struct {
-	journeyID string
-	shape     string
-	usecases  []ledger.Usecase
+	journeyID     string
+	shape         string
+	usecases      []ledger.Usecase
+	discriminator string // non-empty only when the journey has multiple buckets
 }
 
 // group partitions usecases by (journey_id, trigger.shape). Tag overlap
@@ -176,6 +178,78 @@ func evidenceProximate(a, b ledger.Usecase) bool {
 	return false
 }
 
+// assignDiscriminators populates bucket.discriminator for every bucket
+// that belongs to a journey with more than one bucket. The discriminator
+// is deterministic and computed in priority order:
+//   1. Dominant tag — a tag present in EVERY usecase of the bucket. If
+//      multiple such tags exist, the alphabetically first is chosen.
+//   2. Slugified trigger.shape (e.g. "cli-invocation", "http-request").
+//   3. Last-resort stable "cluster-N" index reflecting emergence order
+//      from group() (1-based, scoped to the journey).
+//
+// Single-bucket journeys leave discriminator empty so the simple
+// "<prefix>-<journey>" sensor_id shape is preserved.
+func assignDiscriminators(buckets []bucket) {
+	counts := map[string]int{}
+	for _, b := range buckets {
+		counts[b.journeyID]++
+	}
+	seenInJourney := map[string]int{}
+	for i := range buckets {
+		j := buckets[i].journeyID
+		if counts[j] <= 1 {
+			continue
+		}
+		seenInJourney[j]++
+		buckets[i].discriminator = computeDiscriminator(buckets[i], seenInJourney[j])
+	}
+}
+
+func computeDiscriminator(b bucket, clusterIdx int) string {
+	if tag := dominantTag(b.usecases); tag != "" {
+		return slugify(tag)
+	}
+	if shape := slugify(b.shape); shape != "" {
+		return shape
+	}
+	return fmt.Sprintf("cluster-%d", clusterIdx)
+}
+
+// dominantTag returns the alphabetically-first tag shared by EVERY
+// usecase in the bucket, or "" when no such tag exists. A usecase with
+// no tags cannot share any tag, so it forces the empty result.
+func dominantTag(ucs []ledger.Usecase) string {
+	if len(ucs) == 0 {
+		return ""
+	}
+	// Seed the intersection from the first usecase's tags.
+	intersect := map[string]struct{}{}
+	for _, t := range ucs[0].Tags {
+		intersect[t] = struct{}{}
+	}
+	if len(intersect) == 0 {
+		return ""
+	}
+	for _, uc := range ucs[1:] {
+		present := map[string]struct{}{}
+		for _, t := range uc.Tags {
+			if _, ok := intersect[t]; ok {
+				present[t] = struct{}{}
+			}
+		}
+		intersect = present
+		if len(intersect) == 0 {
+			return ""
+		}
+	}
+	var shared []string
+	for t := range intersect {
+		shared = append(shared, t)
+	}
+	sort.Strings(shared)
+	return shared[0]
+}
+
 // materialize turns a bucket into 1..N plans, applying the
 // bucket-too-large fission rule (sort by id ascending, chunk by 8).
 func materialize(b bucket) []ledger.Plan {
@@ -183,7 +257,7 @@ func materialize(b bucket) []ledger.Plan {
 	sort.Slice(b.usecases, func(i, j int) bool { return b.usecases[i].ID < b.usecases[j].ID })
 
 	if len(b.usecases) <= bucketLimit {
-		return []ledger.Plan{buildPlan(b.usecases, b.journeyID, b.shape, "")}
+		return []ledger.Plan{buildPlan(b.usecases, b.journeyID, b.shape, b.discriminator, "")}
 	}
 	// Fission by id-sorted chunks.
 	var plans []ledger.Plan
@@ -192,12 +266,12 @@ func materialize(b bucket) []ledger.Plan {
 		if end > len(b.usecases) {
 			end = len(b.usecases)
 		}
-		plans = append(plans, buildPlan(b.usecases[start:end], b.journeyID, b.shape, fmt.Sprintf("-part-%d", i)))
+		plans = append(plans, buildPlan(b.usecases[start:end], b.journeyID, b.shape, b.discriminator, fmt.Sprintf("-part-%d", i)))
 	}
 	return plans
 }
 
-func buildPlan(group []ledger.Usecase, journey, shape, partSuffix string) ledger.Plan {
+func buildPlan(group []ledger.Usecase, journey, shape, discriminator, partSuffix string) ledger.Plan {
 	kind := inferKind(group)
 	typ, inferentialWarn := inferType(group)
 	output := inferOutput(group)
@@ -243,8 +317,14 @@ func buildPlan(group []ledger.Usecase, journey, shape, partSuffix string) ledger
 		prefix = "assert"
 	}
 
+	sensorID := fmt.Sprintf("%s-%s", prefix, journey)
+	if discriminator != "" {
+		sensorID = fmt.Sprintf("%s-%s", sensorID, discriminator)
+	}
+	sensorID += partSuffix
+
 	return ledger.Plan{
-		SensorID:    fmt.Sprintf("%s-%s%s", prefix, journey, partSuffix),
+		SensorID:    sensorID,
 		Kind:        kind,
 		Type:        typ,
 		Output:      output,
