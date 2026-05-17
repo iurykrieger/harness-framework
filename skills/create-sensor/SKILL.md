@@ -34,17 +34,21 @@ Classify the input:
 
 ### Phase 1.5 — Free-text inference (only if input is text)
 
-Invoke the thin index loader to enumerate every usecase id + name + tags:
+Invoke the thin index loader to enumerate every usecase id + name + tags.
+
+1. List every journey, then enumerate each one's usecases:
 
 ```bash
-HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
-  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=read_usecases \
-  ./skills/create-sensor/scripts \
-  --journey "<journey-id>" \
-  --list-only
+for j in $(ls "${HARNESS_REGISTRY_ROOT:-$(pwd)}/.harness/usecases" 2>/dev/null); do
+  HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+    go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=read_usecases \
+    ./skills/create-sensor/scripts \
+    --journey "$j" \
+    --list-only
+done
 ```
 
-(If there is no specific journey, pass `--usecases ""` and the script will produce an empty result; better: do one `--journey` call per journey listed by `ls .harness/usecases/`.)
+Concatenate the thin-index outputs into one in-memory catalog of `{id, name, tags}` triples.
 
 For each candidate, judge whether the free-text requirement reasonably corresponds. Collect a matched set.
 
@@ -69,11 +73,21 @@ HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   --include-catalog
 ```
 
-If warn signals appeared on stdout BEFORE the ledger JSON, surface them to the user inline. Save the ledger JSON to a tmp file for Phase 3:
+If warn signals appeared on stdout BEFORE the ledger JSON, surface them to the user inline.
+
+Save the ledger JSON to a tmp file for Phase 3. Re-run the same command with stdout redirected:
 
 ```bash
-... > /tmp/ledger-<timestamp>.json
+HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=read_usecases \
+  ./skills/create-sensor/scripts \
+  --usecases "<id-1>,<id-2>,..." \
+  --include-stack \
+  --include-catalog \
+  > /tmp/ledger-$(date +%s).json
 ```
+
+Remember the exact path for Phase 3.
 
 ### Phase 3 — Plan sensors
 
@@ -81,8 +95,10 @@ If warn signals appeared on stdout BEFORE the ledger JSON, surface them to the u
 HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=plan_sensors \
   ./skills/create-sensor/scripts \
-  < /tmp/ledger-<timestamp>.json
+  < /tmp/ledger-<saved-epoch>.json
 ```
+
+Substitute `<saved-epoch>` with the epoch suffix produced in Phase 2 (the `$(date +%s)` value).
 
 The script emits JSONL: one Plan line per proposed sensor, ending with one Aggregate Signal. Parse each line.
 
@@ -102,7 +118,8 @@ Planned 3 sensors:
     rationale: <plan.rationale>
 
   ▸ setup-tmp-registry  (setup / computational / single)
-    use_cases: 0  ← created auxiliary for setup-mock-infra
+    use_cases: inherited from assert-tail-sensor-error-handling
+    notes: auxiliary, created to satisfy mock_strategy=setup-mock-infra
 ```
 
 Ask: *"Proceed? (yes/no)"*. Yes/no only — no editing. If the user wants different grouping, they can re-invoke with a narrower input.
@@ -120,7 +137,10 @@ For each planned sensor IN ORDER (not parallel — fixture writes need path coor
    - `regulation: "behaviour"` (default).
    - `phase: "on-demand"` (default).
    - `determinism`: `"high"` for computational, `"medium"` for inferential.
-   - `cost` — use the canonical defaults from the spec (`cost.compute = {cpu: low, memory_mb: 64}` for computational; `cost.tokens = {model: "", input_avg: 4000, output_avg: 1000, max_output: 4096}` for inferential; `cost.latency` from §Canonical cost defaults).
+   - `cost` — use these canonical defaults:
+     - **Computational**: `cost.compute = {cpu: low, memory_mb: 64}`; `cost.latency = {p50_ms: 10, p95_ms: 100, timeout_ms: 5000}` for shell-only sensors; `{p50_ms: 200, p95_ms: 2000, timeout_ms: 30000}` if any HTTP step is present.
+     - **Inferential**: `cost.tokens = {model: "", input_avg: 4000, output_avg: 1000, max_output: 4096}` (see step 4 below — `model` must come from the user); `cost.latency = {p50_ms: 3000, p95_ms: 20000, timeout_ms: 60000}`.
+     - **cost.class**: `cheap` if all steps are local shell/file; `medium` if any HTTP step or `setup-mock-infra`; `expensive` otherwise (or always `expensive` for inferential).
    - `triggers: [{ "on": "manual" }]`.
    - `use_cases` — from the plan.
    - `execution.steps[]` — one per `step_outline[]` entry, expanded according to the matrix below.
@@ -131,15 +151,26 @@ For each planned sensor IN ORDER (not parallel — fixture writes need path coor
    | `shell` | `stub-deterministic` | `type: shell`, `run: <command exercising evidence>`, `exit_code_map: {0: pass, "*": fail}` |
    | `http` | `fixture-http-step` | `type: http`, `with: { fixture: <persisted name> }`, `expect.status: <from invariants>` |
    | `assert` | any | `type: assert`, `expect: { value: "${{ steps.<prior>.outputs.<name> }}", contains: "<from business_rule>" }` |
-   | any | `setup-mock-infra` | Generate ALSO a sibling `kind=setup` sensor (id `setup-<journey>-mock`), declare it as `requires[{kind: sensor, id: <setup-id>}]` on the main sensor, plan it as the FIRST sensor to persist. |
+   | any | `setup-mock-infra` | Generate ALSO a sibling `kind=setup` sensor (id `setup-<journey>-mock`), declare it as `requires[{kind: sensor, id: <setup-id>}]` on the main sensor, plan it as the FIRST sensor to persist. The setup sensor MUST copy the dependent sensor's `use_cases[]` (every persisted sensor needs a non-empty `use_cases[]` per schema `minItems: 1`). |
 
-4. **If `evidence` does not yield a concrete shell command** (e.g., evidence is `lib/foo.Bar` with no shell surface), do NOT fabricate a command. Stop and ask the user:
+4. **Inferential calibration gate.** If the sensor's `type` is `inferential`, do NOT proceed to step 8 (Serialize) until the user has provided:
+
+   - `cost.tokens.model` (concrete provider/model id; the empty default is intentionally invalid)
+   - A `calibration` block with `confidence_threshold`, `calibration_set` path, `calibration_size ≥ 1`, `calibration_date`
+
+   If any of these are missing, block:
+
+   > The planned sensor `<sensor-id>` is inferential. I need before persisting: (a) the model id (e.g. `anthropic/claude-sonnet-4-6`), (b) the calibration set path under `.harness/calibration/`, (c) the calibration size, (d) the calibration date.
+
+   Wait for the user. Do not fabricate placeholders. Computational sensors skip this gate.
+
+5. **If `evidence` does not yield a concrete shell command** (e.g., evidence is `lib/foo.Bar` with no shell surface), do NOT fabricate a command. Stop and ask the user:
 
    > I cannot infer a concrete shell command for step `<step_id>` from evidence `<file>:<line>`. Options: (a) wrap as `go test -run <Test>`; (b) you supply the exact command. Which do you prefer?
 
    Block. Do not persist the sensor with a placeholder command.
 
-5. **Fixtures.** When a step needs one (e.g., HTTP step with `with: { fixture: ... }`), serialize the source data and persist via:
+6. **Fixtures.** When a step needs one (e.g., HTTP step with `with: { fixture: ... }`), serialize the source data and persist via:
 
    ```bash
    printf '%s' "<payload>" | \
@@ -149,9 +180,9 @@ For each planned sensor IN ORDER (not parallel — fixture writes need path coor
      ".harness/fixtures/<sensor-id>/<step-id>.<ext>"
    ```
 
-6. **Self-coherence check** before serializing the YAML: confirm (a) every `${{ steps.X.outputs.Y }}` reference points to a prior step that declared that output; (b) every `with: { fixture: ... }` references a path that was written in step 5.
+7. **Self-coherence check** before serializing the YAML: confirm (a) every `${{ steps.X.outputs.Y }}` reference points to a prior step that declared that output; (b) every `with: { fixture: ... }` references a path that was written in step 6.
 
-7. **Serialize** the YAML to `/tmp/create-sensor-draft-<sensor-id>.yaml`.
+8. **Serialize** the YAML to `/tmp/create-sensor-draft-<sensor-id>.yaml`.
 
 ### Phase 5 — Persist + report
 
