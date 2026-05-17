@@ -17,6 +17,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/iurykrieger/harness-framework/lib/sensor"
 	"github.com/iurykrieger/harness-framework/lib/signal"
 )
 
@@ -26,11 +27,22 @@ import (
 // of every previously executed step in the current run, keyed by step ID.
 // Cwd is the working directory subprocess-spawning steps should inherit;
 // when empty the spawned process inherits the orchestrator's own cwd.
+// RunDir is the persistent .harness/runtime/<id>/<run-id>/ directory the
+// orchestrator created for this sensor invocation; subprocess-spawning
+// steps tee verbatim stdout+stderr to <RunDir>/raw.log and append matched
+// individual signals to <RunDir>/signals.log. Empty when persistence is
+// off (e.g. RunOne without a registry root, isolated step unit tests).
+// Envelope is the run-scoped Signal scaffold (sensor_id, version, run_id,
+// started_at, sensor_type) subprocess-spawning steps stamp onto each
+// matched individual signal; zero-valued when the engine is driven
+// directly by step-level tests without an orchestrator.
 type ExecContext struct {
 	Fixtures map[string]string
 	Env      map[string]string
 	Steps    map[string]*StepResult
 	Cwd      string
+	RunDir   string
+	Envelope sensor.Envelope
 }
 
 // StepResult is the outcome of a single Step.Execute call.

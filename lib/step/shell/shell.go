@@ -10,8 +10,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -50,9 +48,12 @@ func (s *Step) Type() string { return "shell" }
 // patterns are streamed line-by-line through subprocess.Start+Run; declared
 // outputs are extracted post-run.
 //
-// The subprocess's verbatim stdout+stderr is captured via a temp RunDir
-// (raw.log) so res.Stdout reflects what the program printed, independent of
-// the JSONL signal stream that the streamer emits to its own Stdout writer.
+// When ec.RunDir is set (the orchestrator's persistent
+// .harness/runtime/<id>/<run-id>/ directory), the streamer appends verbatim
+// subprocess stdout+stderr into <RunDir>/raw.log and each matched individual
+// signal into <RunDir>/signals.log. res.Stdout is always populated from the
+// streamer's in-memory stdout capture, independent of RunDir, so output
+// extraction works whether persistence is active or not.
 func (s *Step) Execute(ctx context.Context, ec *step.ExecContext) *step.StepResult {
 	res := &step.StepResult{
 		Status:  step.StatusAborted,
@@ -80,23 +81,15 @@ func (s *Step) Execute(ctx context.Context, ec *step.ExecContext) *step.StepResu
 		return res
 	}
 
-	// Allocate a temp RunDir so the streamer tees subprocess stdout+stderr
-	// into raw.log. We read raw.log back into res.Stdout, then clean up.
-	runDir, err := os.MkdirTemp("", "harness-shell-")
-	if err != nil {
-		res.Err = fmt.Errorf("mkdtemp: %w", err)
-		return res
-	}
-	defer os.RemoveAll(runDir)
-
 	var jsonlSink, errSink bytes.Buffer
 	cfg := subprocess.StreamConfig{
 		Command:  rendered,
 		Env:      envMap,
 		Patterns: patterns,
+		Envelope: ec.Envelope,
 		Stdout:   &jsonlSink,
 		Stderr:   &errSink,
-		RunDir:   runDir,
+		RunDir:   ec.RunDir,
 		Dir:      ec.Cwd,
 	}
 	handle, err := subprocess.Start(ctx, cfg)
@@ -106,9 +99,7 @@ func (s *Step) Execute(ctx context.Context, ec *step.ExecContext) *step.StepResu
 	}
 	sr := handle.Run()
 	res.Status = step.StatusCompleted
-	if raw, rerr := os.ReadFile(filepath.Join(runDir, "raw.log")); rerr == nil {
-		res.Stdout = string(raw)
-	}
+	res.Stdout = sr.StdoutCapture
 	res.Stderr = sr.StderrExcerpt
 	res.Signals = sr.Individuals
 

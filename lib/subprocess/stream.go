@@ -58,6 +58,11 @@ type StreamResult struct {
 	ElapsedMS   int
 	Individuals []map[string]interface{} // also already encoded onto Stdout
 	CommandRun  string                   // exact string passed to sh -c
+	// StdoutCapture holds the verbatim stdout the subprocess produced,
+	// independent of pattern matching and of RunDir. Callers that need
+	// the raw output (e.g. shell step output extraction) read it here
+	// instead of round-tripping through raw.log.
+	StdoutCapture string
 	// StderrExcerpt holds up to streamStderrExcerptCap bytes of the
 	// subprocess's stderr stream, captured verbatim regardless of
 	// whether output_parsing patterns matched. Consumed by the
@@ -263,8 +268,8 @@ func (h *StreamHandle) Run() StreamResult {
 	type emit struct{ sig map[string]interface{} }
 	emits := make(chan emit, 64)
 	var wg sync.WaitGroup
-	var stderrBuf bytes.Buffer
-	var stderrMu sync.Mutex
+	var stderrBuf, stdoutBuf bytes.Buffer
+	var stderrMu, stdoutMu sync.Mutex
 	var rawLogMu sync.Mutex
 	scan := func(r io.Reader, captureStderr bool) {
 		defer wg.Done()
@@ -288,6 +293,11 @@ func (h *StreamHandle) Run() StreamResult {
 					}
 				}
 				stderrMu.Unlock()
+			} else {
+				stdoutMu.Lock()
+				stdoutBuf.WriteString(line)
+				stdoutBuf.WriteByte('\n')
+				stdoutMu.Unlock()
 			}
 			m, ok := signal.MatchLine(line, cfg.Patterns)
 			if !ok {
@@ -324,6 +334,9 @@ func (h *StreamHandle) Run() StreamResult {
 	stderrMu.Lock()
 	res.StderrExcerpt = stderrBuf.String()
 	stderrMu.Unlock()
+	stdoutMu.Lock()
+	res.StdoutCapture = stdoutBuf.String()
+	stdoutMu.Unlock()
 	_ = waitErr
 	return res
 }
