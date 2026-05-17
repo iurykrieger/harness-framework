@@ -139,7 +139,7 @@ Cascade through the codebase:
 
 1. **`lib/sensor/shape.go`** — drop `GoldenCase` struct and the `Verification` field. Add `UseCases []string` on `Sensor`. Helpers like `Sensor.HasGoldenCases()` are removed.
 2. **`lib/sensor/load.go`** — `Normalize` stops initializing `verification`. The `use_cases[]` pattern is validated at parse time; existence-on-disk is validated in Phase 5.
-3. **`lib/sensor/validate.go`** — remove the `golden_cases_*` cross-field rules. Add `use_cases_non_empty` (covered by schema `minItems: 1`) and, when the validator has a `projectRoot`, `use_cases_files_exist`.
+3. **`lib/sensor/validate.go`** — no `golden_cases` cross-field rules exist here today (grep returns zero hits). Additions only: add `use_cases_files_exist` (when the validator has a `projectRoot`). Schema-level `use_cases_non_empty` is covered by the `minItems: 1` constraint and needs no Go counterpart.
 4. **`lib/sensor/persist.go`** — currently extracts `sensorMap["verification"]["golden_cases"][].fixture` to drive the `RequireFixturesOnDisk` check (lines 34, 57, 149–153). Reroute the fixture-existence check to read `use_cases[]` and validate each one resolves to a real `.harness/usecases/**/<id>.yaml`; rename the option to `RequireUseCaseFilesOnDisk`. The dual-purpose comment on the `Rel` field is rewritten accordingly.
 5. **`skills/detect-sensors/scripts/run-golden.go`** — deleted along with its `_test.go`. No more golden replay path.
 6. **`skills/detect-sensors/SKILL.md`** — currently has nine references to `verification.golden_cases[]` as authoring guidance (Phase B drafting examples + the persistence step). Rewritten in the same PR so `/detect-sensors` produces sensors with `use_cases[]` referencing usecase ids it co-produces (or that already exist under `.harness/usecases/**`). When `/detect-sensors` runs against a project with no usecases yet, it emits sensors with empty `use_cases: []` and a warn — schema rejects this, so the user is funneled to run `/detect-usecases` first.
@@ -265,9 +265,10 @@ Applied per planned sensor after grouping:
 | Signal | → `kind` |
 |---|---|
 | `trigger.shape` contains "setup" OR `behavior.summary` mentions "idempotent" | `setup` |
-| `expected_outcome.invariants` contains concrete assertions ("Exit code is X", "verdict is Y") | `assertion` |
 | `expected_outcome.shape` is "stream of events" / "log lines while running" | `observation` |
 | (default) | `assertion` |
+
+`expected_outcome.invariants` is always populated on well-formed usecases (the schema does not currently mandate it, but `/detect-usecases` produces it consistently) and therefore is not a useful discriminator — the row above tests `expected_outcome.shape` instead, which IS distinct between assertion-shaped and observation-shaped scenarios.
 
 | Signal | → `type` |
 |---|---|
@@ -287,11 +288,13 @@ The schema requires `cost.compute` for `type=computational` and `cost.tokens` fo
 | Field | Default for `computational` | Default for `inferential` |
 |---|---|---|
 | `cost.compute` | `{ cpu: "low", memory_mb: 64 }` | — (forbidden by schema) |
-| `cost.tokens` | — (forbidden by schema) | `{ input_tokens: 4000, output_tokens: 1000 }` |
+| `cost.tokens` | — (forbidden by schema) | `{ model: "<from user/calibration>", input_avg: 4000, output_avg: 1000, max_output: 4096 }` |
 | `cost.class` | `cheap` if all steps are local shell/file; `medium` if any HTTP step or `setup-mock-infra`; else `expensive` | `expensive` |
 | `cost.latency` | `{ p50_ms: 10, p95_ms: 100, timeout_ms: 5000 }` for shell-only; `{ p50_ms: 200, p95_ms: 2000, timeout_ms: 30000 }` if any HTTP step | `{ p50_ms: 3000, p95_ms: 20000, timeout_ms: 60000 }` |
 
-These mirror the canonical example in `write-sensor_test.go` so existing fixtures keep round-tripping.
+`cost.tokens.model` cannot be defaulted — it is the model the inferential sensor will call. `plan-sensors.go` emits the row with `model: ""` and pairs it with the same `inferential_calibration_required` warn that already covers the calibration block; Phase 4 blocks until the user supplies the model id along with the calibration set.
+
+The computational defaults mirror the canonical example at `lib/sensor/persist_test.go:289` (`TestPersistCanonicalIndependentOfDraftStyle`) so existing test fixtures keep round-tripping.
 
 ### Inference: `mock_strategy` (the hybrid)
 
@@ -483,14 +486,25 @@ No rollout. Users on the plugin take the cut at upgrade time and regenerate.
 
 ## Implementation order (anticipated)
 
-This spec hands off to `/writing-plans`; the plan will sequence tasks. The ordering below is the spec author's anticipation and is not binding. **The sequence matters** because the schema change invalidates the existing smoke sensors and the existing `run-golden.go` + its tests; both must be addressed before the schema flips, or in the same atomic commit.
+This spec hands off to `/writing-plans`; the plan will sequence tasks. The ordering below is the spec author's anticipation and is not binding. **The sequence matters** because the schema change invalidates the existing smoke sensors AND the existing `run-golden.go` + its tests AND the existing CI workflow. `.github/workflows/test.yml` triggers on push to `main` and on every pull request — so any step that leaves `go test` red would block all subsequent PRs. Everything that the schema flip invalidates must land in a single atomic commit.
 
-1. **Delete** `skills/detect-sensors/scripts/run-golden.go` + `_test.go`. Remove the `run_golden` step from `.github/workflows/test.yml`, replacing it with `/run-sensor smoke-typed-pipeline` and `/run-sensor smoke-with-setup` invocations (these will fail until step 2 lands, but CI is run by humans, not the build itself).
-2. **Single atomic commit:** schema change + `lib/sensor/{shape,load,validate,persist}.go` updates + `write-sensor.go` `use_cases[]` support + framework usecases under `.harness/usecases/framework/` + smoke sensor regeneration. After this commit, `go test ./...` passes and the smoke sensors work via `/run-sensor`.
+1. **Delete** `skills/detect-sensors/scripts/run-golden.go` + `_test.go` only (not the workflow yet). After this commit the workflow's `run_golden` step compiles against the missing files and fails — so this step is itself part of the next atomic commit unless the workflow step is also patched.
+
+   *Better:* fold step 1 into step 2 as a single atomic commit. Listed separately here for clarity of what changes within it.
+
+2. **Single atomic commit covering everything the schema change touches:**
+   - `schemas/sensor.yaml`: remove `verification`, add `use_cases`.
+   - `lib/sensor/{shape,load,validate,persist}.go`: cascade per §Schema changes.
+   - `skills/create-sensor/scripts/write-sensor.go`: support `use_cases[]`, add `use_cases_files_exist` check.
+   - Delete `skills/detect-sensors/scripts/run-golden.go` + `_test.go`.
+   - `.github/workflows/test.yml`: replace the `run_golden` step with `/run-sensor smoke-typed-pipeline` + `/run-sensor smoke-with-setup` invocations.
+   - `.harness/usecases/framework/framework-smoke-{typed-pipeline,with-setup}.yaml`: create.
+   - `.harness/sensors/smoke-{typed-pipeline,with-setup}.yaml`: regenerate with `use_cases[]`.
+
+   After this commit, `go test ./...` passes, the smoke sensors work via `/run-sensor`, and CI is green.
+
 3. `read-usecases.go` + tests.
 4. `plan-sensors.go` + tests with all heuristic scenarios.
-5. `SKILL.md` rewrite (Phases 1, 1.5, 4, 5; orchestration prose for Phases 2, 3, 3.5).
+5. `skills/create-sensor/SKILL.md` rewrite (Phases 1, 1.5, 4, 5; orchestration prose for Phases 2, 3, 3.5).
 6. `skills/detect-sensors/SKILL.md` rewrite (rip out `verification.golden_cases[]` authoring guidance; replace with `use_cases[]` flow).
 7. Acceptance sensor `assert-create-sensor-multi-angle` + its framework usecase.
-
-Step 1 deliberately precedes the schema change so the deletion can land independently and bisecting is clean. Step 2 is a single commit because partial state (new schema + old smoke sensors, or vice versa) breaks every test invocation.
