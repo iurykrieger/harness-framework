@@ -5,9 +5,9 @@ journey_id: framework
 description: |
   When the project contains deploy artifacts (Dockerfile, Helm
   chart, k8s manifests, terraform, CI workflows), Phase A persists
-  one Component per artifact using the new Role values introduced
-  in Spec C — so Phase B can draft building blocks like
-  `assert-image-builds`, `assert-helm-lint-pass`,
+  one Component per artifact using the corresponding `role` value
+  from `$defs/Role` in `schemas/stack.yaml` — so Phase B can draft
+  building blocks like `assert-image-builds`, `assert-helm-lint-pass`,
   `assert-workflow-lint` on top of them.
 trigger:
   shape: harness skill invocation
@@ -23,9 +23,9 @@ behavior:
     with the self-containment fields (`category`, `capabilities`,
     `observable_surface`).
   business_rules:
-    - A Dockerfile becomes `role: container-runtime` Component named `docker`.
-    - A Helm Chart.yaml becomes `role: deployment-tool` Component named `helm`.
-    - A GitHub workflow becomes `role: ci-cd` Component named `github-actions`.
+    - "A Dockerfile becomes `role: container-runtime` Component named `docker`."
+    - "A Helm Chart.yaml becomes `role: deployment-tool` Component named `helm`."
+    - "A GitHub workflow becomes `role: ci-cd` Component named `github-actions`."
     - Each surfaced Component carries category/capabilities/observable_surface.
 expected_outcome:
   shape: stack.yaml contains one Component per detected deploy/CI artifact

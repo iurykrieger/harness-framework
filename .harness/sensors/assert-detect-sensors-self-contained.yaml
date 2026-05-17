@@ -12,12 +12,12 @@ cost:
     p95_ms: 2000
     timeout_ms: 10000
 description: |
-  Manual-acceptance sensor verifying Spec C's central invariant:
-  every Component in .harness/stack.yaml has non-empty `category`,
-  `capabilities`, and `observable_surface`. Listed in CI's
-  skip-by-id because /detect-sensors authoring is a human/LLM
-  workflow that doesn't run in CI; this sensor runs on demand
-  after re-running /detect-sensors locally.
+  Manual-acceptance sensor: every Component in .harness/stack.yaml
+  MUST have non-empty `category`, `capabilities`, and
+  `observable_surface`. Listed in CI's skip-by-id because
+  /detect-sensors authoring is a human/LLM workflow that doesn't
+  run in CI; this sensor runs on demand after re-running
+  /detect-sensors locally.
 determinism: high
 execution:
   steps:
