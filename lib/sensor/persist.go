@@ -57,7 +57,7 @@ func (e *SensorAlreadyExistsError) Error() string {
 // <ProjectRoot>/.harness/usecases/**/<id>.yaml file.
 type MissingUseCaseError struct {
 	ID         string // the use_cases[] entry that did not resolve
-	SearchRoot string // the directory tree that was walked
+	SearchRoot string // the project root the lookup was anchored at; the actual walk happens under <SearchRoot>/.harness/usecases
 }
 
 func (e *MissingUseCaseError) Error() string {
@@ -192,7 +192,7 @@ func usecaseFileExists(usecasesRoot, id string) (bool, error) {
 		}
 		return nil
 	})
-	if err != nil && !errors.Is(err, filepath.SkipAll) {
+	if err != nil {
 		return false, err
 	}
 	return found, nil
