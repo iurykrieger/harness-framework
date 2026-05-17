@@ -46,7 +46,7 @@ Make `/detect-sensors` produce **self-contained Components** in `stack.yaml` and
 
 Three new optional fields plus a closed-enum extension on `Role`.
 
-**Optional additions to `$defs/Component`:**
+**Optional additions to `$defs/Component`** (place under `properties:` — `Component` is `additionalProperties: false` at `schemas/stack.yaml:18`, so siblings to `properties:` would reject):
 
 ```yaml
 Component:
@@ -93,33 +93,21 @@ Component:
 
 **Role enum extension:**
 
-The closed enum at `$defs/Role` currently lists 12 values (`http-server`, `http-router`, `http-middleware`, `logger`, `log-encoder`, `tracer`, `metrics`, `queue-consumer`, `queue-producer`, `db-client`, `rpc`, `test-runner`). Spec C extends it with 8 values to cover the categories Spec C makes visible:
+The closed enum at `$defs/Role` (`schemas/stack.yaml:230-248`) currently lists 12 values plus a multi-line `description:` block. Spec C **appends** 8 values to the end of the `enum:` list and leaves `description:` untouched. The edit is additive — no rewrite of the existing `Role:` block.
+
+Values to append (in order; comments are illustrative and not part of the YAML):
 
 ```yaml
-Role:
-  enum:
-    # existing 12 values preserved
-    - http-server
-    - http-router
-    - http-middleware
-    - logger
-    - log-encoder
-    - tracer
-    - metrics
-    - queue-consumer
-    - queue-producer
-    - db-client
-    - rpc
-    - test-runner
-    # new in Spec C
-    - error-tracker          # Sentry, Bugsnag, Rollbar
-    - cache-client           # Redis, Memcached
-    - object-store           # S3, GCS, Azure Blob
-    - job-runner             # Sidekiq, Celery, k8s Job, cron
-    - container-runtime      # Dockerfile, podman, OCI-image-based runtime
-    - deployment-tool        # Helm, k8s manifests, terraform
-    - ci-cd                  # GitHub Actions, GitLab CI, CircleCI
-    - external-integration   # Stripe, SendGrid, Twilio, AWS-SDK service clients
+# append these to $defs/Role.enum at the tail; preserve the existing
+# `description:` block and the 12 existing enum entries above.
+- error-tracker          # Sentry, Bugsnag, Rollbar
+- cache-client           # Redis, Memcached
+- object-store           # S3, GCS, Azure Blob
+- job-runner             # Sidekiq, Celery, k8s Job, cron
+- container-runtime      # Dockerfile, podman, OCI-image-based runtime
+- deployment-tool        # Helm, k8s manifests, terraform
+- ci-cd                  # GitHub Actions, GitLab CI, CircleCI
+- external-integration   # Stripe, SendGrid, Twilio, AWS-SDK service clients
 ```
 
 **Backwards compatibility.** All three new Component fields are optional. The Role enum is *extended* (new values added; existing values untouched), so any stack.yaml in the wild remains valid. No existing sensors or stack.yaml files require regeneration; opting into the new fields is incremental.
@@ -155,6 +143,8 @@ Phase A's "What to discover" section (currently lines 30–43 of `skills/detect-
    - `observable_surface[]` — where the Component's behavior surfaces. Treat as raw material for Phase B's sensor authoring; do not pre-shape into regex or command syntax.
 
 3. **Stack.yaml continues to be persisted** via existing `write-stack.go`. The new fields ride through unchanged — `schemas/stack.yaml` already validates them per the schema change above.
+
+4. **Stop duplicating Role values in Phase A prose.** `skills/detect-sensors/SKILL.md:33` currently enumerates the 12 Role enum values verbatim ("`logger`, `log-encoder`, `http-server`, ..."). With the enum extended to 20, this duplication becomes a maintenance trap (schema and prose drift apart silently). Per the existing project convention "Skill markdown stays stack-driven, never enumerated" (memory), replace the verbatim list with a single instruction pointing at the schema: "for each runtime-observable role declared in `$defs/Role` of `schemas/stack.yaml`, ..." The schema is the single source of truth for Role values; the skill body merely references it.
 
 ### Phase A.5 — usecase ledger check
 
@@ -238,6 +228,8 @@ The skill body grows ~80 lines net. Rule #10 (no temporal/version-history conten
 
 ### Step 3 — framework self-application
 
+**Depends on Step 1 having merged first.** Step 3 may surface new Components (e.g., GitHub Actions from `.github/workflows/test.yml`) that require the new Role values; persisting them via `write-stack.go` against an un-extended schema would fail validation. Steps 1 and 2 may share a PR; Step 3 must wait for Step 1 to land.
+
 Re-run `/detect-sensors` against the framework itself:
 
 1. The 3 existing `.harness/sensors/*.yaml` (`assert-create-sensor-multi-angle`, `smoke-typed-pipeline`, `smoke-with-setup`) remain — they target framework usecases that survived Spec B's restructure.
@@ -273,7 +265,7 @@ A reviewer can confirm Spec C by:
 1. **Schema check.** `schemas/stack.yaml` defines `category`, `capabilities`, `observable_surface` as optional on `Component`, and `Role` lists the 8 new values. `go test ./lib/stack/...` covers both the new shapes and the backward-compat case.
 2. **Framework self-application.** `.harness/stack.yaml` shows the 3 existing Components plus any new ones (e.g., GitHub Actions detected from `.github/workflows/test.yml`) with `category`, `capabilities`, `observable_surface` populated. Every Component has all three fields non-empty.
 3. **Skill body coherence.** Reading `skills/detect-sensors/SKILL.md` from §0 through §8 explains the building-block model in present tense — no "used to be", no "after PR #X", no migration notes.
-4. **Sensor reusability evidence.** At least one framework sensor's `use_cases[]` lists ≥2 usecases (proving the 1:N building-block intent rather than 1:1 per-usecase coupling).
+4. **Sensor reusability evidence.** At least one of the *new* framework sensors authored in Step 3 (not a pre-existing sensor) lists ≥2 usecases in its `use_cases[]`, proving Spec C's 1:N building-block intent in the artifacts the spec itself produces.
 5. **CI green.** Both jobs (`go test + vet` and `sensors — run plugin against itself`) pass on the PR.
 
 ## Out of scope
