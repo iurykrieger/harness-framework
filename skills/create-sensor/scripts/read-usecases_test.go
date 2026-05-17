@@ -8,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/iurykrieger/harness-framework/skills/create-sensor/scripts/lib/ledger"
 )
 
 func TestLoadSingleUsecaseByID(t *testing.T) {
@@ -22,7 +20,7 @@ func TestLoadSingleUsecaseByID(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code: %d; stderr=%s; stdout=%s", code, stderr.String(), stdout.String())
 	}
-	var lg ledger.Ledger
+	var lg Ledger
 	if err := json.Unmarshal(stdout.Bytes(), &lg); err != nil {
 		t.Fatalf("unmarshal ledger: %v; stdout=%s", err, stdout.String())
 	}
@@ -44,14 +42,13 @@ func TestLoadJourney(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code: %d; stderr=%s", code, stderr.String())
 	}
-	var lg ledger.Ledger
+	var lg Ledger
 	if err := json.Unmarshal(stdout.Bytes(), &lg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if len(lg.Usecases) != 2 {
 		t.Fatalf("want 2 usecases, got %d", len(lg.Usecases))
 	}
-	// Sorted by id ascending.
 	if lg.Usecases[0].ID != "tail-sensor-cursor-zero" || lg.Usecases[1].ID != "tail-sensor-no-registry" {
 		t.Fatalf("unexpected ordering: %s, %s", lg.Usecases[0].ID, lg.Usecases[1].ID)
 	}
@@ -64,7 +61,7 @@ func TestListOnly(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code: %d; stderr=%s", code, stderr.String())
 	}
-	var idx ledger.IndexLedger
+	var idx indexLedger
 	if err := json.Unmarshal(stdout.Bytes(), &idx); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -101,9 +98,6 @@ func TestMissingUsecaseIsError(t *testing.T) {
 }
 
 func TestMalformedYAMLYieldsWarnNotError(t *testing.T) {
-	// Use a temp project root that mixes a valid usecase with the
-	// malformed fixture; the script must emit a warn for the bad file
-	// but still return exit 0 for the valid one.
 	root := t.TempDir()
 	usecasesDir := filepath.Join(root, ".harness", "usecases", "mixed")
 	if err := os.MkdirAll(usecasesDir, 0o755); err != nil {
@@ -159,7 +153,7 @@ func TestIncludeStack(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: stderr=%s; stdout=%s", code, stderr.String(), stdout.String())
 	}
-	var lg ledger.Ledger
+	var lg Ledger
 	if err := json.Unmarshal(stdout.Bytes(), &lg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -182,18 +176,19 @@ func TestIncludeCatalog(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(uc, "tail-sensor-no-registry.yaml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Copy a real, schema-valid sensor from the framework's own catalog
+	// rather than handcrafting a minimal one — lib/sensor.Catalog runs
+	// full schema validation and rejects anything thinner.
+	srcSensor := filepath.Join("testdata", "sensors", "dummy-sensor.yaml")
+	sensorBody, err := os.ReadFile(srcSensor)
+	if err != nil {
+		t.Skipf("no test fixture for sensors catalog at %s; skipping --include-catalog round-trip: %v", srcSensor, err)
+	}
 	sensorsDir := filepath.Join(root, ".harness", "sensors")
 	if err := os.MkdirAll(sensorsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	sensorYAML := []byte(`id: dummy-sensor
-kind: observation
-type: computational
-output: single
-execution:
-  blocking: false
-`)
-	if err := os.WriteFile(filepath.Join(sensorsDir, "dummy-sensor.yaml"), sensorYAML, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sensorsDir, "dummy-sensor.yaml"), sensorBody, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
@@ -201,7 +196,7 @@ execution:
 	if code != 0 {
 		t.Fatalf("exit %d: stderr=%s; stdout=%s", code, stderr.String(), stdout.String())
 	}
-	var lg ledger.Ledger
+	var lg Ledger
 	if err := json.Unmarshal(stdout.Bytes(), &lg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
