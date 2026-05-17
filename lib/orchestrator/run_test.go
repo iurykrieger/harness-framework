@@ -161,11 +161,7 @@ func TestRunWithDeps_StepsShapeAggregate(t *testing.T) {
           {"id": "second", "type": "shell", "run": "echo second"}
         ]
       },
-      "verification": {
-        "golden_cases": [
-          {"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}
-        ]
-      }
+      "use_cases": ["fake-uc"]
     }`)
 	if err := os.WriteFile(filepath.Join(sensorsDir, "two-step.yaml"), body, 0o644); err != nil {
 		t.Fatal(err)

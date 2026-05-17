@@ -1,0 +1,31 @@
+id: tail-sensor-cursor-zero
+version: 0.1.0
+name: /tail-sensor cursor=0 reads all
+journey_id: tail-sensor
+description: cursor=0 reads from the beginning of signals.log.
+trigger:
+  shape: CLI invocation
+  summary: /tail-sensor invoked with cursor=0.
+  fixture:
+    argv: [tail-sensor, dev-server, "0"]
+behavior:
+  summary: cursor=0 read path emits every signal verbatim.
+  business_rules:
+    - cursor=0 reads from byte zero.
+    - exit code is 0.
+expected_outcome:
+  shape: JSONL on stdout + exit code 0
+  summary: All signals echoed with exit code 0.
+  fixture:
+    exit_code: 0
+  invariants:
+    - Exit code is 0.
+  side_effects: []
+evidence:
+  - file: skills/tail-sensor/scripts/tail.go
+    line_start: 110
+    rationale: cursor=0 path.
+regression_priority: medium
+tags:
+  - happy-path
+  - cursor

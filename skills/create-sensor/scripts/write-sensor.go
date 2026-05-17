@@ -4,7 +4,7 @@
 // <projectRoot>/.harness/sensors/<id>.yaml via lib/sensor.ValidateAndPersist
 // — the single shared persistence entrypoint used by every sensor-authoring
 // skill (/create-sensor, /detect-sensors, /heal-sensor). This wrapper sets
-// the strict options (RejectIfExists, RequireFixturesOnDisk) appropriate
+// the strict options (RejectIfExists, RequireUseCaseFilesOnDisk) appropriate
 // to /create-sensor's authoring contract.
 //
 // Usage:
@@ -76,11 +76,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	path, err := sensor.ValidateAndPersist(body, sensor.PersistOpts{
-		OutDir:                outDir,
-		SchemasDir:            schemasDir,
-		RejectIfExists:        true,
-		RequireFixturesOnDisk: true,
-		ProjectRoot:           res.ProjectRoot,
+		OutDir:                    outDir,
+		SchemasDir:                schemasDir,
+		RejectIfExists:            true,
+		RequireUseCaseFilesOnDisk: true,
+		ProjectRoot:               res.ProjectRoot,
 	})
 	if err != nil {
 		var saee *sensor.SensorAlreadyExistsError
@@ -88,9 +88,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			emitJSON(stdout, sensorAlreadyExistsSignal(saee.Path))
 			return 2
 		}
-		var mfe *sensor.MissingFixtureError
-		if errors.As(err, &mfe) {
-			emitJSON(stdout, errorSignal("missing_fixture", mfe.Error()))
+		var muc *sensor.MissingUseCaseError
+		if errors.As(err, &muc) {
+			emitJSON(stdout, errorSignal("usecase_not_found", muc.Error()))
 			return 2
 		}
 		var ve *jsonschema.ValidationError

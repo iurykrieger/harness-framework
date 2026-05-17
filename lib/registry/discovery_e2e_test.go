@@ -167,15 +167,7 @@ func makeProject(t *testing.T, parent, id, command string) string {
 				map[string]interface{}{"exit_code": "*", "verdict": "pass", "severity": "info"},
 			},
 		},
-		"verification": map[string]interface{}{
-			"golden_cases": []interface{}{
-				map[string]interface{}{
-					"fixture":           "sensors/fixtures/" + id + "/pass.txt",
-					"expected_verdict":  "pass",
-					"expected_severity": "info",
-				},
-			},
-		},
+		"use_cases": []interface{}{"fake-uc"},
 	}
 	body, _ := json.MarshalIndent(sensor, "", "  ")
 	if err := os.WriteFile(filepath.Join(proj, ".harness", "sensors", id+".yaml"), body, 0o644); err != nil {
@@ -568,9 +560,7 @@ func TestSensorCwd(t *testing.T) {
 			"command": "cat SENTINEL",
 			"exit_code_map": [{"exit_code": 0, "verdict": "pass", "severity": "info"}]
 		},
-		"verification": {
-			"golden_cases": [{"fixture": "sensors/fixtures/cwd-probe/pass.txt", "expected_verdict": "pass", "expected_severity": "info"}]
-		}
+		"use_cases": ["fake-uc"]
 	}`
 	if err := os.WriteFile(filepath.Join(proj, ".harness", "sensors", "cwd-probe.yaml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)

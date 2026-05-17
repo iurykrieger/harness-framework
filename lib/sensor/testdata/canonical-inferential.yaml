@@ -33,9 +33,6 @@ regulation: maintainability
 triggers:
 - "on": pull-request
 type: inferential
-verification:
-  golden_cases:
-  - expected_severity: medium
-    expected_verdict: warn
-    fixture: f
+use_cases:
+  - canonical-inferential-fixture
 version: 0.1.0

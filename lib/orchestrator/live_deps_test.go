@@ -66,7 +66,7 @@ func writeBlockingDep(t *testing.T, root, id string) {
 "regulation": "behaviour",
 "phase": "continuous",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "cost": {
   "class": "cheap",
   "compute": {"cpu":"low","memory_mb":32},
@@ -100,7 +100,7 @@ func writeConsumer(t *testing.T, root, id string) {
 "regulation": "behaviour",
 "phase": "on-demand",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "requires": [{"kind":"sensor","id":"blocking-tick"}],
 "cost": {
   "class": "cheap",
@@ -538,11 +538,7 @@ func writeBlockingDepWithRequiresEnv(t *testing.T, root, id, envName string) {
 		"regulation":  "behaviour",
 		"phase":       "continuous",
 		"triggers":    []interface{}{map[string]interface{}{"on": "manual"}},
-		"verification": map[string]interface{}{
-			"golden_cases": []interface{}{
-				map[string]interface{}{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"},
-			},
-		},
+		"use_cases": []interface{}{"fake-uc"},
 		"cost": map[string]interface{}{
 			"class":   "cheap",
 			"compute": map[string]interface{}{"cpu": "low", "memory_mb": 32},
@@ -585,11 +581,7 @@ func writeBlockingDepWithRequiresTool(t *testing.T, root, id, toolName string) {
 		"regulation":  "behaviour",
 		"phase":       "continuous",
 		"triggers":    []interface{}{map[string]interface{}{"on": "manual"}},
-		"verification": map[string]interface{}{
-			"golden_cases": []interface{}{
-				map[string]interface{}{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"},
-			},
-		},
+		"use_cases": []interface{}{"fake-uc"},
 		"cost": map[string]interface{}{
 			"class":   "cheap",
 			"compute": map[string]interface{}{"cpu": "low", "memory_mb": 32},
@@ -765,7 +757,7 @@ func writeNonBlockingFailingDep(t *testing.T, root, id string) {
 "regulation": "behaviour",
 "phase": "on-demand",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "fail", "expected_severity": "high"}]},
+"use_cases": ["fake-uc"],
 "cost": {
   "class": "cheap",
   "compute": {"cpu":"low","memory_mb":32},
@@ -809,7 +801,7 @@ func writeConsumerWithTwoDeps(t *testing.T, root, id, firstDep, secondDep string
 "regulation": "behaviour",
 "phase": "on-demand",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "requires": [{"kind":"sensor","id":"` + firstDep + `"},{"kind":"sensor","id":"` + secondDep + `"}],
 "cost": {
   "class": "cheap",
@@ -884,7 +876,7 @@ func writeBlockingDepWithDep(t *testing.T, root, id, depID string) {
 "regulation": "behaviour",
 "phase": "continuous",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "requires": [{"kind":"sensor","id":"` + depID + `"}],
 "cost": {
   "class": "cheap",
@@ -922,7 +914,7 @@ func writeConsumerWithDep(t *testing.T, root, id, depID string) {
 "regulation": "behaviour",
 "phase": "on-demand",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "requires": [{"kind":"sensor","id":"` + depID + `"}],
 "cost": {
   "class": "cheap",
@@ -1131,7 +1123,7 @@ func writeBlockingDepNoPatterns(t *testing.T, root, id string) {
 "regulation": "behaviour",
 "phase": "continuous",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "cost": {
   "class": "cheap",
   "compute": {"cpu":"low","memory_mb":32},
@@ -1198,7 +1190,7 @@ func writeBlockingDepWithErrorPattern(t *testing.T, root, id string) {
 "regulation": "behaviour",
 "phase": "continuous",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "cost": {
   "class": "cheap",
   "compute": {"cpu":"low","memory_mb":32},

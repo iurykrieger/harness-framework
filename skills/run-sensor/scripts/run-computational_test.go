@@ -153,9 +153,7 @@ func TestRunComputational_SIGTERMSetsTerminatedExternally(t *testing.T) {
 				map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
 			},
 		},
-		"verification": map[string]interface{}{
-			"golden_cases": []interface{}{map[string]interface{}{"fixture": "f", "expected_verdict": "pass", "expected_severity": "info"}},
-		},
+		"use_cases": []interface{}{"fake-uc"},
 	}
 	jb, _ := json.Marshal(sensorJSON)
 	b, err := yaml.JSONToYAML(jb)

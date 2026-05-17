@@ -65,7 +65,7 @@ func loadTypedSensor(s Sensor, v *schema.Validator) (*sensor.Sensor, error) {
 // projectTypedSensor builds a *sensor.Sensor populated only with the
 // fields the engine reads: ID, Version, Output, and Execution
 // (Command, Env, Steps, ExitCodeMap, OutputParsing, etc.). Fields not
-// consumed by exec.Run (Cost, Triggers, Verification, …) are skipped to
+// consumed by exec.Run (Cost, Triggers, UseCases, …) are skipped to
 // keep the in-memory shape decoupled from on-disk schema strictness.
 // Returns an error only on truly fatal misshapes (Execution not an
 // object). Callers that need a fully-typed sensor should go through

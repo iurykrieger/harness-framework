@@ -76,6 +76,18 @@ log_shapes: []
 
 This is intentionally degenerate. Phase B (§4 below) will see an empty `log_shapes[]` and fall back to generic patterns (panic/error keyword matchers) annotated in the sensor's `blind_spots[]` as "stack discovery returned empty; refine patterns manually after observing real stdout".
 
+### Phase A.5: Usecase ledger check
+
+Sensors produced by /detect-sensors MUST reference real usecase ids. Before drafting any sensor, list the existing usecases:
+
+```bash
+find .harness/usecases -type f -name '*.yaml' 2>/dev/null
+```
+
+If no usecases exist yet, emit a Signal with `verdict=error metadata.kind=usecases_missing`, surface the remediation ("run `/detect-usecases` first"), and DO NOT proceed with sensor drafting. /detect-sensors cannot emit a schema-valid sensor with empty `use_cases[]` (the schema requires `minItems: 1`).
+
+If usecases DO exist, build a quick mental index of which usecases belong to which journey — sensors will be wired to the most relevant ones during drafting (Phase B).
+
 ### 1. Read the schema first
 
 Always start by reading `schemas/sensor.yaml`, `schemas/signal.yaml`, and `schemas/stack.yaml` from this plugin so your drafts match the current shape (required fields, discriminators, enum values). The schema is the contract — never guess it from memory.
@@ -167,7 +179,7 @@ For every capability that survives step 3, draft a sensor object. The id MUST be
 
 Use these defaults unless the project tells you otherwise:
 
-- `version: "0.1.0"` for the first cut of a sensor; bump (`0.2.0`, `0.3.0`, ...) on every iteration that changes `output`, `execution`, or `verification`. The version stamp is the audit trail readers compare against.
+- `version: "0.1.0"` for the first cut of a sensor; bump (`0.2.0`, `0.3.0`, ...) on every iteration that changes `output`, `execution`, or `use_cases`. The version stamp is the audit trail readers compare against.
 - `type: "computational"`, `determinism: "high"` for command-style sensors. Pick `output` per the rule in step 1.
 - `cost.class` cheap for static analysis, medium for unit/contract tests, expensive for e2e/integration/observability fetches.
 - `cost.latency` tuned to the capability's actual runtime (use the CI logs as a sanity check when available).
@@ -207,7 +219,7 @@ Use these defaults unless the project tells you otherwise:
   5. In the sensor's `description`, cite the source: e.g. *"output_parsing derived from log_shape 'zap-prod-json' in .harness/stack.yaml"* or *"derived from log_shapes 'sarama-consumer-jsonl' (per-event observation) and 'logback-stderr' (severity tiers)"*. This is the audit trail when patterns later fail to match real stdout.
 - **Degraded path:** if `.harness/stack.yaml` is missing OR `log_shapes[]` is empty (Phase A failed to identify a logger), emit generic patterns matching `panic\s*:`, `^\s*(ERROR|FATAL)`, and similar keyword markers, AND add a `blind_spots[]` entry: *"Patterns are generic keyword markers because stack discovery did not identify a structured logger; refine after observing real stdout."*
 - `execution.output_parsing.patterns` (only when `output: "stream"`) — at least one regex per actionable verdict. For Go test, three patterns suffice: `^\s*--- PASS: (\S+)`, `^\s*--- FAIL: (\S+)`, `^\s*--- SKIP: (\S+)` with `captures.excerpt = 1`. For compilers/linters, one pattern: `^\s*(\S+\.go):(\d+):(\d+):\s+(.+)$` with `captures.{file:1,line_start:2,excerpt:4}`. RE2 syntax — when authoring in YAML, prefer single-quoted scalars or block scalars (`|`) so backslashes pass through literally; in double-quoted YAML, `\\s` is needed for a literal `\s`.
-- `verification.golden_cases` MUST have at least one entry, and **every entry MUST point at a real fixture file** that exists at the path you write down. No `"TODO"` strings, no placeholder verdicts. See step 5 for how to author fixtures and step 6 for how to verify them.
+- `use_cases` MUST have at least one entry. Every entry is the `id` of a usecase YAML that already exists under `<project>/.harness/usecases/<journey>/<id>.yaml`. The schema enforces `minItems: 1`, and the persister cross-checks that each referenced file is on disk before writing the sensor. No placeholder ids — wire the sensor to the usecases it actually validates. See Phase A.5 for how to enumerate them and step 5 for how to choose the right ids per sensor.
 - `description` should be one sentence: trigger condition + what is observed + regulation dimension. Mention how you detected the capability (`Auto-detected via /detect-sensors from <evidence>`) and why you chose `output: <single|stream>`. When the command came from project docs, name the file *and* the heading — e.g. *"Auto-detected from CLAUDE.md '## Build, validate, test'"* or *"Auto-detected from README.md '## Run locally'"* — so the source is one click away.
 - For inferential sensors, add `calibration` (`confidence_threshold`, `calibration_set`, `calibration_size`, `calibration_date: 2026-05-08`) and `blind_spots`.
 
@@ -272,22 +284,16 @@ execution:
       - regex: '(?i)\bunhandled (?:exception|rejection)\b'
         verdict: fail
         severity: high
-verification:
-  golden_cases:
-    - fixture: .harness/sensors/fixtures/run-project-nest/clean-boot.txt
-      expected_verdict: pass
-      expected_severity: info
-      notes: Captured stdout from a real local boot — Nest start banner + Listening line within ~3s.
-    - fixture: .harness/sensors/fixtures/run-project-nest/port-collision.txt
-      expected_verdict: fail
-      expected_severity: high
-      notes: EADDRINUSE on port 3000 when another instance is running.
+# example — replace with real ids resolved under .harness/usecases/run-project-nest/
+use_cases:
+  - run-project-nest-clean-boot
+  - run-project-nest-port-collision
 blind_spots:
   - Boots the production binary (matches Dockerfile CMD), so a successful boot does not exercise the live-reload path that nest start --watch covers.
   - 30s window is heuristic — slow CI machines may need more; tighten or relax cost.latency.timeout_ms after first real runs.
 ```
 
-Things to copy from this template into other continuous sensors: `output: "stream"` + `blocking: true`, `graceful_timeout_ms` sized to the process's expected shutdown time, success-marker patterns (boot lines, ready probes) AND failure-marker patterns (crashes, port conflicts, dependency errors), `requires[kind=env]` entries for any value that lives outside the repo, fixtures captured from a real boot. The template above shows only the boot-phase patterns — for any sensor whose target service has components with role in `{http-server, http-router, http-middleware, queue-consumer, queue-producer, rpc, db-client}`, the per-event observation patterns derived from the relevant `log_shape` (per the rules in §4 above) MUST also be emitted, so the sensor produces one Signal per discrete unit of work the service processes (request, consumed message, produced message, call, query) once it is past boot. A sensor that ships boot patterns only blinds the harness to the dense per-event observability surface — requests for http-api, messages for event-driven services, calls for RPC, queries for db-bound — which is the entire reason a running-service project deserves a `kind=observation` sensor in the first place.
+Things to copy from this template into other continuous sensors: `output: "stream"` + `blocking: true`, `graceful_timeout_ms` sized to the process's expected shutdown time, success-marker patterns (boot lines, ready probes) AND failure-marker patterns (crashes, port conflicts, dependency errors), `requires[kind=env]` entries for any value that lives outside the repo, `use_cases[]` listing the usecase ids the sensor regulates. The template above shows only the boot-phase patterns — for any sensor whose target service has components with role in `{http-server, http-router, http-middleware, queue-consumer, queue-producer, rpc, db-client}`, the per-event observation patterns derived from the relevant `log_shape` (per the rules in §4 above) MUST also be emitted, so the sensor produces one Signal per discrete unit of work the service processes (request, consumed message, produced message, call, query) once it is past boot. A sensor that ships boot patterns only blinds the harness to the dense per-event observability surface — requests for http-api, messages for event-driven services, calls for RPC, queries for db-bound — which is the entire reason a running-service project deserves a `kind=observation` sensor in the first place.
 
 **Never skip a sensor because credentials are missing.** If a capability needs auth tokens, RSA keys, project ids, region selectors, or any other host-supplied secret, declare them as `requires[kind=env]` entries and emit the sensor anyway. The runner forwards every listed env var from its own environment into the subprocess; if a non-optional name is unset at run time, the runner aborts with `verdict=error` and a remediation that names the missing var. The sensor's *existence* is independent of whether you, right now, can run it. Examples:
 
@@ -401,18 +407,18 @@ blind_spots:
 
 **Why this matters.** A sensor whose `execution.command` no longer resembles the project's documented workflow is a bug magnet: it skips setup the maintainers consider mandatory, it diverges from what `dev local roda make dev` produces, and when the Makefile changes the sensor lies silently. Strategy A keeps the sensor and the wrapper in lockstep. Strategy B makes the unrolling explicit and citable — when the wrapper changes, the `blind_spots[]` entry tells the reader the sensor must be regenerated.
 
-### 5. Author fixtures BEFORE you persist
+### 5. Wire `use_cases[]` to the right usecase ids
 
-A sensor without real fixtures is half-built. For every `golden_cases[]` entry you wrote in step 4, create the file at `<project>/.harness/sensors/fixtures/<group>/<case>.txt` (or `.json` for parser-style sensors). The fixture must contain content shaped exactly like the production tool's stdout for that case.
+A sensor without real `use_cases[]` is half-built — and the schema's `minItems: 1` plus the persister's on-disk cross-check will refuse to write it. For each sensor you drafted in step 4, choose the usecase ids it actually regulates from the ledger built in Phase A.5.
 
 Conventions that work:
 
-- Group fixtures by tool family, not by sensor id, so `lint-go-vet-computational` and `lint-go-vet-inferential` share `.harness/sensors/fixtures/lint-go-vet/{clean,has-warning}.txt`. Same for `unit-test/{all-pass,has-failure,has-skip}.txt`, `build-runner/{clean,has-error}.txt`.
-- Always include at least: one **happy path** fixture (clean stdout → expected `pass`) and one **fail path** fixture (representative finding → expected `fail` or `warn`). Add a third for `skip`/`warn` semantics when the tool produces them.
-- Fixture content should be a faithful capture, not a hand-crafted approximation. For Go tests: `=== RUN ...\n--- PASS: ... (0.00s)\nPASS\nok ... 0.012s`. For Go vet/build: `# package\n./file.go:LINE:COL: message`. For schema parsers: a real malformed JSON.
-- Keep them small (a handful of lines) — they exist for verification, not for stress.
+- **Match the sensor's scope, not its name.** A `lint-eslint` sensor regulates every usecase whose expected_outcome includes "no lint errors" or whose invariants forbid console warnings — not just one usecase with `lint` in its id. A `run-project-nest` sensor regulates every usecase whose trigger is "boot the service" or whose expected_outcome describes a healthy startup.
+- **Aim for 1–4 ids per sensor.** A single id is fine when the sensor narrowly proves one journey variation; more than four usually means the sensor is too broad (split it) or you are stretching the link (drop the weaker matches). The persister rejects empty arrays — there is no "TODO" placeholder.
+- **Cross-cutting capabilities reference framework usecases.** When a sensor regulates a system-wide property (the harness's own contract, e.g. "every persisted sensor parses against schemas/sensor.yaml"), wire it to ids under `<project>/.harness/usecases/framework/`. Capability-specific sensors wire to journey-scoped ids (`run-sensor/run-sensor-single-output-pass`, `tail-sensor/tail-sensor-no-registry`, etc.).
+- **Never invent ids.** The persister checks each entry against `<project>/.harness/usecases/**/*.yaml`; an unknown id fails the write with a `missing_usecase` Signal. If a journey variation deserves regulation but no usecase yet exists, **stop and run `/detect-usecases`** to author it first.
 
-`expected_verdict` and `expected_severity` for each case must match what the runner *actually* computes when patterns + exit_code_map see that fixture. The next step proves it.
+The runner does not consult `use_cases[]` at execution time — the list is the audit trail wiring sensors back to the journeys they validate. When the journey set evolves, re-run `/detect-usecases` and revisit the wiring; bump the sensor's `version` if you add or remove ids.
 
 ### 6. Persist each draft
 
@@ -445,7 +451,7 @@ Do not skip the validator step. The schema's `allOf` discriminators catch a clas
 
 ### 7. Run each sensor and iterate on shape correctness only
 
-Schema-valid is not the same as semantically useful. After persisting, **run each sensor through the runner once** and inspect the aggregate Signal. Iterate ONLY on shape-correctness symptoms (regex matches, exit_code_map right, fixtures replay correctly). For setup-shape symptoms (missing env, missing binary, absent .env), do NOT iterate here — invoke `/heal-sensor` (see step 7.5).
+Schema-valid is not the same as semantically useful. After persisting, **run each sensor through the runner once** and inspect the aggregate Signal. Iterate ONLY on shape-correctness symptoms (regex matches, exit_code_map right, capture groups correct). For setup-shape symptoms (missing env, missing binary, absent .env), do NOT iterate here — invoke `/heal-sensor` (see step 7.5).
 
 Shape-correctness symptoms to fix in this loop:
 
@@ -457,28 +463,16 @@ Shape-correctness symptoms to fix in this loop:
 Run order:
 
 ```bash
-# 1) Production happy-path: run the sensor against the real codebase.
+# Production happy-path: run the sensor against the real codebase.
 HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
   go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_computational \
   ./skills/run-sensor/scripts @.harness/sensors/<id>.yaml | tail -n 1 \
   | jq -c '{verdict, severity, counts: .metadata.counts, individuals: (.evidence|length)}'
-
-# 2) Drive every golden_cases[] entry through the standard runner and
-#    compare the aggregate verdict/severity against the case's
-#    expected_verdict / expected_severity. run-golden picks
-#    run-computational or run-inferential based on sensor.type and
-#    exits 1 on the first mismatch.
-HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
-  go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=run_golden \
-  ./skills/detect-sensors/scripts --sensor=.harness/sensors/<id>.yaml
 ```
 
-For each sensor, both must hold:
+The aggregate on the live repo must match reality (clean repo → `pass`; dirty repo → `fail`/`warn`). Empty `evidence` is acceptable iff the underlying tool is genuinely silent on success (vet, build, schema parsers); for tools that emit per-test output (Go test with `-v`, jest, pytest -v), `counts` MUST show non-zero in the relevant bucket. On any mismatch, fix the sensor's `execution.command`, `exit_code_map`, or `output_parsing.patterns` — never adjust expectations to paper over a regex that does not actually match the tool's stdout.
 
-- Happy path on the live repo: aggregate `verdict` matches reality (clean repo → `pass`; dirty repo → `fail`/`warn`). Empty `evidence` is acceptable iff the underlying tool is genuinely silent on success (vet, build, schema parsers); for tools that emit per-test output (Go test with `-v`, jest, pytest -v), `counts` MUST show non-zero in the relevant bucket.
-- Each `golden_cases[]` entry: `run-golden` invokes the sensor for real and the aggregate Signal's `verdict` / `severity` MUST match `expected_verdict` / `expected_severity`. On mismatch, surface to the author for editing — either the sensor's behavior is wrong (fix `execution.command`, `exit_code_map`, `output_parsing.patterns`) or the expectation is wrong (fix `golden_cases[].expected_*`).
-
-If iteration changes `output`, `execution`, or `verification`, bump the sensor `version` (e.g. `0.1.0` → `0.2.0`) and re-persist via the validator. The version stamp is the audit trail of which shape was actually verified.
+If iteration changes `output`, `execution`, or `use_cases`, bump the sensor `version` (e.g. `0.1.0` → `0.2.0`) and re-persist via the validator. The version stamp is the audit trail of which shape was actually verified.
 
 If a `kind=observation` + `output=stream` sensor's patterns match nothing during its first run, suspect Phase A first — not the regex. Inspect the persisted stack with `bat <project>/.harness/stack.yaml` (or `cat`). If the `log_shapes[].sample` no longer resembles the real stdout, rerun `/detect-sensors --refresh-stack` to regenerate. Only after the stack matches reality should you tweak the patterns themselves.
 
@@ -495,24 +489,24 @@ When step 7's smoke run produces an aggregate Signal that is setup-shape (missin
 - If the retry passed: continue the draft loop — your sensor is healthy.
 - If `/heal-sensor` couldn't recover: the failure is genuinely outside the harness's reach (needs `pnpm install`, `gcloud login`, etc.). Read the remediation it emitted, surface it to the user, and continue with the OTHER sensors. Don't block this skill on credentials the harness can't synthesize.
 
-Setup-shape recovery used to be the responsibility of this skill's prose ("if credentials are missing, declare them and proceed"). It is now `/heal-sensor`'s job — exclusively. This skill stays focused on shape correctness.
+Setup-shape recovery is exclusively `/heal-sensor`'s job. This skill stays focused on shape correctness.
 
 ### 8. Report back to the user
 
-When every draft is persisted **and verified** (step 7 passed for happy and unhappy paths), surface the result as a bulleted list of paths plus the verdict observed for each, so the user can immediately fan out into `/run-sensor`:
+When every draft is persisted **and verified** (step 7 passed on the live repo), surface the result as a bulleted list of paths plus the verdict observed for each, so the user can immediately fan out into `/run-sensor`:
 
 ```
-Generated 7 sensors at /repo/.harness/sensors/ (all verified happy + replay paths):
-- /repo/.harness/sensors/lint-eslint.yaml           — happy: pass · replay(has-finding): fail/medium ·  4 fixtures
-- /repo/.harness/sensors/build-vite.yaml            — happy: pass · replay(compile-error): fail/high   · 2 fixtures
-- /repo/.harness/sensors/unit-test-vitest.yaml      — happy: pass(83) · replay(has-failure): fail/high · 3 fixtures
-- /repo/.harness/sensors/e2e-playwright.yaml        — happy: pass(12) · replay(timeout): fail/high     · 3 fixtures
-- /repo/.harness/sensors/run-project-vite-dev.yaml  — single-mode  · replay(crash): fail/high          · 2 fixtures
-- /repo/.harness/sensors/fetch-logs-cloudrun.yaml   — happy: pass · NEEDS-AUTH (gcloud login)          · 1 fixture
-- /repo/.harness/sensors/fetch-metrics-cloud-monitoring.yaml — happy: pass · NEEDS-AUTH                · 1 fixture
+Generated 7 sensors at /repo/.harness/sensors/ (all verified on the live repo):
+- /repo/.harness/sensors/lint-eslint.yaml           — happy: pass · use_cases: 2
+- /repo/.harness/sensors/build-vite.yaml            — happy: pass · use_cases: 1
+- /repo/.harness/sensors/unit-test-vitest.yaml      — happy: pass(83) · use_cases: 3
+- /repo/.harness/sensors/e2e-playwright.yaml        — happy: pass(12) · use_cases: 3
+- /repo/.harness/sensors/run-project-vite-dev.yaml  — single-mode · use_cases: 2
+- /repo/.harness/sensors/fetch-logs-cloudrun.yaml   — happy: pass · NEEDS-AUTH (gcloud login) · use_cases: 1
+- /repo/.harness/sensors/fetch-metrics-cloud-monitoring.yaml — happy: pass · NEEDS-AUTH · use_cases: 1
 
 Run any of them with `/run-sensor <id>`.
-Fixtures live under /repo/.harness/sensors/fixtures/<group>/<case>.{txt,json}.
+Each sensor's use_cases[] entry resolves to .harness/usecases/<journey>/<id>.yaml.
 ```
 
 Be honest about anything still soft: sensors whose live command needs credentials you do not have (`NEEDS-AUTH`), `cost.latency` numbers that are estimates rather than measured, observability sensors whose query strings are best-guess. Call those out explicitly so the user knows where to focus the review.

@@ -52,9 +52,7 @@ func writeInferentialSensor(t *testing.T, root, id, command string) string {
 				},
 			},
 		},
-		"verification": map[string]interface{}{
-			"golden_cases": []interface{}{map[string]interface{}{"fixture": "f", "expected_verdict": "warn", "expected_severity": "medium"}},
-		},
+		"use_cases": []interface{}{"fake-uc"},
 		"calibration": map[string]interface{}{
 			"confidence_threshold": 0.7,
 			"calibration_set":      "tests/cal.jsonl",
@@ -235,9 +233,7 @@ func TestRunInferential_RejectsComputational(t *testing.T) {
 				map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
 			},
 		},
-		"verification": map[string]interface{}{
-			"golden_cases": []interface{}{map[string]interface{}{"fixture": "x", "expected_verdict": "pass", "expected_severity": "info"}},
-		},
+		"use_cases": []interface{}{"fake-uc"},
 	}
 	jb, _ := json.Marshal(s)
 	b, err := yaml.JSONToYAML(jb)
@@ -513,9 +509,7 @@ func TestRunInferential_BlockingSensorRejected(t *testing.T) {
 				},
 			},
 		},
-		"verification": map[string]interface{}{
-			"golden_cases": []interface{}{map[string]interface{}{"fixture": "f", "expected_verdict": "pass", "expected_severity": "info"}},
-		},
+		"use_cases": []interface{}{"fake-uc"},
 		"calibration": map[string]interface{}{
 			"confidence_threshold": 0.7,
 			"calibration_set":      "tests/cal.jsonl",
@@ -647,7 +641,7 @@ func TestRunInferential_BlockingDep_AggregateLast(t *testing.T) {
 "determinism": "high", "kind": "setup", "type": "computational",
 "output": "stream", "regulation": "behaviour", "phase": "continuous",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "cost": {"class":"cheap","compute":{"cpu":"low","memory_mb":32},"latency":{"p50_ms":10,"p95_ms":50}},
 "execution": {
   "command": "while true; do echo TICK; sleep 0.1; done",

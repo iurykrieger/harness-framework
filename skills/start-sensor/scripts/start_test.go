@@ -109,15 +109,7 @@ func TestStart_RejectsNonBlocking(t *testing.T) {
 				map[string]interface{}{"exit_code": 0, "verdict": "pass", "severity": "info"},
 			},
 		},
-		"verification": map[string]interface{}{
-			"golden_cases": []interface{}{
-				map[string]interface{}{
-					"fixture":           "sensors/fixtures/not-blocking/pass.txt",
-					"expected_verdict":  "pass",
-					"expected_severity": "info",
-				},
-			},
-		},
+		"use_cases": []interface{}{"fake-uc"},
 	})
 	exit, sig := runStart(bootstrapFor(t, testResult(root), new(bytes.Buffer)), []string{"not-blocking"})
 	if exit != 2 {
@@ -187,15 +179,7 @@ func blockingFixtureBody() map[string]interface{} {
 				map[string]interface{}{"exit_code": "*", "verdict": "pass", "severity": "info"},
 			},
 		},
-		"verification": map[string]interface{}{
-			"golden_cases": []interface{}{
-				map[string]interface{}{
-					"fixture":           "sensors/fixtures/loop/pass.txt",
-					"expected_verdict":  "pass",
-					"expected_severity": "info",
-				},
-			},
-		},
+		"use_cases": []interface{}{"fake-uc"},
 	}
 }
 
@@ -252,11 +236,7 @@ func writeNonBlockingSetupDep(t *testing.T, root, id, command string) {
 				map[string]interface{}{"exit_code": "*", "verdict": "fail", "severity": "high"},
 			},
 		},
-		"verification": map[string]interface{}{
-			"golden_cases": []interface{}{
-				map[string]interface{}{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"},
-			},
-		},
+		"use_cases": []interface{}{"fake-uc"},
 	}
 	writeFixtureSensor(t, root, id, body)
 }
@@ -278,7 +258,7 @@ func writeBlockingDepFixtureForStart(t *testing.T, root, id string) {
 "regulation": "behaviour",
 "phase": "continuous",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "cost": {
   "class": "cheap",
   "compute": {"cpu":"low","memory_mb":32},

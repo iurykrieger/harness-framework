@@ -1,0 +1,34 @@
+id: tail-sensor-no-registry
+version: 0.1.0
+name: /tail-sensor errors when the registry file is absent
+journey_id: tail-sensor
+description: |
+  Synthetic copy of the real usecase, kept hermetic for read-usecases
+  unit tests so changes to production usecases never break the script
+  test suite.
+trigger:
+  shape: CLI invocation
+  summary: /tail-sensor invoked with no registry on disk.
+  fixture:
+    argv: [tail-sensor, dev-server, "0"]
+behavior:
+  summary: registry_exists=false branch produces tail_no_registry.
+  business_rules:
+    - Sensor cannot be tailed without a registry entry.
+    - Verdict is error and exit code is 1.
+expected_outcome:
+  shape: One JSON line on stdout + exit code
+  summary: One Signal verdict=error, metadata.kind=tail_no_registry, exit code 1.
+  fixture:
+    exit_code: 1
+  invariants:
+    - Exit code is 1.
+  side_effects: []
+evidence:
+  - file: skills/tail-sensor/scripts/tail.go
+    line_start: 72
+    rationale: registry_exists=false branch emitting tail_no_registry.
+regression_priority: high
+tags:
+  - error-handling
+  - registry-discovery

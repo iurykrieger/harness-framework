@@ -140,69 +140,65 @@ func TestValidateAndPersist_RejectIfExists(t *testing.T) {
 	}
 }
 
-func TestValidateAndPersist_RequireFixturesOnDisk_Missing(t *testing.T) {
+func TestValidateAndPersist_RequireUseCaseFilesOnDisk_Missing(t *testing.T) {
 	schemasDir := schematest.RepoSchemasDir(t)
 	outDir := t.TempDir()
 	projectRoot := t.TempDir()
 
 	s := sensortest.LoadComputational(t)
-	s.Verification.GoldenCases = []sensor.GoldenCase{
-		{Fixture: ".harness/sensors/fixtures/smoke-comp/pass.txt", ExpectedVerdict: "pass", ExpectedSeverity: "info"},
-	}
+	s.UseCases = []string{"nonexistent-uc"}
 	body, _ := json.Marshal(s.AsMap())
 
 	_, err := sensor.ValidateAndPersist(body, sensor.PersistOpts{
-		OutDir:                outDir,
-		SchemasDir:            schemasDir,
-		RequireFixturesOnDisk: true,
-		ProjectRoot:           projectRoot,
+		OutDir:                    outDir,
+		SchemasDir:                schemasDir,
+		RequireUseCaseFilesOnDisk: true,
+		ProjectRoot:               projectRoot,
 	})
 	if err == nil {
-		t.Fatal("expected MissingFixtureError")
+		t.Fatal("expected MissingUseCaseError")
 	}
-	var mfe *sensor.MissingFixtureError
-	if !errors.As(err, &mfe) {
-		t.Fatalf("expected *MissingFixtureError, got %T: %v", err, err)
+	var mue *sensor.MissingUseCaseError
+	if !errors.As(err, &mue) {
+		t.Fatalf("expected *MissingUseCaseError, got %T: %v", err, err)
 	}
-	if mfe.Rel != ".harness/sensors/fixtures/smoke-comp/pass.txt" {
-		t.Fatalf("Rel=%q", mfe.Rel)
+	if mue.ID != "nonexistent-uc" {
+		t.Fatalf("ID=%q", mue.ID)
 	}
 }
 
-func TestValidateAndPersist_RequireFixturesOnDisk_Present(t *testing.T) {
+func TestValidateAndPersist_RequireUseCaseFilesOnDisk_Present(t *testing.T) {
 	schemasDir := schematest.RepoSchemasDir(t)
 	outDir := t.TempDir()
 	projectRoot := t.TempDir()
 
-	fixtureRel := ".harness/sensors/fixtures/smoke-comp/pass.txt"
-	full := filepath.Join(projectRoot, fixtureRel)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	usecaseID := "smoke-uc"
+	usecaseDir := filepath.Join(projectRoot, ".harness", "usecases", "framework")
+	if err := os.MkdirAll(usecaseDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(full, []byte("ok"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(usecaseDir, usecaseID+".yaml"), []byte("id: "+usecaseID+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	s := sensortest.LoadComputational(t)
-	s.Verification.GoldenCases = []sensor.GoldenCase{
-		{Fixture: fixtureRel, ExpectedVerdict: "pass", ExpectedSeverity: "info"},
-	}
+	s.UseCases = []string{usecaseID}
 	body, _ := json.Marshal(s.AsMap())
 
 	if _, err := sensor.ValidateAndPersist(body, sensor.PersistOpts{
-		OutDir:                outDir,
-		SchemasDir:            schemasDir,
-		RequireFixturesOnDisk: true,
-		ProjectRoot:           projectRoot,
+		OutDir:                    outDir,
+		SchemasDir:                schemasDir,
+		RequireUseCaseFilesOnDisk: true,
+		ProjectRoot:               projectRoot,
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestValidateAndPersist_RequireFixturesOnDisk_WithoutProjectRoot(t *testing.T) {
+func TestValidateAndPersist_RequireUseCaseFilesOnDisk_WithoutProjectRoot(t *testing.T) {
 	_, err := sensor.ValidateAndPersist([]byte("{}"), sensor.PersistOpts{
-		OutDir:                t.TempDir(),
-		RequireFixturesOnDisk: true,
+		OutDir:                    t.TempDir(),
+		RequireUseCaseFilesOnDisk: true,
 	})
 	if err == nil {
 		t.Fatal("expected error when ProjectRoot missing")
@@ -286,7 +282,7 @@ func TestRegexRoundTripThroughYAML(t *testing.T) {
 func TestPersistCanonicalIndependentOfDraftStyle(t *testing.T) {
 	// Three logically-identical drafts in different input styles must
 	// produce byte-identical files on disk.
-	jsonDraft := []byte(`{"id":"x","version":"1.0.0","name":"x","description":"x","kind":"assertion","type":"computational","regulation":"maintainability","phase":"on-demand","determinism":"high","output":"single","cost":{"class":"cheap","compute":{"cpu":"low","memory_mb":64},"latency":{"p50_ms":10,"p95_ms":100,"timeout_ms":5000}},"triggers":[{"on":"manual"}],"execution":{"command":"true","exit_code_map":[{"exit_code":0,"verdict":"pass","severity":"info"}]},"verification":{"golden_cases":[{"fixture":"x","expected_verdict":"pass","expected_severity":"info"}]}}`)
+	jsonDraft := []byte(`{"id":"x","version":"1.0.0","name":"x","description":"x","kind":"assertion","type":"computational","regulation":"maintainability","phase":"on-demand","determinism":"high","output":"single","cost":{"class":"cheap","compute":{"cpu":"low","memory_mb":64},"latency":{"p50_ms":10,"p95_ms":100,"timeout_ms":5000}},"triggers":[{"on":"manual"}],"execution":{"command":"true","exit_code_map":[{"exit_code":0,"verdict":"pass","severity":"info"}]},"use_cases":["fake-uc"]}`)
 
 	flowYAML, err := yaml.JSONToYAML(jsonDraft)
 	if err != nil {

@@ -59,11 +59,17 @@ jobs:
       - name: Test write-stack
         run: go test -race -count=1 -tags=write_stack ./skills/detect-sensors/scripts/...
 
-      - name: Vet (run_golden build tag)
-        run: go vet -tags=run_golden ./...
+      - name: Vet (read_usecases build tag)
+        run: go vet -tags=read_usecases ./...
 
-      - name: Test run-golden
-        run: go test -race -count=1 -tags=run_golden ./skills/detect-sensors/scripts/...
+      - name: Test read-usecases
+        run: go test -race -count=1 -tags=read_usecases ./skills/create-sensor/scripts/...
+
+      - name: Vet (plan_sensors build tag)
+        run: go vet -tags=plan_sensors ./...
+
+      - name: Test plan-sensors
+        run: go test -race -count=1 -tags=plan_sensors ./skills/create-sensor/scripts/...
 
       - name: Build computational runner
         run: go build -tags=run_computational -o /dev/null ./skills/run-sensor/scripts
@@ -199,6 +205,15 @@ jobs:
 
             if [ "$kind" = "setup" ]; then
               echo "skip $id (kind=$kind — pulled in by orchestrator only as a dep)"
+              continue
+            fi
+
+            # assert-create-sensor-multi-angle is a manual self-test: it
+            # asserts /create-sensor's output, and there is no produced
+            # sensor on disk in CI to assert against. The sensor itself
+            # documents this precondition in its blind_spots[].
+            if [ "$id" = "assert-create-sensor-multi-angle" ]; then
+              echo "skip $id (manual acceptance — needs /create-sensor invocation first)"
               continue
             fi
 

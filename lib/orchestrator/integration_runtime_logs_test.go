@@ -67,13 +67,7 @@ func TestRunSensor_ConcurrentRunsCoexist(t *testing.T) {
     "command": "sleep 1 && echo ok",
     "exit_code_map": [{"exit_code": 0, "verdict": "pass", "severity": "info"}]
   },
-  "verification": {
-    "golden_cases": [{
-      "fixture": "sensors/fixtures/echo/pass.txt",
-      "expected_verdict": "pass",
-      "expected_severity": "info"
-    }]
-  }
+  "use_cases": ["fake-uc"]
 }`
 	if err := os.WriteFile(filepath.Join(sensorsDir, "echo.yaml"), []byte(sensorJSON), 0o644); err != nil {
 		t.Fatal(err)
@@ -179,7 +173,7 @@ func TestRunWithDepsRoot_DepSignalsPopulated(t *testing.T) {
 "regulation": "behaviour",
 "phase": "continuous",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "cost": {"class":"cheap","compute":{"cpu":"low","memory_mb":32},"latency":{"p50_ms":10,"p95_ms":50}},
 "execution": {
   "command": "while true; do echo BOOM; sleep 0.1; done",
@@ -201,7 +195,7 @@ func TestRunWithDepsRoot_DepSignalsPopulated(t *testing.T) {
 "regulation": "behaviour",
 "phase": "on-demand",
 "triggers": [{"on": "manual"}],
-"verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "pass", "expected_severity": "info"}]},
+"use_cases": ["fake-uc"],
 "requires": [{"kind":"sensor","id":"blocking-boom"}],
 "cost": {"class":"cheap","compute":{"cpu":"low","memory_mb":32},"latency":{"p50_ms":10,"p95_ms":50,"timeout_ms":15000}},
 "execution": {
