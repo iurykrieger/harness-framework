@@ -59,15 +59,15 @@ Before doing any drafting, write the **journey ledger** to scratch: enumerate `s
 For each `journey` in `stack.journeys[]`:
 
 1. **Read the source** pointed to by `entry_points[].evidence` — the handler, the service it delegates to, the use-case/domain layer below it.
-2. **Extract the typed contract declarations** that determine `trigger.fixture` and `expected_outcome.fixture`. The handler signature names the request body type, the response type, and any path/query/header param schemas; open each one in source and record its file path. The fixture YAML MUST use the field names declared there — do not infer field names from prose or from the controller body alone. Common contract locations by stack:
-   - **NestJS / TypeScript** — `*.dto.ts`, `*.model.ts`, `*.schema.ts` (Joi/Zod), class-validator decorators, types passed to `@Body(new JoiValidationPipe(...))`.
-   - **Go** — struct definitions adjacent to the handler (often `<feature>/types.go`, `<feature>/dto.go`) with `json:"…"` tags.
-   - **Python** — Pydantic models, dataclasses, marshmallow schemas.
-   - **Java / Kotlin** — `@RequestBody` parameter types + `@JsonProperty` annotations.
-   - **CLI tools** — Cobra command definitions, argparse declarations, click decorators.
-   - **Queue consumers / producers** — Avro/Protobuf schemas, JSON Schema registry refs, message-type declarations.
+2. **Extract the typed contract declarations** that determine `trigger.fixture` and `expected_outcome.fixture`. The handler signature names a request body type, a response type, and (often) path/query/header param schemas — each declared somewhere in source, never inferred from the controller body alone.
 
-   Each contract file becomes an `evidence[]` row on the drafted UseCase with `kind: contract` and a rationale naming the declared type (e.g. *"ChargeCreateRequest DTO declaring payment_method/amount/local_datetime/pix_transaction"*). Evidence rows that point at handler/service/domain code remain `kind: implementation` (the default). When `trigger.fixture` or `expected_outcome.fixture` carries any non-primitive value (map/list), the `write-usecase` validator rejects the draft if no `kind: contract` row is present — there is no escape hatch, cite the inline type declaration on the handler itself if the project genuinely declares the shape there.
+   Resolve those declarations through `<project>/.harness/stack.yaml`, not through a baked-in list of frameworks:
+   - Read `components[]` and `languages[]`. Component names are the literal libraries this project pulls in (look at their `name` and `version`, and at the `evidence[]` rows that show where each is wired up).
+   - For each component that participates in request decoding, validation, response serialization, or message routing for the journey's archetype, recall its idiomatic shape for typed declarations. When the library is unfamiliar, you are unsure of the current convention, or the project pins an older major version, fetch the library's official documentation with `WebFetch`/web search before drafting — do not infer the convention from the controller body.
+   - Use the imports/decorators visible on the handler as the bridge from "component named in stack.yaml" to "declaration file in source": follow the import path, then open the cited type, schema object, struct, message-broker entry, or CLI flag binding.
+   - The fixture YAML MUST use the field names declared there — same casing, same nesting depth, same optionality. Listed primitive enums (status, type, kind) MUST use the literal values declared by the type, not a translation.
+
+   Each declaration file becomes an `evidence[]` row on the drafted UseCase with `kind: contract` and a rationale naming both the declared type and the library that authors it (e.g. *"ChargeCreateRequest declared via <library-from-stack.yaml>; defines payment_method/amount/local_datetime/pix_transaction"*). Evidence rows that point at handler/service/domain code remain `kind: implementation` (the default). When `trigger.fixture` or `expected_outcome.fixture` carries any non-primitive value (map/list), the `write-usecase` validator rejects the draft if no `kind: contract` row is present — there is no escape hatch, cite the inline type declaration on the handler itself if the project genuinely declares the shape there.
 3. **Identify variation sources**:
    - **Input validation** — schemas declared in Zod/Joi/class-validator/Pydantic/struct tags. Each rule that can fail is a variation (`missing-required-field`, `invalid-format`, `out-of-range`, `wrong-type`).
    - **Branches in handler/service** — `if (existing)`, `if (!user)`, `try/catch`, domain-error returns. Each branch is a distinct observable path.
