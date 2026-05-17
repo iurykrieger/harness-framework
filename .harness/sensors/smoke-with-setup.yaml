@@ -1,0 +1,39 @@
+id: smoke-with-setup
+version: 0.1.0
+name: smoke-with-setup
+description: Composes smoke-typed-pipeline via a type:sensor step to exercise inline composition.
+kind: assertion
+type: computational
+regulation: behaviour
+phase: on-demand
+determinism: high
+output: single
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 64
+  latency:
+    p50_ms: 100
+    p95_ms: 1000
+    timeout_ms: 10000
+blind_spots:
+  - Inherits every blind spot of smoke-typed-pipeline; adds no new coverage on its own.
+triggers:
+  - "on": manual
+verification:
+  golden_cases:
+    - fixture: order-valid.json
+      expected_verdict: pass
+      expected_severity: info
+      notes: |
+        Exercises type: sensor inline composition. The inner sensor's
+        aggregate verdict (pass) folds into this sensor's verdict.
+        outputs_passthrough surfaces the inner stream of individuals
+        to the outer signal stream.
+execution:
+  steps:
+    - id: run-pipeline
+      type: sensor
+      ref: smoke-typed-pipeline
+      outputs_passthrough: true

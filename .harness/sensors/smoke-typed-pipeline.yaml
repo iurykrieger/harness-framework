@@ -1,0 +1,55 @@
+id: smoke-typed-pipeline
+version: 0.1.0
+name: smoke-typed-pipeline
+description: Loads a fixture via a shell step, captures its content as a declared output, and asserts the shape from a downstream step.
+kind: assertion
+type: computational
+regulation: behaviour
+phase: on-demand
+determinism: high
+output: single
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 64
+  latency:
+    p50_ms: 50
+    p95_ms: 500
+    timeout_ms: 5000
+blind_spots:
+  - Validates the fixture content via a substring match only; deeper schema validation is out of scope.
+triggers:
+  - "on": manual
+verification:
+  golden_cases:
+    - fixture: order-valid.json
+      expected_verdict: pass
+      expected_severity: info
+      notes: |
+        Exercises the typed-step pipeline end-to-end: with: { fixture }
+        injection into a shell step, declared outputs, ${{ steps.X.outputs.Y }}
+        interpolation into a downstream assert step, and fail-fast aggregation
+        of two step verdicts. Stays hermetic — no network, no external
+        process besides the orchestrator's own shell.
+execution:
+  steps:
+    - id: load-fixture
+      type: shell
+      with:
+        order:
+          fixture: order-valid.json
+      run: |
+        test -f "$HARNESS_FIXTURE_PATH"
+        cat "$HARNESS_FIXTURE_PATH"
+      exit_code_map:
+        "0": pass
+        "1": fail
+      outputs:
+        payload:
+          from: stdout
+    - id: validate-payload-shape
+      type: assert
+      expect:
+        value: "${{ steps.load-fixture.outputs.payload }}"
+        contains: "sku"

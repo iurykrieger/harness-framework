@@ -33,7 +33,7 @@ func withProjectRoot(t *testing.T) string {
 
 func TestRun_HappyPath_Stdin(t *testing.T) {
 	root := withProjectRoot(t)
-	rel := ".harness/sensors/fixtures/assert-x/pass.txt"
+	rel := "assert-x/pass.txt"
 
 	var stdout, stderr bytes.Buffer
 	stdin := bytes.NewBufferString("200\n")
@@ -41,7 +41,7 @@ func TestRun_HappyPath_Stdin(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
-	body, err := os.ReadFile(filepath.Join(root, rel))
+	body, err := os.ReadFile(filepath.Join(root, ".harness/fixtures", rel))
 	if err != nil {
 		t.Fatalf("fixture not written: %v", err)
 	}
@@ -56,10 +56,9 @@ func TestRun_HappyPath_Stdin(t *testing.T) {
 func TestRun_PathEscape_Rejected(t *testing.T) {
 	withProjectRoot(t)
 	for _, bad := range []string{
-		".harness/sensors/fixtures/../escape.txt",
-		".harness/sensors/escape.txt",
-		"/etc/passwd",
+		"../escape.txt",
 		"../outside.txt",
+		"sub/../../escape.txt",
 	} {
 		var stdout, stderr bytes.Buffer
 		stdin := bytes.NewBufferString("payload")
@@ -73,20 +72,38 @@ func TestRun_PathEscape_Rejected(t *testing.T) {
 	}
 }
 
+func TestRun_LegacyPrefix_Rejected(t *testing.T) {
+	withProjectRoot(t)
+	for _, bad := range []string{
+		".harness/sensors/fixtures/assert-x/pass.txt",
+		".harness/fixtures/assert-x/pass.txt",
+	} {
+		var stdout, stderr bytes.Buffer
+		stdin := bytes.NewBufferString("payload")
+		code := runWithStdin([]string{bad}, stdin, &stdout, &stderr)
+		if code == 0 {
+			t.Fatalf("expected non-zero exit for legacy prefix %q, got 0", bad)
+		}
+		if !strings.Contains(stdout.String(), "legacy_fixture_prefix") {
+			t.Fatalf("missing legacy_fixture_prefix for %q: %q", bad, stdout.String())
+		}
+	}
+}
+
 func TestRun_FromFile(t *testing.T) {
 	root := withProjectRoot(t)
 	src := filepath.Join(t.TempDir(), "payload.txt")
 	if err := os.WriteFile(src, []byte("404\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	rel := ".harness/sensors/fixtures/assert-y/fail.txt"
+	rel := "assert-y/fail.txt"
 
 	var stdout, stderr bytes.Buffer
 	code := runWithStdin([]string{"--from-file", src, rel}, bytes.NewBuffer(nil), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
-	body, err := os.ReadFile(filepath.Join(root, rel))
+	body, err := os.ReadFile(filepath.Join(root, ".harness/fixtures", rel))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,21 +114,21 @@ func TestRun_FromFile(t *testing.T) {
 
 func TestRun_CreatesNestedParents(t *testing.T) {
 	root := withProjectRoot(t)
-	rel := ".harness/sensors/fixtures/deeply/nested/case/pass.txt"
+	rel := "deeply/nested/case/pass.txt"
 
 	var stdout, stderr bytes.Buffer
 	code := runWithStdin([]string{rel}, bytes.NewBufferString("ok"), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
-	if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+	if _, err := os.Stat(filepath.Join(root, ".harness/fixtures", rel)); err != nil {
 		t.Fatalf("nested fixture not written: %v", err)
 	}
 }
 
 func TestRun_IdempotentRewrite(t *testing.T) {
 	root := withProjectRoot(t)
-	rel := ".harness/sensors/fixtures/assert-z/pass.txt"
+	rel := "assert-z/pass.txt"
 
 	for i := 0; i < 2; i++ {
 		var stdout, stderr bytes.Buffer
@@ -120,7 +137,7 @@ func TestRun_IdempotentRewrite(t *testing.T) {
 			t.Fatalf("iter %d: exit=%d stderr=%s", i, code, stderr.String())
 		}
 	}
-	body, err := os.ReadFile(filepath.Join(root, rel))
+	body, err := os.ReadFile(filepath.Join(root, ".harness/fixtures", rel))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -29,32 +29,38 @@ const healHintExcerptCap = 120
 //
 //  1. prepare[] (fail-fast, silent — first non-pass step aborts and skips
 //     the main command)
-//  2. execution.command (existing streaming pipeline; emits individual
-//     JSONL Signals)
+//  2. execution.steps[] via lib/exec.Run (engine pipeline; emits individual
+//     JSONL Signals per matched parse: pattern, plus an aggregate the
+//     orchestrator wraps with lifecycle metadata)
 //  3. teardown[] (best-effort, silent — every step runs regardless of
 //     prepare/command outcome)
 //
 // On exit, RunOne emits exactly one aggregate Signal as a JSONL line on
-// stdout. Per-step lifecycle results are folded into metadata.lifecycle.
-// Teardown failures contribute warn evidence but do NOT downgrade the
-// aggregate verdict.
+// stdout. Per-step lifecycle results are folded into metadata.lifecycle;
+// per-engine-step verdicts are folded into metadata.steps[]. Teardown
+// failures contribute warn evidence but do NOT downgrade the aggregate
+// verdict.
 //
-// projectRoot is the user's project directory. All subprocesses (prepare,
-// command, teardown) run with their working directory set to projectRoot so
-// that sensor commands remain correct regardless of the runner's own cwd
-// (e.g. when the runner is invoked via `go run -C <pluginRoot>`).
+// projectRoot is the user's project directory. Prepare/teardown step
+// subprocesses run with cwd=projectRoot; the engine threads projectRoot
+// into the typed sensor's runtime Cwd so shell steps inherit the same.
 //
 // Returns (signal, exitCode). exitCode is 0 unless schema validation
 // fails (1) or input is malformed (2).
 func RunOne(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator, stdout, stderr io.Writer) (map[string]interface{}, int) {
-	return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, true)
+	return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, true, nil, nil)
 }
 
 // runOneImpl is the shared body of RunOne. When emitAggregate is false the
 // final aggregate Signal (and any preflight-failed Signal) is returned to
 // the caller but not written to stdout — the caller is responsible for
 // emitting it at the moment that preserves its ordering constraints.
-func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator, stdout, stderr io.Writer, emitAggregate bool) (map[string]interface{}, int) {
+//
+// fxOverride and envOverride carry per-sub-run overrides resolved from a
+// parent sensor step's with: block; both are nil for top-level invocations.
+// Override entries win on key collision over project-discovered fixtures
+// and the sealed env snapshot.
+func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator, stdout, stderr io.Writer, emitAggregate bool, fxOverride, envOverride map[string]string) (map[string]interface{}, int) {
 	envelope, err := sensor.BuildEnvelope(s.JSON)
 	if err != nil {
 		fmt.Fprintln(stderr, "error: envelope:", err)
@@ -79,6 +85,8 @@ func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v
 	var aggregateMD map[string]interface{}
 	var aggVerdict, aggSeverity string
 	var commandRun string
+	var engineSteps []map[string]interface{}
+	var engineIndividuals []map[string]interface{}
 	var elapsedMS int
 	var stderrExcerpt string
 
@@ -87,71 +95,44 @@ func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v
 		aggVerdict, aggSeverity = "error", "high"
 		commandRun, _ = execMap["command"].(string)
 	} else {
-		// Phase 2: command (existing streaming pipeline).
-		command, _ := execMap["command"].(string)
+		// Phase 2: command (engine pipeline).
 		blocking, _ := execMap["blocking"].(bool)
-		envExtra := readEnvMap(execMap)
+		commandRun, _ = execMap["command"].(string)
 
-		var patterns []signal.Pattern
-		if op, ok := execMap["output_parsing"].(map[string]interface{}); ok {
-			raw, _ := op["patterns"].([]interface{})
-			ps, perr := signal.CompilePatterns(raw)
-			if perr != nil {
-				fmt.Fprintln(stderr, "error:", perr)
-				return nil, 1
+		typed, terr := loadTypedSensor(s, v)
+		if terr != nil {
+			fmt.Fprintln(stderr, "error: load sensor:", terr)
+			aggVerdict, aggSeverity = "error", "high"
+		} else {
+			start := sensor.NowFn()
+			engineRes := runViaEngine(ctx, typed, projectRoot, schemasDir, v, nil, stdout, fxOverride, envOverride)
+			elapsedMS = int(sensor.NowFn().Sub(start) / time.Millisecond)
+			aggVerdict = engineRes.Verdict
+			aggSeverity = engineRes.Severity
+			engineSteps = engineRes.Steps
+			engineIndividuals = engineRes.Individuals
+			stderrExcerpt = stderrFromEngineSteps(engineSteps)
+
+			aggregateMD = map[string]interface{}{
+				"kind":        "aggregate",
+				"output_mode": output,
+				"command":     commandRun,
+				"counts":      signal.CountVerdicts(engineRes.Individuals),
 			}
-			patterns = ps
+			if len(engineSteps) > 0 {
+				aggregateMD["steps"] = engineSteps
+			}
+			if blocking {
+				aggregateMD["blocking"] = true
+			}
+			if hint, ok := buildHealHint(output, aggVerdict, stderrExcerpt); ok {
+				aggregateMD["heal_hint"] = hint
+			}
+			if engineRes.EngineError != nil {
+				fmt.Fprintln(stderr, "error: exec.Run:", engineRes.EngineError)
+				aggregateMD["engine_error"] = engineRes.EngineError.Error()
+			}
 		}
-
-		res, _ := subprocess.StreamSubprocess(ctx, subprocess.StreamConfig{
-			Command:   command,
-			Env:       envExtra,
-			TimeoutMS: timeoutMS,
-			Patterns:  patterns,
-			Envelope:  envelope,
-			Validator: v,
-			Stdout:    stdout,
-			Stderr:    stderr,
-			Dir:       projectRoot,
-		})
-
-		ecMap, _ := execMap["exit_code_map"].([]interface{})
-		exitVerd, exitSev := signal.MapExitCode(res.ExitCode, ecMap)
-		streamVerd, streamSev := signal.MaxStreamVerdict(res.Individuals)
-		agg := signal.Aggregate(signal.AggregateInput{
-			ExitVerdict:    exitVerd,
-			ExitSeverity:   exitSev,
-			StreamVerdict:  streamVerd,
-			StreamSeverity: streamSev,
-			TimedOut:       res.TimedOut,
-			Blocking:       blocking,
-		})
-		aggVerdict, aggSeverity = agg.Verdict, agg.Severity
-		commandRun = command
-		elapsedMS = res.ElapsedMS
-
-		aggregateMD = map[string]interface{}{
-			"kind":        "aggregate",
-			"output_mode": output,
-			"command":     command,
-			"exit_code":   res.ExitCode,
-			"timed_out":   res.TimedOut,
-			"counts":      signal.CountVerdicts(res.Individuals),
-		}
-		if blocking {
-			aggregateMD["blocking"] = true
-		}
-		// Single-mode setup-shape heuristic: when the command failed
-		// and stderr matches a curated heal pattern, surface a
-		// metadata.heal_hint = "<shape>:<excerpt>" so the heal
-		// classifier's fast path (rule_heal_hint) can fire.
-		// Stream-mode failures already surface evidence rationales
-		// that rule_stderr_pattern matches against, so we skip them
-		// here to avoid double-classification noise.
-		if hint, ok := buildHealHint(output, aggVerdict, res.StderrExcerpt); ok {
-			aggregateMD["heal_hint"] = hint
-		}
-		stderrExcerpt = res.StderrExcerpt
 	}
 
 	// Phase 3: teardown (best-effort, runs regardless of prepare/command outcome).
@@ -162,8 +143,6 @@ func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v
 			"kind":        "aggregate",
 			"output_mode": output,
 			"command":     commandRun,
-			"exit_code":   nil,
-			"timed_out":   false,
 			"counts":      map[string]int{"pass": 0, "warn": 0, "fail": 0, "error": 1},
 		}
 	}
@@ -180,9 +159,9 @@ func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v
 
 	// External termination: when ctx was cancelled (SIGINT/SIGTERM via
 	// the runner script's signal handler, or any other caller-initiated
-	// cancellation), exec.CommandContext will have SIGKILLed the
-	// subprocess. Surface this on the aggregate so downstream agents
-	// can distinguish a clean failure from a forced shutdown.
+	// cancellation), the engine's subprocesses will have been killed.
+	// Surface this on the aggregate so downstream agents can distinguish
+	// a clean failure from a forced shutdown.
 	if ctx.Err() != nil {
 		aggregateMD["terminated_externally"] = true
 	}
@@ -197,7 +176,7 @@ func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v
 		"verdict":     aggVerdict,
 		"severity":    aggSeverity,
 		"confidence":  1.0,
-		"evidence":    appendStderrEvidence(buildLifecycleEvidence(prepResults, tdResults), output, aggVerdict, stderrExcerpt),
+		"evidence":    composeEvidence(prepResults, tdResults, engineIndividuals, output, aggVerdict, stderrExcerpt),
 		"cost_actual": map[string]interface{}{"latency_ms": elapsedMS},
 		"metadata":    aggregateMD,
 	}
@@ -216,14 +195,18 @@ func runOneImpl(ctx context.Context, s Sensor, projectRoot, schemasDir string, v
 
 // RunOneWithRoot is RunOne plus runtime persistence. When root is non-nil:
 //
-//   - After cmd.Start() returns, compute run_id = <pid>-<short-uuid8>
-//   - mkdir <run-id>/, open raw.log and signals.log (via subprocess.StreamHandle)
+//   - Before invoking the engine, compute run_id = <orchestrator-pid>-<short-uuid8>
+//     and mkdir <run-id>/.
 //   - Insert a RunningSensorEntry with blocking=<sensor.execution.blocking>
-//   - defer remove the entry on any exit path
+//     keyed on the orchestrator's own PID — the orchestrator process is the
+//     lifecycle boundary; the engine's per-step subprocesses come and go.
+//   - defer remove the entry on any exit path.
+//   - After exec.Run returns, append the aggregate Signal to
+//     <run-id>/signals.log so /tail-sensor sees the final outcome.
 //
-// projectRoot is the user's project directory passed through to all
-// subprocess working-directory fields so sensor commands run from the
-// correct directory regardless of the runner's own cwd.
+// projectRoot is the user's project directory; it is threaded into the
+// engine as the sensor's runtime Cwd so shell steps run from the right
+// directory regardless of the orchestrator's own cwd.
 //
 // When root is nil, behavior is identical to RunOne.
 func RunOneWithRoot(
@@ -231,9 +214,9 @@ func RunOneWithRoot(
 	root *registry.Root, stdout, stderr io.Writer,
 ) (map[string]interface{}, int) {
 	if root == nil {
-		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, true)
+		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, true, nil, nil)
 	}
-	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, true)
+	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, true, nil, nil)
 }
 
 // RunOneWithRootCapture is RunOneWithRoot with the final aggregate
@@ -241,9 +224,8 @@ func RunOneWithRoot(
 // validated, and persisted (to signals.log when root != nil) exactly
 // as in RunOneWithRoot, but it is NOT written to stdout — the caller
 // is responsible for emitting it at the moment that satisfies its
-// ordering constraints. Individual Signals during stream-mode command
-// execution still flow to stdout in real time via the embedded
-// StreamConfig.Stdout, unchanged.
+// ordering constraints. Individual Signals during the engine's stream
+// still flow to stdout in real time, unchanged.
 //
 // Intended for callers that orchestrate blocking-dep teardown after
 // the command finishes and need the requested sensor's aggregate to
@@ -253,9 +235,30 @@ func RunOneWithRootCapture(
 	root *registry.Root, stdout, stderr io.Writer,
 ) (map[string]interface{}, int) {
 	if root == nil {
-		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, false)
+		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, false, nil, nil)
 	}
-	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, false)
+	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, false, nil, nil)
+}
+
+// RunOneWithRootCaptureOverride is RunOneWithRootCapture extended with
+// per-sub-run fixture and env overrides. Intended for the engine's
+// SubrunFunc indirection: a parent sensor step's with: { fixture: ... }
+// entries are merged into the child's fixture pool, and with: { foo: val }
+// scalars are merged into the child's sealed env snapshot, before the
+// child's engine runs. Caller-supplied entries win on key collision over
+// project-discovered fixtures and the inherited shell environment.
+//
+// Both override maps may be nil; in that case the behavior is identical
+// to RunOneWithRootCapture.
+func RunOneWithRootCaptureOverride(
+	ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator,
+	root *registry.Root, stdout, stderr io.Writer,
+	fxOverride, envOverride map[string]string,
+) (map[string]interface{}, int) {
+	if root == nil {
+		return runOneImpl(ctx, s, projectRoot, schemasDir, v, stdout, stderr, false, fxOverride, envOverride)
+	}
+	return runOneWithPersistenceImpl(ctx, s, projectRoot, schemasDir, v, *root, stdout, stderr, false, fxOverride, envOverride)
 }
 
 // runOneWithPersistenceImpl mirrors runOneImpl but persists a <run-id>/
@@ -267,6 +270,7 @@ func RunOneWithRootCapture(
 func runOneWithPersistenceImpl(
 	ctx context.Context, s Sensor, projectRoot, schemasDir string, v *schema.Validator,
 	root registry.Root, stdout, stderr io.Writer, emitAggregate bool,
+	fxOverride, envOverride map[string]string,
 ) (map[string]interface{}, int) {
 	envelope, err := sensor.BuildEnvelope(s.JSON)
 	if err != nil {
@@ -290,7 +294,10 @@ func runOneWithPersistenceImpl(
 	var aggregateMD map[string]interface{}
 	var aggVerdict, aggSeverity string
 	var commandRun string
+	var engineSteps []map[string]interface{}
+	var engineIndividuals []map[string]interface{}
 	var elapsedMS int
+	var stderrExcerpt string
 	// runID is the synthesized <pid>-<short> identifier; populated only
 	// when the command phase actually spawned a subprocess.
 	// runDir is the on-disk <run-id>/ directory path; it is set only when
@@ -298,7 +305,6 @@ func runOneWithPersistenceImpl(
 	// clears runDir to "" so the post-Run signals.log append is skipped.
 	var runID string
 	var runDir string
-	var stderrExcerpt string
 
 	if prepFailed {
 		aggVerdict, aggSeverity = "error", "high"
@@ -306,49 +312,25 @@ func runOneWithPersistenceImpl(
 	} else {
 		command, _ := execMap["command"].(string)
 		blocking, _ := execMap["blocking"].(bool)
-		envExtra := readEnvMap(execMap)
 
-		var patterns []signal.Pattern
-		if op, ok := execMap["output_parsing"].(map[string]interface{}); ok {
-			raw, _ := op["patterns"].([]interface{})
-			ps, perr := signal.CompilePatterns(raw)
-			if perr != nil {
-				fmt.Fprintln(stderr, "error:", perr)
-				return nil, 1
-			}
-			patterns = ps
-		}
-
-		cfg := subprocess.StreamConfig{
-			Command:   command,
-			Env:       envExtra,
-			TimeoutMS: timeoutMS,
-			Patterns:  patterns,
-			Envelope:  envelope,
-			Validator: v,
-			Stdout:    stdout,
-			Stderr:    stderr,
-			Dir:       projectRoot,
-		}
-		handle, startErr := subprocess.Start(ctx, cfg)
-		if startErr != nil {
-			// Couldn't even spawn — fall through to degraded aggregate.
+		typed, terr := loadTypedSensor(s, v)
+		if terr != nil {
+			fmt.Fprintln(stderr, "error: load sensor:", terr)
 			aggVerdict, aggSeverity = "error", "high"
 			commandRun = command
-			fmt.Fprintf(stderr, "error: stream start: %v\n", startErr)
 		} else {
-			// PID known: synthesize run_id and prepare <run-id>/ on disk.
-			// envelope.RunID is updated only after BOTH mkdir and registry
-			// insert succeed (persistOK becomes true). This ensures the
-			// aggregate Signal never claims a run_id whose <run-id>/ directory
-			// does not exist on disk.
-			runID = fmt.Sprintf("%d-%s", handle.PID, uuid.NewString()[:8])
+			// Synthesize run_id using the orchestrator's own PID as the
+			// composite root. With the engine, no single subprocess
+			// owns the run; the orchestrator process IS the lifecycle
+			// boundary, and its PID is what registry consumers should
+			// poll for liveness.
+			holderPID := os.Getpid()
+			runID = fmt.Sprintf("%d-%s", holderPID, uuid.NewString()[:8])
 			runDir = root.RunDir(envelope.SensorID, runID)
 
 			persistOK := true
 			if mkErr := os.MkdirAll(runDir, 0o755); mkErr != nil {
 				fmt.Fprintf(stderr, "warning: mkdir run dir: %v\n", mkErr)
-				_ = handle.Kill()
 				// Clear runDir so the post-Run signals.log append is skipped.
 				runDir = ""
 				persistOK = false
@@ -368,8 +350,8 @@ func runOneWithPersistenceImpl(
 						SensorID:   envelope.SensorID,
 						RunID:      runID,
 						Blocking:   blocking,
-						PID:        handle.PID,
-						PGID:       handle.PGID,
+						PID:        holderPID,
+						PGID:       holderPID,
 						WatcherPID: 0,
 						StartedAt:  now,
 						Command:    command,
@@ -379,7 +361,6 @@ func runOneWithPersistenceImpl(
 					return registry.Save(root, rs)
 				}); regErr != nil {
 					fmt.Fprintf(stderr, "warning: registry insert: %v\n", regErr)
-					_ = handle.Kill()
 					// Remove the just-created run dir so no orphan is left on disk.
 					// Best-effort: ignore removal errors.
 					_ = os.RemoveAll(runDir)
@@ -410,42 +391,35 @@ func runOneWithPersistenceImpl(
 				})
 			}()
 
-			if persistOK {
-				handle.SetRunDir(runDir)
-				handle.SetEnvelope(envelope)
-			}
-
-			res := handle.Run()
-			ecMap, _ := execMap["exit_code_map"].([]interface{})
-			exitVerd, exitSev := signal.MapExitCode(res.ExitCode, ecMap)
-			streamVerd, streamSev := signal.MaxStreamVerdict(res.Individuals)
-			agg := signal.Aggregate(signal.AggregateInput{
-				ExitVerdict:    exitVerd,
-				ExitSeverity:   exitSev,
-				StreamVerdict:  streamVerd,
-				StreamSeverity: streamSev,
-				TimedOut:       res.TimedOut,
-				Blocking:       blocking,
-			})
-			aggVerdict, aggSeverity = agg.Verdict, agg.Severity
+			start := sensor.NowFn()
+			engineRes := runViaEngine(ctx, typed, projectRoot, schemasDir, v, &root, stdout, fxOverride, envOverride)
+			elapsedMS = int(sensor.NowFn().Sub(start) / time.Millisecond)
+			aggVerdict = engineRes.Verdict
+			aggSeverity = engineRes.Severity
+			engineSteps = engineRes.Steps
+			engineIndividuals = engineRes.Individuals
 			commandRun = command
-			elapsedMS = res.ElapsedMS
+			stderrExcerpt = stderrFromEngineSteps(engineSteps)
 
 			aggregateMD = map[string]interface{}{
 				"kind":        "aggregate",
 				"output_mode": output,
 				"command":     command,
-				"exit_code":   res.ExitCode,
-				"timed_out":   res.TimedOut,
-				"counts":      signal.CountVerdicts(res.Individuals),
+				"counts":      signal.CountVerdicts(engineRes.Individuals),
+			}
+			if len(engineSteps) > 0 {
+				aggregateMD["steps"] = engineSteps
 			}
 			if blocking {
 				aggregateMD["blocking"] = true
 			}
-			if hint, ok := buildHealHint(output, aggVerdict, res.StderrExcerpt); ok {
+			if hint, ok := buildHealHint(output, aggVerdict, stderrExcerpt); ok {
 				aggregateMD["heal_hint"] = hint
 			}
-			stderrExcerpt = res.StderrExcerpt
+			if engineRes.EngineError != nil {
+				fmt.Fprintln(stderr, "error: exec.Run:", engineRes.EngineError)
+				aggregateMD["engine_error"] = engineRes.EngineError.Error()
+			}
 		}
 	}
 
@@ -457,8 +431,6 @@ func runOneWithPersistenceImpl(
 			"kind":        "aggregate",
 			"output_mode": output,
 			"command":     commandRun,
-			"exit_code":   nil,
-			"timed_out":   false,
 			"counts":      map[string]int{"pass": 0, "warn": 0, "fail": 0, "error": 1},
 		}
 	}
@@ -488,7 +460,7 @@ func runOneWithPersistenceImpl(
 		"verdict":     aggVerdict,
 		"severity":    aggSeverity,
 		"confidence":  1.0,
-		"evidence":    appendStderrEvidence(buildLifecycleEvidence(prepResults, tdResults), output, aggVerdict, stderrExcerpt),
+		"evidence":    composeEvidence(prepResults, tdResults, engineIndividuals, output, aggVerdict, stderrExcerpt),
 		"cost_actual": map[string]interface{}{"latency_ms": elapsedMS},
 		"metadata":    aggregateMD,
 	}
@@ -677,15 +649,39 @@ func buildStderrEvidence(output, verdict, stderrText string) []interface{} {
 	return out
 }
 
-// appendStderrEvidence concatenates lifecycle evidence with stderr-tail
-// evidence for single-output failures. Returns the lifecycle evidence
-// unchanged when buildStderrEvidence has nothing to add.
-func appendStderrEvidence(lifecycleEvidence []interface{}, output, verdict, stderrText string) []interface{} {
-	extra := buildStderrEvidence(output, verdict, stderrText)
-	if len(extra) == 0 {
-		return lifecycleEvidence
+// composeEvidence composes the orchestrator's wrapper-aggregate
+// evidence from three sources: lifecycle phase results (prepare +
+// teardown), the engine's individual signals, and (for single-mode
+// failures) the captured stderr tail. The shape mirrors the legacy
+// pipeline so heal-sensor classifiers continue to match
+// rationale/excerpt entries without code changes.
+func composeEvidence(prep, td []interface{}, individuals []map[string]interface{}, output, verdict, stderrText string) []interface{} {
+	out := buildLifecycleEvidence(prep, td)
+	if out == nil {
+		out = []interface{}{}
 	}
-	return append(lifecycleEvidence, extra...)
+	if verdict == "fail" || verdict == "error" {
+		if extra := signal.SelectTopEvidence(individuals, 5); len(extra) > 0 {
+			out = append(out, extra...)
+		}
+	}
+	if extra := buildStderrEvidence(output, verdict, stderrText); len(extra) > 0 {
+		out = append(out, extra...)
+	}
+	return out
+}
+
+// stderrFromEngineSteps extracts the stderr_excerpt of the first
+// engine step that carries one. The orchestrator surfaces it through
+// the same heal_hint / stderr-evidence helpers the legacy single-
+// command pipeline used.
+func stderrFromEngineSteps(steps []map[string]interface{}) string {
+	for _, step := range steps {
+		if s, ok := step["stderr_excerpt"].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // buildHealHint synthesises a metadata.heal_hint = "<shape>:<excerpt>"
@@ -736,16 +732,6 @@ func firstMatchingLine(stderrText string) string {
 		}
 	}
 	return ""
-}
-
-func readEnvMap(execMap map[string]interface{}) map[string]string {
-	out := map[string]string{}
-	if envObj, ok := execMap["env"].(map[string]interface{}); ok {
-		for k, val := range envObj {
-			out[k] = fmt.Sprintf("%v", val)
-		}
-	}
-	return out
 }
 
 func readTimeoutMS(s map[string]interface{}) int {

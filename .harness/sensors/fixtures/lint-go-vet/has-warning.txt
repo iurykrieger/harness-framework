@@ -1,3 +1,0 @@
-# github.com/iurykrieger/harness-framework/lib/example
-./lib/example/foo.go:12:6: result of fmt.Sprintf call not used
-./lib/example/foo.go:18:2: unreachable code
