@@ -59,6 +59,12 @@ jobs:
       - name: Test write-stack
         run: go test -race -count=1 -tags=write_stack ./skills/detect-sensors/scripts/...
 
+      - name: Vet (read_usecases build tag)
+        run: go vet -tags=read_usecases ./...
+
+      - name: Test read-usecases
+        run: go test -race -count=1 -tags=read_usecases ./skills/create-sensor/scripts/...
+
       - name: Build computational runner
         run: go build -tags=run_computational -o /dev/null ./skills/run-sensor/scripts
 
