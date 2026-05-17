@@ -41,6 +41,24 @@ type Sensor struct {
 	// step.ExecContext.Cwd.
 	Cwd string `json:"-"`
 
+	// RunDir is the persistent .harness/runtime/<id>/<run-id>/ directory
+	// the orchestrator allocated for this sensor invocation. Subprocess-
+	// spawning steps tee verbatim stdout+stderr into <RunDir>/raw.log
+	// and append matched individual signals into <RunDir>/signals.log.
+	// Populated by the caller (orchestrator) only when persistence is
+	// active; absent from the on-disk schema and therefore tagged
+	// `json:"-"`. The engine threads it into step.ExecContext.RunDir.
+	RunDir string `json:"-"`
+
+	// Envelope is the run-scoped Signal scaffold (sensor_id, version,
+	// run_id, started_at, sensor_type) the orchestrator built for this
+	// sensor invocation. Subprocess-spawning steps stamp it onto each
+	// matched individual signal so persisted entries identify their
+	// origin. Populated by the caller (orchestrator) before exec.Run;
+	// absent from the on-disk schema and therefore tagged `json:"-"`.
+	// The engine threads it into step.ExecContext.Envelope.
+	Envelope Envelope `json:"-"`
+
 	// Warnings carries non-fatal advisory diagnostics produced by
 	// cross-field validation (lib/sensor/validate.go). Runtime-only;
 	// absent from the on-disk schema and never serialized.

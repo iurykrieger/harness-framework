@@ -43,6 +43,8 @@ func Run(ctx context.Context, s *sensor.Sensor, subrun step.SubrunFunc, env map[
 		Env:      env,
 		Steps:    map[string]*step.StepResult{},
 		Cwd:      s.Cwd,
+		RunDir:   s.RunDir,
+		Envelope: s.Envelope,
 	}
 	var out []map[string]interface{}
 	perStepDetails := []map[string]interface{}{}

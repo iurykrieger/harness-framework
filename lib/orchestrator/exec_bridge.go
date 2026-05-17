@@ -119,6 +119,16 @@ func projectTypedSensor(j map[string]interface{}) (*sensor.Sensor, error) {
 // sensor's runtime Cwd, which the shell step inherits as the
 // subprocess working directory (step.ExecContext.Cwd → StreamConfig.Dir).
 //
+// runDir is the persistent .harness/runtime/<id>/<run-id>/ directory the
+// orchestrator created for this invocation; the engine threads it into
+// ExecContext so subprocess-spawning steps append verbatim output to
+// <runDir>/raw.log and matched individuals to <runDir>/signals.log.
+// Empty when called from the non-persistence path (RunOne without a root).
+//
+// envelope is the run-scoped Signal scaffold the orchestrator built for
+// this invocation; the engine threads it into ExecContext so subprocess-
+// spawning steps stamp it onto each matched individual signal.
+//
 // fxOverride and envOverride carry per-sub-run overrides resolved from a
 // parent sensor step's with: block. Both are merged after the
 // project-discovered pool and the sealed env snapshot, so caller-supplied
@@ -126,7 +136,8 @@ func projectTypedSensor(j map[string]interface{}) (*sensor.Sensor, error) {
 func runViaEngine(
 	ctx context.Context,
 	typed *sensor.Sensor,
-	projectRoot, schemasDir string,
+	projectRoot, schemasDir, runDir string,
+	envelope sensor.Envelope,
 	v *schema.Validator,
 	root *registry.Root,
 	stdout io.Writer,
@@ -157,6 +168,8 @@ func runViaEngine(
 	}
 	typed.Fixtures = pool
 	typed.Cwd = projectRoot
+	typed.RunDir = runDir
+	typed.Envelope = envelope
 
 	envMap := buildSealedEnv(typed)
 	// Merge env override on top of the sealed snapshot. Parent step's

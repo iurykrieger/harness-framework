@@ -567,6 +567,121 @@ func TestRunOne_WithRoot_RegistryInsertFailureCleansUpDir(t *testing.T) {
 	}
 }
 
+// TestRunOne_WithRoot_StreamSensorPersistsIndividualsAndRawLog exercises the
+// streaming persistence contract end-to-end: a stream-mode sensor whose
+// output_parsing.patterns match three lines must persist all three individual
+// Signals plus the orchestrator's aggregate (LAST line) to
+// <run-id>/signals.log, and the subprocess's verbatim stdout must land in
+// <run-id>/raw.log. Regression for the bug where shell-step streaming wrote
+// raw.log and per-individual signals.log to a temp dir that was removed at
+// the end of the step, leaving only the orchestrator's wrapper aggregate on
+// disk.
+func TestRunOne_WithRoot_StreamSensorPersistsIndividualsAndRawLog(t *testing.T) {
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, ".harness", "sensors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sensorPath := filepath.Join(proj, ".harness", "sensors", "warn-stream.yaml")
+	if err := os.WriteFile(sensorPath, []byte(`{
+      "id": "warn-stream",
+      "version": "0.0.0",
+      "name": "warn stream",
+      "description": "emits three WARN lines via printf",
+      "kind": "observation",
+      "type": "computational",
+      "regulation": "behaviour",
+      "phase": "on-demand",
+      "determinism": "high",
+      "output": "stream",
+      "cost": {
+        "class": "cheap",
+        "compute": {"cpu": "low", "memory_mb": 32},
+        "latency": {"p50_ms": 10, "p95_ms": 50, "timeout_ms": 5000}
+      },
+      "triggers": [{"on": "manual"}],
+      "verification": {"golden_cases": [{"fixture": "smoke", "expected_verdict": "warn", "expected_severity": "medium"}]},
+      "execution": {
+        "command": "printf 'WARN one\nWARN two\nWARN three\n'",
+        "exit_code_map": [{"exit_code": 0, "verdict": "pass", "severity": "info"}],
+        "output_parsing": {"patterns": [{"regex": "^WARN ", "verdict": "warn", "severity": "medium"}]}
+      }
+    }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := registry.NewRoot(proj)
+	s, err := loadSensorForTest(sensorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schemasDir := schematest.RepoSchemasDir(t)
+	v, _ := schema.NewValidator(schemasDir)
+
+	var stdout, stderr bytes.Buffer
+	sig, code := RunOneWithRoot(context.Background(), s, proj, schemasDir, v, &root, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d, stderr=%s", code, stderr.String())
+	}
+	runID, _ := sig["run_id"].(string)
+	if runID == "" {
+		t.Fatal("aggregate signal missing run_id")
+	}
+
+	// signals.log must contain three individuals plus the aggregate as the
+	// LAST line — four lines total. Before the fix, it carried only the
+	// aggregate, masking every individual the streamer matched.
+	sigsPath := root.SignalsLogRun("warn-stream", runID)
+	data, readErr := os.ReadFile(sigsPath)
+	if readErr != nil {
+		t.Fatalf("read signals.log: %v", readErr)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("signals.log lines = %d, want 4 (3 individuals + 1 aggregate); got:\n%s", len(lines), string(data))
+	}
+	for i, line := range lines[:3] {
+		var ind map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &ind); err != nil {
+			t.Fatalf("line %d not valid JSON: %v\n%q", i, err, line)
+		}
+		md, _ := ind["metadata"].(map[string]interface{})
+		if md == nil || md["kind"] != "individual" {
+			t.Errorf("line %d metadata.kind = %v, want individual", i, md["kind"])
+		}
+		if ind["verdict"] != "warn" {
+			t.Errorf("line %d verdict = %v, want warn", i, ind["verdict"])
+		}
+		if got, _ := ind["sensor_id"].(string); got != "warn-stream" {
+			t.Errorf("line %d sensor_id = %q, want warn-stream", i, got)
+		}
+		if got, _ := ind["run_id"].(string); got != runID {
+			t.Errorf("line %d run_id = %q, want %q", i, got, runID)
+		}
+	}
+	var aggregate map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[3]), &aggregate); err != nil {
+		t.Fatalf("aggregate line not valid JSON: %v\n%q", err, lines[3])
+	}
+	aggMD, _ := aggregate["metadata"].(map[string]interface{})
+	if aggMD == nil || aggMD["kind"] != "aggregate" {
+		t.Errorf("aggregate metadata.kind = %v, want aggregate", aggMD["kind"])
+	}
+
+	// raw.log must contain the verbatim subprocess output. Before the fix,
+	// raw.log was written to a per-step temp dir that was removed at step
+	// teardown, so the persistent <run-id>/ never received it.
+	rawPath := root.RawLogRun("warn-stream", runID)
+	rawData, rawErr := os.ReadFile(rawPath)
+	if rawErr != nil {
+		t.Fatalf("read raw.log: %v", rawErr)
+	}
+	for _, want := range []string{"WARN one", "WARN two", "WARN three"} {
+		if !strings.Contains(string(rawData), want) {
+			t.Errorf("raw.log missing %q; got:\n%s", want, string(rawData))
+		}
+	}
+}
+
 // loadSensorForTest is a tiny helper to load a Sensor struct as RunOne expects.
 func loadSensorForTest(path string) (Sensor, error) {
 	b, err := os.ReadFile(path)
