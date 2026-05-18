@@ -71,6 +71,9 @@ func ValidateAndPersist(
 	if err := CheckFixtureContractEvidence(&uc); err != nil {
 		return "", err
 	}
+	if err := CheckFixtureRefExists(&uc, projectRoot); err != nil {
+		return "", err
+	}
 
 	id, ok := doc["id"].(string)
 	if !ok || id == "" {
