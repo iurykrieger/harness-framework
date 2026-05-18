@@ -33,13 +33,7 @@ evidence:
     argv contract used by the trigger fixture.
 expected_outcome:
   fixture:
-    last_jsonl_signal:
-      metadata:
-        kind: sensor_already_exists
-        path: /tmp/projectG/.harness/sensors/assert-charge-201.yaml
-      sensor_id: write-sensor
-      severity: high
-      verdict: error
+    ref: create-sensor/create-sensor-already-exists/outcome.json
   invariants:
   - metadata.kind == "sensor_already_exists".
   - Exit code is 2.
@@ -57,15 +51,7 @@ tags:
 - framework-create-sensor
 trigger:
   fixture:
-    argv:
-    - write-sensor
-    - --out=/tmp/projectG/.harness/sensors
-    - /tmp/draft.yaml
-    draft_payload:
-      id: assert-charge-201
-      version: 0.1.0
-    project_state:
-      existing_file: .harness/sensors/assert-charge-201.yaml
+    ref: create-sensor/create-sensor-already-exists/trigger.json
   shape: cli-argv
   summary: Run create-sensor's write-sensor with an id whose YAML already exists in
     <outDir>.

@@ -28,8 +28,9 @@ evidence:
   rationale: Declares the sensor schema each draft must satisfy.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_substring: /lint-go-vet-computational.yaml
+    inline:
+      exit_code: 0
+      stdout_substring: /lint-go-vet-computational.yaml
   invariants:
   - Exit code is 0.
   - <out>/<id>.yaml exists after the run.
@@ -47,30 +48,7 @@ tags:
 - framework-detect-sensors
 trigger:
   fixture:
-    argv:
-    - write-sensor
-    - --out=/tmp/projectE/.harness/sensors
-    - /tmp/draft-lint.yaml
-    draft_payload:
-      cost:
-        compute: low
-        latency:
-          timeout_ms: 60000
-      description: Run `go vet ./...` over the repo.
-      execution:
-        command: go vet ./...
-        exit_code_map:
-        - exit_code: 0
-          severity: info
-          verdict: pass
-        - exit_code: 1
-          severity: high
-          verdict: fail
-      id: lint-go-vet-computational
-      kind: observation
-      output: single
-      type: computational
-      version: 0.1.0
+    ref: detect-sensors/detect-sensors-sensor-success/trigger.json
   shape: cli-argv
   summary: Run write-sensor with --out=<dir> against a schema-valid sensor draft.
 version: 0.1.0

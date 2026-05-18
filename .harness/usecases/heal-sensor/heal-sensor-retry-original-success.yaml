@@ -28,8 +28,9 @@ evidence:
     the script reads.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_forwarded: true
+    inline:
+      exit_code: 0
+      stdout_forwarded: true
   invariants:
   - Exit code matches the runner's exit code.
   - The selected build tag is "run_computational" for type=computational, "run_inferential"
@@ -46,12 +47,7 @@ tags:
 - framework-heal-sensor
 trigger:
   fixture:
-    argv:
-    - retry-original
-    - --sensor=/tmp/projectH/.harness/sensors/lint-go-vet-computational.yaml
-    env:
-      CLAUDE_PLUGIN_ROOT: /path/to/harness-framework
-    runner_exit_code: 0
+    ref: heal-sensor/heal-sensor-retry-original-success/trigger.json
   shape: cli-argv
   summary: Run retry-original on a computational sensor whose runner exits 0 after
     step 2 + step 3 fixes.

@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "run-computational",
+    "lint-go-vet-computational"
+  ],
+  "env": {
+    "HARNESS_REGISTRY_ROOT": "/tmp/projectA"
+  }
+}

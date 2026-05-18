@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "apply-safe",
+    "--plan=/tmp/plan.json",
+    "--sensor=/tmp/failing-sensor.yaml",
+    "--root=/tmp/projectH"
+  ],
+  "plan_payload": {
+    "auto_apply": [
+      {
+        "action": "run_shell",
+        "command": "docker compose up -d postgres"
+      }
+    ]
+  }
+}

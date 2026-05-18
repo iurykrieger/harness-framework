@@ -1,0 +1,8 @@
+{
+  "metadata": {
+    "kind": "tail_no_registry"
+  },
+  "sensor_id": "serve-app-blocking",
+  "severity": "high",
+  "verdict": "error"
+}

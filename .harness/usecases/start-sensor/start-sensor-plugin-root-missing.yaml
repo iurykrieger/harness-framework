@@ -27,12 +27,7 @@ evidence:
     id argv shape.
 expected_outcome:
   fixture:
-    metadata:
-      cause: plugin_root_missing
-      kind: failed
-    sensor_id: serve-app-blocking
-    severity: high
-    verdict: error
+    ref: start-sensor/start-sensor-plugin-root-missing/outcome.json
   invariants:
   - metadata.cause == "plugin_root_missing".
   - Exit code is 1.
@@ -50,11 +45,7 @@ tags:
 - framework-start-sensor
 trigger:
   fixture:
-    argv:
-    - start-sensor
-    - serve-app-blocking
-    env:
-      CLAUDE_PLUGIN_ROOT: ""
+    ref: start-sensor/start-sensor-plugin-root-missing/trigger.json
   shape: cli-argv
   summary: Invoke start-sensor with CLAUDE_PLUGIN_ROOT unset.
 version: 0.1.0

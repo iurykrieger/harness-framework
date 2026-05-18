@@ -340,13 +340,17 @@ func TestValidator_UseCaseTarget_AcceptsValidInstance(t *testing.T) {
 		"trigger": map[string]interface{}{
 			"summary": "POST /users",
 			"shape":   "HTTP request",
-			"fixture": map[string]interface{}{"method": "POST", "path": "/users"},
+			"fixture": map[string]interface{}{
+				"inline": map[string]interface{}{"method": "POST", "path": "/users"},
+			},
 		},
 		"behavior": map[string]interface{}{"summary": "validates and persists"},
 		"expected_outcome": map[string]interface{}{
 			"summary": "201 created",
 			"shape":   "HTTP response",
-			"fixture": map[string]interface{}{"status": 201},
+			"fixture": map[string]interface{}{
+				"inline": map[string]interface{}{"status": 201},
+			},
 		},
 		"evidence": []interface{}{
 			map[string]interface{}{"file": "src/users/controller.ts", "rationale": "handler"},

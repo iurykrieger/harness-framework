@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "retry-original",
+    "--sensor=/tmp/projectH/.harness/sensors/lint-go-vet-computational.yaml"
+  ],
+  "env": {
+    "CLAUDE_PLUGIN_ROOT": ""
+  }
+}

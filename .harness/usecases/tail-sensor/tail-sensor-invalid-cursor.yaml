@@ -26,11 +26,7 @@ evidence:
     fixture.
 expected_outcome:
   fixture:
-    metadata:
-      kind: tail_invalid_cursor
-    sensor_id: serve-app-blocking
-    severity: high
-    verdict: error
+    ref: tail-sensor/tail-sensor-invalid-cursor/outcome.json
   invariants:
   - metadata.kind == "tail_invalid_cursor".
   - Exit code is 1.
@@ -47,10 +43,7 @@ tags:
 - framework-tail-sensor
 trigger:
   fixture:
-    argv:
-    - tail-sensor
-    - serve-app-blocking
-    - "-3"
+    ref: tail-sensor/tail-sensor-invalid-cursor/trigger.json
   shape: cli-argv
   summary: Invoke tail-sensor with a cursor that is not a non-negative integer.
 version: 0.1.0

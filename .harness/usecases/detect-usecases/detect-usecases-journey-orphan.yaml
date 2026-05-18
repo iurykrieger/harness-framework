@@ -31,9 +31,10 @@ evidence:
   rationale: Declares the Journey shape whose id field is the cross-check anchor.
 expected_outcome:
   fixture:
-    exit_code: 1
-    file_written: false
-    stderr_substring: journey_reference_orphan
+    inline:
+      exit_code: 1
+      file_written: false
+      stderr_substring: journey_reference_orphan
   invariants:
   - Exit code is 1.
   - stderr names the orphan journey id.
@@ -51,17 +52,7 @@ tags:
 - framework-detect-usecases
 trigger:
   fixture:
-    argv:
-    - write-usecase
-    - --out=/tmp/projectF/.harness/usecases
-    - --project-root=/tmp/projectF
-    - /tmp/orphan-journey-draft.yaml
-    draft_payload:
-      id: ghost-usecase
-      journey_id: deleted-journey
-    stack_state:
-      journeys:
-      - id: user-registration
+    ref: detect-usecases/detect-usecases-journey-orphan/trigger.json
   shape: cli-argv
   summary: Run write-usecase with a draft.journey_id that no journey in stack.yaml
     declares.

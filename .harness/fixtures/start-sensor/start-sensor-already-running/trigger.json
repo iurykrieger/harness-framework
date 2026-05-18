@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "start-sensor",
+    "serve-app-blocking"
+  ],
+  "registry_state": {
+    "entries": [
+      {
+        "blocking": true,
+        "pid": 41,
+        "pid_alive": true,
+        "run_id": "41-aaaabbbb",
+        "sensor_id": "serve-app-blocking"
+      }
+    ]
+  }
+}

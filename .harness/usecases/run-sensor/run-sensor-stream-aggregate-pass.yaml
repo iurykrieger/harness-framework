@@ -29,20 +29,7 @@ evidence:
     that gate this branch.
 expected_outcome:
   fixture:
-    final_aggregate:
-      metadata:
-        counts:
-          error: 0
-          fail: 0
-          pass: 3
-          warn: 0
-        exit_code: 0
-        kind: aggregate
-        output_mode: stream
-        timed_out: false
-      severity: info
-      verdict: pass
-    individuals_count: 3
+    ref: run-sensor/run-sensor-stream-aggregate-pass/outcome.json
   invariants:
   - The aggregate Signal is the LAST JSONL line written to stdout.
   - aggregate.metadata.counts sums equal the number of individual Signals emitted.
@@ -59,11 +46,7 @@ tags:
 - framework-run-sensor
 trigger:
   fixture:
-    argv:
-    - run-computational
-    - go-test-verbose-computational
-    env:
-      HARNESS_REGISTRY_ROOT: /tmp/projectB
+    ref: run-sensor/run-sensor-stream-aggregate-pass/trigger.json
   shape: cli-argv
   summary: Invoke run-computational with a streaming sensor whose subprocess exits
     0 and only emits pattern-matched pass lines.

@@ -30,9 +30,10 @@ evidence:
     by the trigger fixture.
 expected_outcome:
   fixture:
-    exit_code: 2
-    stderr_substring: 'error: resolve:'
-    stdout: ""
+    inline:
+      exit_code: 2
+      stderr_substring: 'error: resolve:'
+      stdout: ""
   invariants:
   - Exit code is 2.
   - 'Stderr leads with "error: resolve:".'
@@ -48,9 +49,7 @@ tags:
 - framework-run-sensor
 trigger:
   fixture:
-    argv:
-    - run-computational
-    - does-not-exist
+    ref: run-sensor/run-sensor-missing-sensor/trigger.json
   shape: cli-argv
   summary: Invoke run-computational with an id for which no .harness/sensors/<id>.yaml
     exists.

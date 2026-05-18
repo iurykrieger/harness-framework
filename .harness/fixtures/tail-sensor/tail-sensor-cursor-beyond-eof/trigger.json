@@ -1,0 +1,8 @@
+{
+  "argv": [
+    "tail-sensor",
+    "serve-app-blocking",
+    "10"
+  ],
+  "signals_log_lines": 5
+}

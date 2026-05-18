@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "stop-sensor",
+    "serve-app-blocking"
+  ],
+  "env": {
+    "HARNESS_REGISTRY_ROOT": "/tmp/projectD"
+  },
+  "registry_state": {
+    "file_exists": false
+  }
+}

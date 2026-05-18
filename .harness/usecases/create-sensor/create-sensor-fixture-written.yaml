@@ -33,13 +33,7 @@ evidence:
     target argv contract used by the trigger fixture.
 expected_outcome:
   fixture:
-    last_jsonl_signal:
-      metadata:
-        kind: fixture_written
-        path: /tmp/projectG/.harness/fixtures/order-valid.json
-      sensor_id: write-fixture
-      severity: info
-      verdict: pass
+    ref: create-sensor/create-sensor-fixture-written/outcome.json
   invariants:
   - metadata.kind == "fixture_written".
   - Exit code is 0.
@@ -59,11 +53,7 @@ tags:
 - framework-create-sensor
 trigger:
   fixture:
-    argv:
-    - write-fixture
-    - order-valid.json
-    stdin_payload: |
-      {"id":"42","items":[]}
+    ref: create-sensor/create-sensor-fixture-written/trigger.json
   shape: cli-argv
   summary: Run write-fixture with a safe relative target and a JSON payload on stdin.
 version: 0.1.0

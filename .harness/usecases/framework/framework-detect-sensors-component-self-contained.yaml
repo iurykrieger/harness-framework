@@ -12,9 +12,7 @@ trigger:
   shape: harness skill invocation
   summary: /detect-sensors completes Phase A on a project with at least one detectable Component.
   fixture:
-    project_state:
-      go.mod: present
-      .harness/stack.yaml: absent
+    ref: framework/framework-detect-sensors-component-self-contained/trigger.json
 behavior:
   summary: |
     Phase A scans manifests + deploy/observability artifacts,
@@ -29,11 +27,7 @@ expected_outcome:
   shape: One persisted .harness/stack.yaml + schema validation pass
   summary: stack.yaml exists, parses against schemas/stack.yaml, and every Component has all 3 self-containment fields non-empty.
   fixture:
-    persisted_file: .harness/stack.yaml
-    every_component:
-      category: non-empty string
-      capabilities: array with >= 1 entry
-      observable_surface: array with >= 1 entry
+    ref: framework/framework-detect-sensors-component-self-contained/outcome.json
   invariants:
     - .harness/stack.yaml parses against schemas/stack.yaml.
     - For every entry in components[], `.category` is a non-empty string.
@@ -43,7 +37,8 @@ expected_outcome:
     - Creates .harness/stack.yaml.
 evidence:
   - file: schemas/stack.yaml
-    rationale: Schema defines the 3 optional self-containment fields on $defs/Component.
+    kind: contract
+    rationale: Schema defines the 3 optional self-containment fields on $defs/Component; the outcome fixture keys match these field names.
   - file: skills/detect-sensors/SKILL.md
     rationale: Phase A prose instructs the agent to populate all 3 fields per Component.
   - file: lib/stack/shape.go

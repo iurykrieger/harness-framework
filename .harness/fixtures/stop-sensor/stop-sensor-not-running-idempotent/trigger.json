@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "stop-sensor",
+    "serve-app-blocking"
+  ],
+  "registry_state": {
+    "entries": [],
+    "file_exists": true
+  }
+}

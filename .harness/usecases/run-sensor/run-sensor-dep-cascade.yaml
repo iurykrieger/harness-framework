@@ -34,14 +34,7 @@ evidence:
     dep DAG.
 expected_outcome:
   fixture:
-    last_jsonl_signal:
-      metadata:
-        failed_dep_id: smoke-checks
-        failed_dep_verdict: fail
-        kind: cascade
-      sensor_id: integration-tests
-      severity: high
-      verdict: fail
+    ref: run-sensor/run-sensor-dep-cascade/outcome.json
   invariants:
   - The cascade Signal is the LAST JSONL line on stdout.
   - metadata.kind == "cascade".
@@ -60,16 +53,7 @@ tags:
 - framework-run-sensor
 trigger:
   fixture:
-    argv:
-    - run-computational
-    - integration-tests
-    sensor_graph:
-      integration-tests:
-        depends_on:
-        - smoke-checks
-      smoke-checks:
-        execution:
-          command: exit 1
+    ref: run-sensor/run-sensor-dep-cascade/trigger.json
   shape: cli-argv
   summary: Invoke run-computational with a sensor whose dep aggregate is fail.
 version: 0.1.0

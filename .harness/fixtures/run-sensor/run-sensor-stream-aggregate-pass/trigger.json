@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "run-computational",
+    "go-test-verbose-computational"
+  ],
+  "env": {
+    "HARNESS_REGISTRY_ROOT": "/tmp/projectB"
+  }
+}

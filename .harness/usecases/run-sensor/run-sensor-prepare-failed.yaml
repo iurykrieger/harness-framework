@@ -29,17 +29,7 @@ evidence:
     by the lifecycle.
 expected_outcome:
   fixture:
-    final_aggregate:
-      metadata:
-        cause: prepare_failed
-        kind: aggregate
-        lifecycle:
-          prepare:
-          - command: docker compose up -d postgres
-            exit_code: 1
-            verdict: fail
-      severity: high
-      verdict: fail
+    ref: run-sensor/run-sensor-prepare-failed/outcome.json
   invariants:
   - aggregate.verdict == "fail".
   - metadata.lifecycle.prepare contains exactly the executed prepare entries (fail-fast
@@ -58,16 +48,7 @@ tags:
 - framework-run-sensor
 trigger:
   fixture:
-    argv:
-    - run-computational
-    - integration-test-with-fixture-load
-    prepare_step_0_exit: 1
-    sensor:
-      execution:
-        command: go test ./tests/...
-        prepare:
-        - command: docker compose up -d postgres
-        - command: ./scripts/load-fixtures.sh
+    ref: run-sensor/run-sensor-prepare-failed/trigger.json
   shape: cli-argv
   summary: Run a sensor whose first prepare[] step exits non-zero.
 version: 0.1.0

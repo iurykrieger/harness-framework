@@ -26,12 +26,7 @@ evidence:
   rationale: Discriminator allOf blocks whose violation produces the validation error.
 expected_outcome:
   fixture:
-    last_jsonl_signal:
-      metadata:
-        kind: schema_invalid
-      sensor_id: write-sensor
-      severity: high
-      verdict: error
+    ref: create-sensor/create-sensor-schema-invalid/outcome.json
   invariants:
   - metadata.kind == "schema_invalid".
   - Exit code is 1.
@@ -49,14 +44,7 @@ tags:
 - framework-create-sensor
 trigger:
   fixture:
-    argv:
-    - write-sensor
-    - --out=/tmp/projectG/.harness/sensors
-    - /tmp/bad-draft.yaml
-    draft_payload:
-      id: incomplete-inferential
-      output: single
-      type: inferential
+    ref: create-sensor/create-sensor-schema-invalid/trigger.json
   shape: cli-argv
   summary: Run create-sensor's write-sensor against a draft missing a discriminator-required
     field.

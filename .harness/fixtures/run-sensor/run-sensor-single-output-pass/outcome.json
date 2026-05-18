@@ -1,0 +1,12 @@
+{
+  "confidence": 1,
+  "metadata": {
+    "exit_code": 0,
+    "kind": "aggregate",
+    "output_mode": "single",
+    "timed_out": false
+  },
+  "sensor_id": "lint-go-vet-computational",
+  "severity": "info",
+  "verdict": "pass"
+}

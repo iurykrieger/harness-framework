@@ -1,0 +1,11 @@
+{
+  "individuals_count": 2,
+  "last_jsonl_signal": {
+    "metadata": {
+      "kind": "aggregate"
+    },
+    "sensor_id": "plan-sensors",
+    "severity": "info",
+    "verdict": "pass"
+  }
+}

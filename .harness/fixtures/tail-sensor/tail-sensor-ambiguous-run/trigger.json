@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "tail-sensor",
+    "serve-app-blocking",
+    "0"
+  ],
+  "registry_state": {
+    "entries": [
+      {
+        "run_id": "100-aaaa",
+        "sensor_id": "serve-app-blocking"
+      },
+      {
+        "run_id": "200-bbbb",
+        "sensor_id": "serve-app-blocking"
+      }
+    ]
+  }
+}

@@ -11,6 +11,50 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// Validate runs the schema + cross-check pipeline that ValidateAndPersist
+// runs, without writing anything to disk. Returns the same error types
+// the persist path returns.
+func Validate(draftJSON []byte, projectRoot string, stk *stack.Stack, schemasDir string) error {
+	var doc map[string]interface{}
+	if err := json.Unmarshal(draftJSON, &doc); err != nil {
+		return fmt.Errorf("parse usecase JSON: %w", err)
+	}
+	dir := schemasDir
+	if dir == "" {
+		cwd, _ := os.Getwd()
+		found, ferr := schema.FindSchemasDir(cwd)
+		if ferr != nil {
+			return fmt.Errorf("locate schemas: %w", ferr)
+		}
+		dir = found
+	}
+	v, err := schema.NewValidator(dir)
+	if err != nil {
+		return fmt.Errorf("load schemas: %w", err)
+	}
+	if err := v.Validate(schema.TargetUseCase, doc); err != nil {
+		return err
+	}
+	var uc UseCase
+	body, _ := json.Marshal(doc)
+	if err := json.Unmarshal(body, &uc); err != nil {
+		return fmt.Errorf("decode after schema validation: %w", err)
+	}
+	if err := CheckJourneyReference(&uc, stk); err != nil {
+		return err
+	}
+	if err := CheckEvidenceFiles(&uc, projectRoot); err != nil {
+		return err
+	}
+	if err := CheckFixtureContractEvidence(&uc); err != nil {
+		return err
+	}
+	if err := CheckFixtureRefExists(&uc, projectRoot); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ValidateAndPersist validates draftJSON against schemas/usecase.yaml,
 // cross-checks the journey_id reference against stk, verifies every
 // evidence file exists under projectRoot, then writes a canonical YAML
@@ -33,43 +77,13 @@ func ValidateAndPersist(
 	stk *stack.Stack,
 	schemasDir string,
 ) (string, error) {
+	if err := Validate(draftJSON, projectRoot, stk, schemasDir); err != nil {
+		return "", err
+	}
+
 	var doc map[string]interface{}
 	if err := json.Unmarshal(draftJSON, &doc); err != nil {
 		return "", fmt.Errorf("parse usecase JSON: %w", err)
-	}
-
-	dir := schemasDir
-	if dir == "" {
-		cwd, _ := os.Getwd()
-		found, ferr := schema.FindSchemasDir(cwd)
-		if ferr != nil {
-			return "", fmt.Errorf("locate schemas: %w", ferr)
-		}
-		dir = found
-	}
-	v, err := schema.NewValidator(dir)
-	if err != nil {
-		return "", fmt.Errorf("load schemas: %w", err)
-	}
-	if err := v.Validate(schema.TargetUseCase, doc); err != nil {
-		return "", err
-	}
-
-	// Decode the typed view for cross-checks. The map carries the
-	// canonical bytes for write; the struct is just for validation.
-	var uc UseCase
-	body, _ := json.Marshal(doc)
-	if err := json.Unmarshal(body, &uc); err != nil {
-		return "", fmt.Errorf("decode after schema validation: %w", err)
-	}
-	if err := CheckJourneyReference(&uc, stk); err != nil {
-		return "", err
-	}
-	if err := CheckEvidenceFiles(&uc, projectRoot); err != nil {
-		return "", err
-	}
-	if err := CheckFixtureContractEvidence(&uc); err != nil {
-		return "", err
 	}
 
 	id, ok := doc["id"].(string)

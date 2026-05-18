@@ -258,6 +258,20 @@ journeys:
     + project state, build a Setup Plan, apply allow-listed idempotent fixes (cp .env.example
     .env, mkdir, touch, set-env-in-file with chmod 600), persist patched/new sensors
     via lib/sensor.ValidateAndPersist, and retry the original sensor exactly once.
+- archetype: cli-tool
+  entry_points:
+  - command: run-sensor
+    evidence:
+      file: .harness/sensors/smoke-typed-pipeline.yaml
+      rationale: Smoke sensor that runs the typed-step pipeline end-to-end against
+        the framework's own checkout; exercises shell steps, declared outputs, and
+        downstream assert steps.
+    kind: cli-command
+  id: framework
+  name: Framework self-tests
+  summary: Dogfooding journey that validates the framework's own sensors and skill
+    pipelines (/run-sensor, /create-sensor, /detect-sensors) by executing them against
+    this repo's checkout and asserting structural and behavioral invariants.
 languages:
 - name: go
   version: 1.25.3

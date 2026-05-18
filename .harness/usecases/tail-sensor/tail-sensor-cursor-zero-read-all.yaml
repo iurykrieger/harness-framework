@@ -26,13 +26,7 @@ evidence:
   rationale: Declares the Signal schema the envelope conforms to.
 expected_outcome:
   fixture:
-    last_jsonl_signal:
-      metadata:
-        kind: envelope
-        next_cursor: 5
-      sensor_id: serve-app-blocking
-      severity: info
-      verdict: pass
+    ref: tail-sensor/tail-sensor-cursor-zero-read-all/outcome.json
   invariants:
   - The envelope Signal is the LAST JSONL line.
   - metadata.next_cursor equals the count of lines in signals.log at read time.
@@ -50,11 +44,7 @@ tags:
 - framework-tail-sensor
 trigger:
   fixture:
-    argv:
-    - tail-sensor
-    - serve-app-blocking
-    - "0"
-    signals_log_lines: 5
+    ref: tail-sensor/tail-sensor-cursor-zero-read-all/trigger.json
   shape: cli-argv
   summary: Invoke tail-sensor with cursor 0 against a sensor whose signals.log has
     N lines.

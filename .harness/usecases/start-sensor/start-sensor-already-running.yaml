@@ -35,12 +35,7 @@ evidence:
     guard.
 expected_outcome:
   fixture:
-    metadata:
-      existing_pid: 41
-      kind: rejected
-    sensor_id: serve-app-blocking
-    severity: high
-    verdict: error
+    ref: start-sensor/start-sensor-already-running/outcome.json
   invariants:
   - metadata.kind == "rejected".
   - metadata.existing_pid > 0.
@@ -60,16 +55,7 @@ tags:
 - framework-start-sensor
 trigger:
   fixture:
-    argv:
-    - start-sensor
-    - serve-app-blocking
-    registry_state:
-      entries:
-      - blocking: true
-        pid: 41
-        pid_alive: true
-        run_id: 41-aaaabbbb
-        sensor_id: serve-app-blocking
+    ref: start-sensor/start-sensor-already-running/trigger.json
   shape: cli-argv
   summary: Invoke start-sensor while a previous /start-sensor invocation has a live
     registry entry for the same id.

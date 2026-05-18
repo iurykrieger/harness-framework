@@ -1,0 +1,19 @@
+{
+  "stdout_object": {
+    "documents": {
+      "README.md": "# Project"
+    },
+    "failed_sensor": {
+      "id": "my-sensor"
+    },
+    "signal": {
+      "verdict": "fail"
+    },
+    "templates": [
+      {
+        "path": "/tmp/projectH/.env.example",
+        "preview": "DB_URL=postgres://..."
+      }
+    ]
+  }
+}

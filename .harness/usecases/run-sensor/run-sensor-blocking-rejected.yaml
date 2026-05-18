@@ -32,9 +32,10 @@ evidence:
     /run-sensor from /start-sensor.
 expected_outcome:
   fixture:
-    exit_code: 2
-    stderr_substring: use /start-sensor instead
-    stdout: ""
+    inline:
+      exit_code: 2
+      stderr_substring: use /start-sensor instead
+      stdout: ""
   invariants:
   - Exit code is 2.
   - Stderr contains the "use /start-sensor instead" hint.
@@ -51,9 +52,7 @@ tags:
 - framework-run-sensor
 trigger:
   fixture:
-    argv:
-    - run-computational
-    - serve-app-blocking
+    ref: run-sensor/run-sensor-blocking-rejected/trigger.json
   shape: cli-argv
   summary: Invoke run-computational with the id of a sensor declaring execution.blocking=true.
 version: 0.1.0

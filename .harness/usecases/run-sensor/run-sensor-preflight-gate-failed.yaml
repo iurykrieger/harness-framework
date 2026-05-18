@@ -33,14 +33,7 @@ evidence:
     consumed by the gate.
 expected_outcome:
   fixture:
-    last_jsonl_signal:
-      metadata:
-        cause: preflight_failed
-        kind: failed
-        missing_envs:
-        - ANTHROPIC_API_KEY
-      severity: high
-      verdict: error
+    ref: run-sensor/run-sensor-preflight-gate-failed/outcome.json
   invariants:
   - metadata.cause == "preflight_failed".
   - No subprocess of the sensor's command is spawned.
@@ -58,15 +51,7 @@ tags:
 - framework-run-sensor
 trigger:
   fixture:
-    argv:
-    - run-inferential
-    - ai-review-inferential
-    env:
-      ANTHROPIC_API_KEY: ""
-    sensor:
-      requires:
-      - kind: env
-        name: ANTHROPIC_API_KEY
+    ref: run-sensor/run-sensor-preflight-gate-failed/trigger.json
   shape: cli-argv
   summary: Invoke run-inferential with a sensor whose requires[].env names an unset
     variable.

@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "cause": "preflight_failed",
+    "kind": "failed",
+    "missing_tools": [
+      "docker"
+    ]
+  },
+  "sensor_id": "serve-app-blocking",
+  "severity": "high",
+  "verdict": "error"
+}

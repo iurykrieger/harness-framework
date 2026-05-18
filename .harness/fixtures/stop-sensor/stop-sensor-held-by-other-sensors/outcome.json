@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "dead_holders": [],
+    "holders": [
+      {
+        "id": "integration-tests",
+        "kind": "sensor",
+        "pid": 250,
+        "pid_alive": true
+      }
+    ],
+    "kind": "held"
+  },
+  "sensor_id": "postgres-blocking",
+  "severity": "low",
+  "verdict": "warn"
+}

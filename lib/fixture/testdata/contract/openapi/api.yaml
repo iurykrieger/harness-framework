@@ -1,0 +1,10 @@
+openapi: 3.0.3
+components:
+  schemas:
+    Order:
+      type: object
+      required: [sku, qty]
+      properties:
+        sku: { type: string }
+        qty: { type: integer }
+        tags: { type: array, items: { type: string } }

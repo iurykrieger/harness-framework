@@ -34,16 +34,7 @@ evidence:
   rationale: Declares the Signal schema the input file conforms to.
 expected_outcome:
   fixture:
-    stdout_object:
-      documents:
-        README.md: '# Project'
-      failed_sensor:
-        id: my-sensor
-      signal:
-        verdict: fail
-      templates:
-      - path: /tmp/projectH/.env.example
-        preview: DB_URL=postgres://...
+    ref: heal-sensor/heal-sensor-diagnose-context/outcome.json
   invariants:
   - Exit code is 0.
   - documents.<filename> is present for every recognised doc file.
@@ -61,16 +52,7 @@ tags:
 - framework-heal-sensor
 trigger:
   fixture:
-    argv:
-    - diagnose
-    - --signal=/tmp/failing-signal.json
-    - --sensor=/tmp/failing-sensor.yaml
-    - --root=/tmp/projectH
-    project_state:
-      docs:
-      - README.md
-      templates:
-      - .env.example
+    ref: heal-sensor/heal-sensor-diagnose-context/trigger.json
   shape: cli-argv
   summary: Run diagnose with --signal, --sensor, and --root pointing at a project
     containing a README and a .env.example.

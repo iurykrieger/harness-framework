@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "run-inferential",
+    "ai-review-code-inferential"
+  ],
+  "sensor": {
+    "calibration": {
+      "confidence_threshold": 0.8
+    }
+  },
+  "subprocess_stdout": [
+    "Verdict: fail",
+    "HARNESS_AGGREGATE_CONFIDENCE=0.55"
+  ]
+}

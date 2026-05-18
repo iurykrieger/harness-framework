@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "cause": "prepare_failed",
+    "kind": "failed",
+    "lifecycle": {
+      "prepare": [
+        {
+          "command": "cp .env.example .env",
+          "exit_code": 1,
+          "verdict": "fail"
+        }
+      ]
+    }
+  },
+  "sensor_id": "serve-app-blocking",
+  "severity": "high",
+  "verdict": "error"
+}

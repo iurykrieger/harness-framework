@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "write-usecase",
+    "--out=/tmp/projectF/.harness/usecases",
+    "--project-root=/tmp/projectF",
+    "/tmp/draft.yaml"
+  ],
+  "project_state": {
+    "stack_yaml_exists": false
+  }
+}

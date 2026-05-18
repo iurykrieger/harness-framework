@@ -30,12 +30,7 @@ evidence:
   rationale: Declares the use_cases[] field on assertion sensors that this check enforces.
 expected_outcome:
   fixture:
-    last_jsonl_signal:
-      metadata:
-        kind: usecase_not_found
-      sensor_id: write-sensor
-      severity: high
-      verdict: error
+    ref: create-sensor/create-sensor-missing-usecase/outcome.json
   invariants:
   - metadata.kind == "usecase_not_found".
   - Exit code is 2.
@@ -54,18 +49,7 @@ tags:
 - framework-create-sensor
 trigger:
   fixture:
-    argv:
-    - write-sensor
-    - --out=/tmp/projectG/.harness/sensors
-    - /tmp/draft.yaml
-    draft_payload:
-      id: assert-charge-201
-      kind: assertion
-      use_cases:
-      - never-persisted-usecase
-      version: 0.1.0
-    project_state:
-      usecases_dir_empty: true
+    ref: create-sensor/create-sensor-missing-usecase/trigger.json
   shape: cli-argv
   summary: Run create-sensor's write-sensor with use_cases referencing a usecase id
     that has not been persisted.

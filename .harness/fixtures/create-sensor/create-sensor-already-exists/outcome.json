@@ -1,0 +1,11 @@
+{
+  "last_jsonl_signal": {
+    "metadata": {
+      "kind": "sensor_already_exists",
+      "path": "/tmp/projectG/.harness/sensors/assert-charge-201.yaml"
+    },
+    "sensor_id": "write-sensor",
+    "severity": "high",
+    "verdict": "error"
+  }
+}

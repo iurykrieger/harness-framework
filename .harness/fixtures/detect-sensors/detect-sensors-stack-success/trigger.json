@@ -1,0 +1,61 @@
+{
+  "argv": [
+    "write-stack",
+    "--out=/tmp/projectE",
+    "--schemas-dir=/abs/path/to/schemas",
+    "/tmp/draft-stack.yaml"
+  ],
+  "draft_payload": {
+    "archetypes": [
+      "http-api"
+    ],
+    "components": [
+      {
+        "evidence": [
+          {
+            "file": ".github/workflows/test.yml",
+            "rationale": "CI runs the tests."
+          }
+        ],
+        "name": "testing",
+        "role": "test-runner",
+        "version": "1.25.3"
+      }
+    ],
+    "journeys": [
+      {
+        "archetype": "http-api",
+        "entry_points": [
+          {
+            "command": "POST /charges",
+            "evidence": {
+              "file": "src/charges/charges.controller.ts",
+              "rationale": "handler"
+            },
+            "kind": "http"
+          }
+        ],
+        "id": "charges",
+        "name": "Issue charge",
+        "summary": "Issue a charge."
+      }
+    ],
+    "languages": [
+      {
+        "name": "go",
+        "version": "1.25.3"
+      }
+    ],
+    "log_shapes": [
+      {
+        "format": "plain",
+        "id": "go-test-verbose",
+        "produced_by": [
+          "testing"
+        ]
+      }
+    ],
+    "purpose": "Example service.",
+    "version": "0.2.0"
+  }
+}

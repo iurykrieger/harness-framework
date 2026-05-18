@@ -33,14 +33,7 @@ evidence:
     the allowlist gate.
 expected_outcome:
   fixture:
-    stdout_object:
-      results:
-      - action:
-          action: run_shell
-          command: docker compose up -d postgres
-        applied: false
-        needs_input: true
-        reason: action not in allowlist
+    ref: heal-sensor/heal-sensor-apply-safe-refused/outcome.json
   invariants:
   - applied is false.
   - needs_input is true.
@@ -59,15 +52,7 @@ tags:
 - framework-heal-sensor
 trigger:
   fixture:
-    argv:
-    - apply-safe
-    - --plan=/tmp/plan.json
-    - --sensor=/tmp/failing-sensor.yaml
-    - --root=/tmp/projectH
-    plan_payload:
-      auto_apply:
-      - action: run_shell
-        command: docker compose up -d postgres
+    ref: heal-sensor/heal-sensor-apply-safe-refused/trigger.json
   shape: cli-argv
   summary: Run apply-safe with a Plan containing an action like "run_shell" that is
     not on the safe allowlist.

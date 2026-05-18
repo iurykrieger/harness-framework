@@ -26,9 +26,10 @@ evidence:
     the rejection.
 expected_outcome:
   fixture:
-    exit_code: 1
-    file_written: false
-    stderr_substring: INVALID
+    inline:
+      exit_code: 1
+      file_written: false
+      stderr_substring: INVALID
   invariants:
   - Exit code is 1.
   - No file is created in <out>/.
@@ -46,22 +47,7 @@ tags:
 - framework-detect-sensors
 trigger:
   fixture:
-    argv:
-    - write-sensor
-    - --out=/tmp/projectE/.harness/sensors
-    - /tmp/bad-draft.yaml
-    draft_payload:
-      cost:
-        compute: low
-        latency:
-          timeout_ms: 5000
-      execution:
-        command: false
-      id: bad-sensor
-      kind: observation
-      output: single
-      type: computational
-      version: 0.1.0
+    ref: detect-sensors/detect-sensors-sensor-schema-fail/trigger.json
   shape: cli-argv
   summary: Run write-sensor against a draft that omits the required execution.exit_code_map
     for a computational sensor.

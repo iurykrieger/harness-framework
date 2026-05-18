@@ -170,15 +170,28 @@ For each planned sensor IN ORDER (not parallel — fixture writes need path coor
 
    Block. Do not persist the sensor with a placeholder command.
 
-6. **Fixtures.** When a step needs one (e.g., HTTP step with `with: { fixture: ... }`), serialize the source data and persist via:
+6. **Fixtures.** Reuse from the shared pool first:
 
-   ```bash
-   printf '%s' "<payload>" | \
-     HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
-     go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=write_fixture \
-     ./skills/create-sensor/scripts \
-     ".harness/fixtures/<sensor-id>/<step-id>.<ext>"
-   ```
+   - When the step exercises a usecase whose `trigger.fixture.ref` (or
+     `expected_outcome.fixture.ref`) is already populated, the step's
+     `with: { fixture: <ref> }` reuses that exact path. Do not write a
+     duplicate file under `_sensors/<sensor-id>/`.
+
+   - For ad-hoc fixtures (the step does not trace to any usecase
+     fixture — e.g. a bootstrap `/health` GET before the scenario), source
+     the payload using the three-tier rule (`find-on-disk` →
+     `derive-from-contract` → block on the user), then persist via
+     `write-fixture` at `_sensors/<sensor-id>/<step-id>.<ext>`:
+
+     ```bash
+     printf '%s' "<payload>" | \
+       HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+       go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=write_fixture \
+       ./skills/create-sensor/scripts \
+       "_sensors/<sensor-id>/<step-id>.<ext>"
+     ```
+
+     The step references it as `with: { fixture: "_sensors/<sensor-id>/<step-id>.<ext>" }`.
 
 7. **Self-coherence check** before serializing the YAML: confirm (a) every `${{ steps.X.outputs.Y }}` reference points to a prior step that declared that output; (b) every `with: { fixture: ... }` references a path that was written in step 6.
 

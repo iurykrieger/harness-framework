@@ -27,11 +27,7 @@ evidence:
     that defines b.Res.Exists.
 expected_outcome:
   fixture:
-    metadata:
-      kind: stop_no_registry
-    sensor_id: serve-app-blocking
-    severity: high
-    verdict: error
+    ref: stop-sensor/stop-sensor-registry-not-found/outcome.json
   invariants:
   - metadata.kind == "stop_no_registry".
   - Exit code is 1.
@@ -48,13 +44,7 @@ tags:
 - framework-stop-sensor
 trigger:
   fixture:
-    argv:
-    - stop-sensor
-    - serve-app-blocking
-    env:
-      HARNESS_REGISTRY_ROOT: /tmp/projectD
-    registry_state:
-      file_exists: false
+    ref: stop-sensor/stop-sensor-registry-not-found/trigger.json
   shape: cli-argv
   summary: Invoke stop-sensor when .harness/runtime/running_sensors.json does not
     exist.

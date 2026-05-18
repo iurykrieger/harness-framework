@@ -36,14 +36,7 @@ evidence:
     by the downgrade decision.
 expected_outcome:
   fixture:
-    final_aggregate:
-      confidence: 0.55
-      metadata:
-        calibration_downgrade: true
-        kind: aggregate
-        output_mode: stream
-      severity: low
-      verdict: warn
+    ref: run-sensor/run-sensor-inferential-calibration-downgrade/outcome.json
   invariants:
   - aggregate.verdict == "warn".
   - aggregate.confidence == the parsed HARNESS_AGGREGATE_CONFIDENCE value.
@@ -61,15 +54,7 @@ tags:
 - framework-run-sensor
 trigger:
   fixture:
-    argv:
-    - run-inferential
-    - ai-review-code-inferential
-    sensor:
-      calibration:
-        confidence_threshold: 0.8
-    subprocess_stdout:
-    - 'Verdict: fail'
-    - HARNESS_AGGREGATE_CONFIDENCE=0.55
+    ref: run-sensor/run-sensor-inferential-calibration-downgrade/trigger.json
   shape: cli-argv
   summary: Run an inferential sensor whose calibrated judgment would be fail but whose
     self-reported confidence is below the threshold.

@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "apply-safe",
+    "--plan=/tmp/plan.json",
+    "--sensor=/tmp/failing-sensor.yaml",
+    "--root=/tmp/projectH"
+  ],
+  "plan_payload": {
+    "auto_apply": [
+      {
+        "action": "mkdir",
+        "path": "tmp/uploads"
+      }
+    ]
+  },
+  "project_state": {
+    "path_exists": false
+  }
+}

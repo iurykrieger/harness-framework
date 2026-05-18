@@ -30,17 +30,7 @@ evidence:
   rationale: HeldByEntry / IsHeld / SummarizeHolders contract used by the holder accounting.
 expected_outcome:
   fixture:
-    metadata:
-      dead_holders: []
-      holders:
-      - id: integration-tests
-        kind: sensor
-        pid: 250
-        pid_alive: true
-      kind: held
-    sensor_id: postgres-blocking
-    severity: low
-    verdict: warn
+    ref: stop-sensor/stop-sensor-held-by-other-sensors/outcome.json
   invariants:
   - metadata.kind == "held".
   - The subprocess (PGID) is NOT signaled.
@@ -62,20 +52,7 @@ tags:
 - framework-stop-sensor
 trigger:
   fixture:
-    argv:
-    - stop-sensor
-    - postgres-blocking
-    registry_state:
-      entries:
-      - held_by:
-        - kind: manual
-        - id: integration-tests
-          kind: sensor
-          pid: 250
-          pid_alive: true
-        pgid: 200
-        run_id: 200-zzzz1111
-        sensor_id: postgres-blocking
+    ref: stop-sensor/stop-sensor-held-by-other-sensors/trigger.json
   shape: cli-argv
   summary: Invoke stop-sensor on a sensor whose registry entry still has non-manual
     holders.

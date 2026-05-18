@@ -30,12 +30,7 @@ evidence:
     by the trigger fixture.
 expected_outcome:
   fixture:
-    metadata:
-      cause: bootstrap_failed
-      kind: failed
-    sensor_id: unknown
-    severity: high
-    verdict: error
+    ref: start-sensor/start-sensor-missing-id/outcome.json
   invariants:
   - verdict == "error".
   - metadata.kind == "failed" and metadata.cause == "bootstrap_failed".
@@ -53,8 +48,7 @@ tags:
 - framework-start-sensor
 trigger:
   fixture:
-    argv:
-    - start-sensor
+    ref: start-sensor/start-sensor-missing-id/trigger.json
   shape: cli-argv
   summary: Invoke start-sensor with no positional sensor id.
 version: 0.1.0

@@ -59,7 +59,7 @@ func TestCheckFixtureContractEvidence_StructuredTriggerWithoutContract(t *testin
 	uc := &UseCase{
 		ID: "create-charge",
 		Trigger: Trigger{
-			Fixture: map[string]any{"body": map[string]any{"amount": 2500}},
+			Fixture: map[string]any{"inline": map[string]any{"body": map[string]any{"amount": 2500}}},
 		},
 		Evidence: []stack.Evidence{
 			{File: "src/charge/charge.controller.ts", Rationale: "POST /charges handler"},
@@ -83,10 +83,10 @@ func TestCheckFixtureContractEvidence_StructuredTriggerWithoutContract(t *testin
 
 func TestCheckFixtureContractEvidence_StructuredExpectedOutcomeWithoutContract(t *testing.T) {
 	uc := &UseCase{
-		ID: "create-charge",
-		Trigger: Trigger{Fixture: "noop"}, // primitive
+		ID:      "create-charge",
+		Trigger: Trigger{Fixture: map[string]any{"inline": "noop"}}, // primitive inline
 		ExpectedOutcome: ExpectedOutcome{
-			Fixture: map[string]any{"id": "uuid", "pix_transaction": map[string]any{"qrcode_content": "..."}},
+			Fixture: map[string]any{"inline": map[string]any{"id": "uuid", "pix_transaction": map[string]any{"qrcode_content": "..."}}},
 		},
 		Evidence: []stack.Evidence{
 			{File: "src/charge/charge.controller.ts", Rationale: "POST /charges handler"},
@@ -101,7 +101,7 @@ func TestCheckFixtureContractEvidence_ContractCitationSatisfies(t *testing.T) {
 	uc := &UseCase{
 		ID: "create-charge",
 		Trigger: Trigger{
-			Fixture: map[string]any{"body": map[string]any{"amount": 2500}},
+			Fixture: map[string]any{"inline": map[string]any{"body": map[string]any{"amount": 2500}}},
 		},
 		Evidence: []stack.Evidence{
 			{File: "src/charge/charge.controller.ts", Rationale: "POST /charges handler"},
@@ -120,9 +120,9 @@ func TestCheckFixtureContractEvidence_PrimitiveFixturesSkip(t *testing.T) {
 		e    any
 	}{
 		{"both nil", nil, nil},
-		{"both string", "tick", "ok"},
-		{"both number", float64(1), float64(2)},
-		{"both bool", true, false},
+		{"both string", map[string]any{"inline": "tick"}, map[string]any{"inline": "ok"}},
+		{"both number", map[string]any{"inline": float64(1)}, map[string]any{"inline": float64(2)}},
+		{"both bool", map[string]any{"inline": true}, map[string]any{"inline": false}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -144,7 +144,7 @@ func TestCheckFixtureContractEvidence_PrimitiveFixturesSkip(t *testing.T) {
 func TestCheckFixtureContractEvidence_ListFixtureIsStructured(t *testing.T) {
 	uc := &UseCase{
 		ID:      "cli-invoke",
-		Trigger: Trigger{Fixture: []any{"--flag", "value"}},
+		Trigger: Trigger{Fixture: map[string]any{"inline": []any{"--flag", "value"}}},
 		Evidence: []stack.Evidence{
 			{File: "cmd/x/main.go", Rationale: "Cobra command"},
 		},
@@ -159,8 +159,10 @@ func TestCheckFixtureContractEvidence_EmptyKindIsImplementation(t *testing.T) {
 	// all on their evidence rows must still be flagged when fixtures are
 	// structured. Empty string is treated as `implementation`.
 	uc := &UseCase{
-		ID:      "create-charge",
-		Trigger: Trigger{Fixture: map[string]any{"x": 1}},
+		ID: "create-charge",
+		Trigger: Trigger{Fixture: map[string]any{"inline": map[string]any{
+			"body": map[string]any{"amount": float64(2500)},
+		}}},
 		Evidence: []stack.Evidence{
 			{File: "a.go", Rationale: "handler"}, // Kind not set
 			{File: "b.go", Rationale: "service"}, // Kind not set
@@ -168,5 +170,88 @@ func TestCheckFixtureContractEvidence_EmptyKindIsImplementation(t *testing.T) {
 	}
 	if err := CheckFixtureContractEvidence(uc); err == nil {
 		t.Fatal("expected error: empty Kind must not satisfy the contract requirement")
+	}
+}
+
+func TestCheckFixtureContractEvidence_EnvelopeAware(t *testing.T) {
+	cases := []struct {
+		name    string
+		trigger any
+		outcome any
+		ev      []stack.Evidence
+		wantErr bool
+	}{
+		{
+			name:    "ref envelope without contract evidence rejected",
+			trigger: map[string]any{"ref": "framework/x/trigger.json"},
+			outcome: nil,
+			ev: []stack.Evidence{
+				{File: "a.go", Rationale: "handler"}, // implementation
+			},
+			wantErr: true,
+		},
+		{
+			name:    "ref envelope with contract evidence ok",
+			trigger: map[string]any{"ref": "framework/x/trigger.json"},
+			outcome: nil,
+			ev: []stack.Evidence{
+				{File: "a.go", Rationale: "handler"},
+				{File: "schema.json", Rationale: "request schema", Kind: EvidenceKindContract},
+			},
+			wantErr: false,
+		},
+		{
+			name:    "inline primitive envelope skips check",
+			trigger: map[string]any{"inline": float64(0)},
+			outcome: map[string]any{"inline": "ok"},
+			ev: []stack.Evidence{
+				{File: "a.go", Rationale: "handler"},
+			},
+			wantErr: false,
+		},
+		{
+			name:    "inline structured envelope without contract evidence rejected",
+			trigger: map[string]any{"inline": map[string]any{"sku": map[string]any{"code": "abc", "warehouse": float64(1)}}},
+			outcome: nil,
+			ev: []stack.Evidence{
+				{File: "a.go", Rationale: "handler"},
+			},
+			wantErr: true,
+		},
+		{
+			name:    "inline empty object skips check",
+			trigger: map[string]any{"inline": map[string]any{}},
+			outcome: nil,
+			ev: []stack.Evidence{
+				{File: "a.go", Rationale: "handler"},
+			},
+			wantErr: false,
+		},
+		{
+			name:    "inline object of only primitive values skips check",
+			trigger: map[string]any{"inline": map[string]any{"exit_code": float64(0), "status": "ok"}},
+			outcome: nil,
+			ev: []stack.Evidence{
+				{File: "a.go", Rationale: "handler"},
+			},
+			wantErr: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			uc := &UseCase{
+				ID:              "u1",
+				Trigger:         Trigger{Fixture: tc.trigger},
+				ExpectedOutcome: ExpectedOutcome{Fixture: tc.outcome},
+				Evidence:        tc.ev,
+			}
+			err := CheckFixtureContractEvidence(uc)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected: %v", err)
+			}
+		})
 	}
 }

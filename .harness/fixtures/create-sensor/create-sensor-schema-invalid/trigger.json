@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "write-sensor",
+    "--out=/tmp/projectG/.harness/sensors",
+    "/tmp/bad-draft.yaml"
+  ],
+  "draft_payload": {
+    "id": "incomplete-inferential",
+    "output": "single",
+    "type": "inferential"
+  }
+}

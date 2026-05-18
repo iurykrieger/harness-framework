@@ -7,7 +7,8 @@ trigger:
   shape: CLI invocation
   summary: /run-sensor against a known-green sensor.
   fixture:
-    argv: [run-sensor, smoke-typed-pipeline]
+    inline:
+      argv: [run-sensor, smoke-typed-pipeline]
 behavior:
   summary: aggregate verdict=pass for a sensor whose steps all pass.
   business_rules:
@@ -17,7 +18,8 @@ expected_outcome:
   shape: JSON aggregate on stdout + exit code 0
   summary: verdict=pass aggregate.
   fixture:
-    exit_code: 0
+    inline:
+      exit_code: 0
   invariants:
     - Aggregate verdict is pass.
   side_effects: []

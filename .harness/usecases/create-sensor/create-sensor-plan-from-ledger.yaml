@@ -31,13 +31,7 @@ evidence:
     planning.Build).
 expected_outcome:
   fixture:
-    individuals_count: 2
-    last_jsonl_signal:
-      metadata:
-        kind: aggregate
-      sensor_id: plan-sensors
-      severity: info
-      verdict: pass
+    ref: create-sensor/create-sensor-plan-from-ledger/outcome.json
   invariants:
   - The last JSONL line is the aggregate envelope.
   - Each Plan line has a stable shape for downstream LLM consumption.
@@ -54,38 +48,7 @@ tags:
 - framework-create-sensor
 trigger:
   fixture:
-    stdin_payload:
-      usecases:
-      - behavior:
-          summary: persist + emit
-        expected_outcome:
-          fixture:
-            status: 201
-          shape: HTTP
-          summary: 201
-        id: charge-happy-path
-        journey_id: charges
-        trigger:
-          fixture:
-            body:
-              amount: 100
-          shape: HTTP
-          summary: POST /charges
-      - behavior:
-          summary: validation fails
-        expected_outcome:
-          fixture:
-            status: 422
-          shape: HTTP
-          summary: 422
-        id: charge-validation-fail
-        journey_id: charges
-        trigger:
-          fixture:
-            body:
-              amount: -1
-          shape: HTTP
-          summary: POST /charges with negative amount
+    ref: create-sensor/create-sensor-plan-from-ledger/trigger.json
   shape: stdin-json
   summary: Pipe a ledger of two usecases into plan-sensors via stdin.
 version: 0.1.0

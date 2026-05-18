@@ -1,0 +1,8 @@
+{
+  "stdout_object": {
+    "written": [
+      "/tmp/projectH/.harness/sensors/existing-sensor.yaml",
+      "/tmp/projectH/.harness/sensors/setup-env-from-example.yaml"
+    ]
+  }
+}
