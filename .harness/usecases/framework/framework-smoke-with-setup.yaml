@@ -10,7 +10,8 @@ trigger:
   shape: harness sensor invocation
   summary: /run-sensor smoke-with-setup against this repo's checkout.
   fixture:
-    sensor_id: smoke-with-setup
+    inline:
+      sensor_id: smoke-with-setup
 behavior:
   summary: |
     smoke-with-setup declares a single step of type sensor referencing
@@ -24,9 +25,10 @@ expected_outcome:
   shape: One aggregate JSON Signal on stdout + exit code 0
   summary: verdict=pass, severity=info — composition succeeds end-to-end
   fixture:
-    exit_code: 0
-    stdout_last_line_kind: aggregate
-    stdout_last_line_verdict: pass
+    inline:
+      exit_code: 0
+      stdout_last_line_kind: aggregate
+      stdout_last_line_verdict: pass
   invariants:
     - Exit code is 0.
     - Aggregate verdict is "pass".

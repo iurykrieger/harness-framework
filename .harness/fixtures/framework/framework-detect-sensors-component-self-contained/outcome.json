@@ -1,0 +1,8 @@
+{
+  "persisted_file": ".harness/stack.yaml",
+  "every_component": {
+    "category": "non-empty string",
+    "capabilities": "array with >= 1 entry",
+    "observable_surface": "array with >= 1 entry"
+  }
+}

@@ -11,26 +11,25 @@ trigger:
   shape: harness sensor invocation
   summary: /run-sensor smoke-typed-pipeline against this repo's checkout.
   fixture:
-    sensor_id: smoke-typed-pipeline
-    fixture_payload: |
-      {"sku":"abc","qty":1}
+    ref: framework/framework-smoke-typed-pipeline/trigger.json
 behavior:
   summary: |
-    The orchestrator resolves the order-valid.json fixture, the shell
+    The orchestrator resolves the trigger.json fixture, the shell
     step cats its content and emits it as outputs.payload, the assert
     step substring-matches "sku" against the captured payload, and the
     aggregate verdict is pass.
   business_rules:
-    - The fixture file .harness/fixtures/order-valid.json must exist on disk.
+    - The fixture file .harness/fixtures/framework/framework-smoke-typed-pipeline/trigger.json must exist on disk.
     - The shell step's stdout MUST contain "sku".
     - The aggregate verdict is pass when both steps pass.
 expected_outcome:
   shape: One aggregate JSON Signal on stdout + exit code 0
   summary: verdict=pass, severity=info, no individual stream Signals
   fixture:
-    exit_code: 0
-    stdout_last_line_kind: aggregate
-    stdout_last_line_verdict: pass
+    inline:
+      exit_code: 0
+      stdout_last_line_kind: aggregate
+      stdout_last_line_verdict: pass
   invariants:
     - Exit code is 0.
     - Last line of stdout is an aggregate Signal.
@@ -43,6 +42,9 @@ evidence:
     rationale: Executes the typed-step pipeline.
   - file: lib/step/shell/shell.go
     rationale: Implements the shell step that this sensor exercises.
+  - file: schemas/sensor.yaml
+    kind: contract
+    rationale: Defines the sensor YAML schema and fixture-ref fields consumed by the runner.
 regression_priority: critical
 tags:
   - framework-smoke

@@ -12,8 +12,7 @@ trigger:
   shape: harness skill invocation
   summary: /create-sensor tail-sensor-no-registry against this repo.
   fixture:
-    skill: create-sensor
-    input: tail-sensor-no-registry
+    ref: framework/framework-create-sensor-multi-angle/trigger.json
 behavior:
   summary: |
     The orchestrated pipeline (read-usecases → plan-sensors → LLM
@@ -24,22 +23,23 @@ behavior:
     - The persisted sensor YAML parses against schemas/sensor.yaml.
     - len(execution.steps) >= 2.
     - len(use_cases) >= 1.
-    - At least one step references a fixture under .harness/fixtures/<sensor-id>/.
+    - At least one step references a fixture under .harness/fixtures/.
 expected_outcome:
   shape: One sensor YAML file on disk + the create-sensor Signal verdict=pass
   summary: A schema-valid sensor at the expected path with structural multi-angle properties.
   fixture:
-    persisted_path: .harness/sensors/<sensor-id>.yaml
-    exit_code: 0
+    inline:
+      persisted_path: .harness/sensors/<sensor-id>.yaml
+      exit_code: 0
   invariants:
     - Sensor file exists at the persisted path.
     - Sensor YAML parses against schemas/sensor.yaml.
     - len(execution.steps) >= 2.
     - len(use_cases) >= 1.
-    - At least one step in the produced sensor references a fixture file under .harness/fixtures/<sensor-id>/.
+    - At least one step in the produced sensor references a fixture file under .harness/fixtures/.
   side_effects:
     - "write: .harness/sensors/<sensor-id>.yaml"
-    - "write: .harness/fixtures/<sensor-id>/*"
+    - "write: .harness/fixtures/*"
 evidence:
   - file: skills/create-sensor/SKILL.md
     rationale: Defines the synthesis flow.
@@ -47,6 +47,9 @@ evidence:
     rationale: Enforces the multi-angle decomposition deterministically.
   - file: skills/create-sensor/scripts/read-usecases.go
     rationale: Provides the input ledger.
+  - file: schemas/sensor.yaml
+    kind: contract
+    rationale: Defines the sensor YAML contract; the trigger fixture matches the skill invocation input shape.
 regression_priority: high
 tags:
   - framework-smoke

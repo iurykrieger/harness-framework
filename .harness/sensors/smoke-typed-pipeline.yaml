@@ -29,7 +29,7 @@ execution:
       type: shell
       with:
         order:
-          fixture: order-valid.json
+          fixture: framework/framework-smoke-typed-pipeline/trigger.json
       run: |
         test -f "$HARNESS_FIXTURE_PATH"
         cat "$HARNESS_FIXTURE_PATH"
