@@ -95,7 +95,16 @@ execution:
         for f in .harness/sensors/assert-tail-sensor-*.yaml; do
           [ -e "$f" ] || { echo "FAIL: no produced sensor matching .harness/sensors/assert-tail-sensor-*.yaml"; exit 1; }
           # Extract every step's fixture: value (relative pool path).
-          refs=$(awk '/^\s+with:/,/^\s+(\S|$)/' "$f" | grep -oE 'fixture:\s*"?[^"$]+' | sed -E 's/^fixture:\s*"?//' | sed 's/"$//')
+          refs=$(awk '
+            /^[[:space:]]+with:[[:space:]]*$/ {
+              line=$0; sub(/[^[:space:]].*/, "", line); with_indent=length(line); in_with=1; next
+            }
+            in_with {
+              if ($0 ~ /^[[:space:]]*$/) { next }
+              line=$0; sub(/[^[:space:]].*/, "", line); cur_indent=length(line)
+              if (cur_indent <= with_indent) { in_with=0 } else { print }
+            }
+          ' "$f" | grep -oE 'fixture:[[:space:]]*"?[^"[:space:]]+' | sed -E 's/^fixture:[[:space:]]*"?//' | sed 's/"$//')
           for r in $refs; do
             if [ -f ".harness/fixtures/$r" ]; then
               found=1
