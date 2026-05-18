@@ -1,0 +1,69 @@
+behavior:
+  business_rules:
+  - Every evidence row must point at a real file under projectRoot.
+  - Multiple missing files are listed in one error message.
+  - Exit code is 1.
+  summary: |
+    usecase.ValidateAndPersist passes schema, passes CheckJourneyReference,
+    then calls CheckEvidenceFiles. The stat fails for the ghost path and a
+    typed CrossCheckError("evidence_file_missing") is returned listing all
+    missing files. write-usecase exits 1 with stderr naming the file(s).
+description: |
+  Every evidence[].file in a UseCase MUST exist relative to projectRoot.
+  When usecase.CheckEvidenceFiles cannot stat one or more paths, it
+  returns *stack.CrossCheckError{Kind:"evidence_file_missing"} listing the
+  missing files. write-usecase prints "error: evidence_file_missing: ..."
+  on stderr and exits 1.
+evidence:
+- file: skills/detect-usecases/scripts/write-usecase.go
+  kind: implementation
+  line_end: 85
+  line_start: 76
+  rationale: errors.As branch catching the CrossCheckError; same path serves journey_reference_orphan
+    AND evidence_file_missing.
+- file: lib/usecase/evidence.go
+  kind: implementation
+  rationale: CheckEvidenceFiles implementation that produces the evidence_file_missing
+    typed error.
+- file: schemas/usecase.yaml
+  kind: contract
+  rationale: Declares the Evidence shape (file is required) whose existence is verified
+    outside the JSON schema.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    file_written: false
+    stderr_substring: evidence_file_missing
+  invariants:
+  - Exit code is 1.
+  - stderr names every missing evidence file.
+  - No usecase file is written.
+  shape: cli-exit
+  side_effects: []
+  summary: stderr contains "evidence_file_missing" and the bad path; exit 1.
+id: detect-usecases-evidence-missing
+journey_id: detect-usecases
+name: write-usecase rejects a draft whose evidence[].file does not exist on disk
+regression_priority: high
+tags:
+- validation
+- framework-detect-usecases
+trigger:
+  fixture:
+    argv:
+    - write-usecase
+    - --out=/tmp/projectF/.harness/usecases
+    - --project-root=/tmp/projectF
+    - /tmp/draft-missing-evidence.yaml
+    draft_payload:
+      evidence:
+      - file: src/does-not-exist.ts
+        rationale: ghost
+      id: x-with-bad-evidence
+      journey_id: user-registration
+    project_state:
+      file_exists: src/users/users.controller.ts
+  shape: cli-argv
+  summary: Run write-usecase with a draft citing an evidence file that does not exist
+    under project-root.
+version: 0.1.0

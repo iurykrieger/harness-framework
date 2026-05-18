@@ -1,0 +1,72 @@
+behavior:
+  business_rules:
+  - state == "orphan" when registry.IsPIDAlive(e.PID) is false.
+  - The Signal verdict remains pass — orphans are normal observable state.
+  - The orphan entry stays in the registry until /stop-sensor cleans it up.
+  summary: |
+    registry.IsPIDAlive(e.PID) returns false because the process was reaped
+    by the OS. runList sets state="orphan" and pid_alive=false on the entry,
+    then includes it in the list Signal payload.
+description: |
+  When a registry entry's subprocess PID no longer responds to kill(pid, 0)
+  (the OS reaped the process but the registry was not cleaned up),
+  runList records state="orphan" instead of "running" and pid_alive=false.
+  The Signal still has verdict=pass because the orphan is observable
+  state — the agent uses /stop-sensor to clean up the stale entry.
+evidence:
+- file: skills/list-sensors/scripts/list.go
+  kind: implementation
+  line_end: 79
+  line_start: 53
+  rationale: state classification site where dead PIDs are tagged as "orphan".
+- file: lib/registry/state.go
+  kind: contract
+  rationale: RunningSensorEntry contract; IsPIDAlive is the liveness primitive.
+expected_outcome:
+  fixture:
+    metadata:
+      entries:
+      - blocking: true
+        pid: 9999
+        pid_alive: false
+        run_id: 9999-bbbb2222
+        sensor_id: serve-app-blocking
+        state: orphan
+        watcher_alive: false
+        watcher_pid: 10000
+      kind: list
+    sensor_id: list-sensors
+    severity: info
+    verdict: pass
+  invariants:
+  - The orphan entry's state is "orphan" and pid_alive is false.
+  - The Signal verdict is "pass".
+  - The registry file is not mutated by /list-sensors.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=pass, metadata.entries[i].state="orphan", pid_alive=false;
+    exit 0.
+id: list-sensors-orphan
+journey_id: list-sensors
+name: List sensors classifies dead-PID entries as orphan
+regression_priority: high
+tags:
+- error-handling
+- framework-list-sensors
+trigger:
+  fixture:
+    argv:
+    - list-sensors
+    registry_state:
+      entries:
+      - blocking: true
+        pid: 9999
+        pid_alive: false
+        run_id: 9999-bbbb2222
+        sensor_id: serve-app-blocking
+        watcher_alive: false
+        watcher_pid: 10000
+  shape: cli-argv
+  summary: Invoke list-sensors when the registry holds an entry whose subprocess PID
+    is dead.
+version: 0.1.0

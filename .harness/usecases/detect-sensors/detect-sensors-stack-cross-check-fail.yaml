@@ -1,0 +1,67 @@
+behavior:
+  business_rules:
+  - 'Cross-check failures emit "error: stack_<kind>: <message>" on stderr.'
+  - Exit code is 1.
+  - Cross-checks fire after schema validation; the file is unchanged on failure.
+  summary: |
+    stack.CheckJourneyArchetypes detects that "event-consumer" is not in
+    archetypes[]; it returns a *stack.CrossCheckError with Kind=
+    "journey_archetype_orphan" (or similar). write-stack matches the typed
+    error via errors.As, prints "error: stack_<kind>: <message>", and
+    returns exit 1.
+description: |
+  Some constraints on stack.yaml are inter-field and cannot be expressed in
+  JSON Schema (e.g. log_shapes[].produced_by[] must reference a declared
+  component name; every journey.archetype must appear in stack.archetypes).
+  When stack.ValidateAndPersist returns a *stack.CrossCheckError,
+  write-stack prints "error: stack_<kind>: <message>" to stderr and returns
+  exit 1. Nothing is written.
+evidence:
+- file: skills/detect-sensors/scripts/write-stack.go
+  kind: implementation
+  line_end: 70
+  line_start: 64
+  rationale: errors.As branch that catches *stack.CrossCheckError and renders the
+    stack_<kind> message.
+- file: lib/stack/cross_check.go
+  kind: implementation
+  rationale: CheckJourneyArchetypes / CheckProducedBy that produce the typed CrossCheckError.
+- file: schemas/stack.yaml
+  kind: contract
+  rationale: Stack schema whose cross-field constraints are enforced via the Go cross-checks.
+expected_outcome:
+  fixture:
+    exit_code: 1
+    file_written: false
+    stderr_prefix: 'error: stack_'
+  invariants:
+  - Exit code is 1.
+  - stderr identifies the cross-check kind via the "stack_<kind>" prefix.
+  - The stack file is unchanged.
+  shape: cli-exit
+  side_effects: []
+  summary: 'stderr starts with "error: stack_"; exit 1; .harness/stack.yaml unchanged.'
+id: detect-sensors-stack-cross-check-fail
+journey_id: detect-sensors
+name: write-stack rejects a draft that fails cross-checks
+regression_priority: high
+tags:
+- error-handling
+- validation
+- framework-detect-sensors
+trigger:
+  fixture:
+    argv:
+    - write-stack
+    - --out=/tmp/projectE
+    - /tmp/orphan-archetype-stack.yaml
+    draft_payload:
+      archetypes:
+      - http-api
+      journeys:
+      - archetype: event-consumer
+        id: ingest-events
+  shape: cli-argv
+  summary: Run write-stack against a draft whose journey references an archetype not
+    declared in stack.archetypes.
+version: 0.1.0

@@ -1,0 +1,59 @@
+behavior:
+  business_rules:
+  - exit_code_map keys are matched as strings against the actual exit code.
+  - A wildcard "*" entry can serve as the default fall-through verdict.
+  - Aggregate verdict is the max-rank of stream verdict and exit-code-mapped verdict.
+  summary: |
+    The runner runs the command, observes exit_code=1, looks up "1" in the
+    exit_code_map, and uses that verdict/severity in signal.Aggregate.
+description: |
+  When a computational sensor's execution.exit_code_map maps a non-zero exit
+  code to verdict=warn (e.g. a linter that exits 1 on style warnings), the
+  aggregate Signal carries verdict=warn even though the subprocess exit was
+  non-zero. signal.Aggregate combines this with stream verdict (here all
+  pass) and warn wins because warn > pass on the verdict rank.
+evidence:
+- file: skills/run-sensor/scripts/run-computational.go
+  kind: implementation
+  line_end: 120
+  line_start: 56
+  rationale: Delegates to orchestrator.RunWithDepsRoot which applies the exit_code_map
+    via signal.MapExitCode.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares the ExitCodeMapEntry shape (exit_code, verdict, severity) the
+    runner consumes.
+expected_outcome:
+  fixture:
+    final_aggregate:
+      metadata:
+        exit_code: 1
+        kind: aggregate
+        output_mode: stream
+        timed_out: false
+      severity: low
+      verdict: warn
+  invariants:
+  - aggregate.verdict comes from the user-declared exit_code_map entry for that exit
+    code.
+  - The runner exits 0 because the aggregate Signal was emitted successfully (a warn
+    aggregate is not a runner error).
+  shape: signal-jsonl
+  side_effects: []
+  summary: Aggregate Signal with verdict=warn and metadata.exit_code=1.
+id: run-sensor-exit-code-map-warn
+journey_id: run-sensor
+name: Aggregate verdict downgraded to warn via exit_code_map
+regression_priority: high
+tags:
+- validation
+- framework-run-sensor
+trigger:
+  fixture:
+    argv:
+    - run-computational
+    - lint-style-computational
+  shape: cli-argv
+  summary: Invoke run-computational with a sensor whose exit_code_map declares "1
+    → warn".
+version: 0.1.0

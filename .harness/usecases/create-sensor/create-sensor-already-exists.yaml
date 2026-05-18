@@ -1,0 +1,72 @@
+behavior:
+  business_rules:
+  - /create-sensor never silently overwrites — every authoring decision is explicit.
+  - Exit code is 2.
+  - The Signal's metadata.path names the target that would have been overwritten.
+  summary: |
+    sensor.ValidateAndPersist with RejectIfExists=true detects the existing
+    file via os.Stat before writing and returns *SensorAlreadyExistsError.
+    The script's errors.As branch builds a sensor_already_exists Signal and
+    returns exit 2.
+description: |
+  /create-sensor's write-sensor sets PersistOpts.RejectIfExists=true so a
+  re-run with the same id is a hard error instead of a silent overwrite —
+  authoring should be deliberate. sensor.ValidateAndPersist returns
+  *SensorAlreadyExistsError, which the script translates into a Signal
+  verdict=error, metadata.kind=sensor_already_exists with metadata.path,
+  and returns exit 2.
+evidence:
+- file: skills/create-sensor/scripts/write-sensor.go
+  kind: implementation
+  line_end: 92
+  line_start: 84
+  rationale: errors.As branch that catches *SensorAlreadyExistsError and emits the
+    canonical Signal.
+- file: lib/sensor/persist.go
+  kind: implementation
+  rationale: ValidateAndPersist with PersistOpts.RejectIfExists check before writing.
+- file: skills/create-sensor/scripts/write-sensor.go
+  kind: contract
+  line_end: 55
+  line_start: 37
+  rationale: flag.NewFlagSet declaration that defines the --out / positional draft
+    argv contract used by the trigger fixture.
+expected_outcome:
+  fixture:
+    last_jsonl_signal:
+      metadata:
+        kind: sensor_already_exists
+        path: /tmp/projectG/.harness/sensors/assert-charge-201.yaml
+      sensor_id: write-sensor
+      severity: high
+      verdict: error
+  invariants:
+  - metadata.kind == "sensor_already_exists".
+  - Exit code is 2.
+  - The existing file's bytes are unchanged after the run.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=sensor_already_exists; exit 2.
+id: create-sensor-already-exists
+journey_id: create-sensor
+name: Refuse to overwrite an existing sensor file
+regression_priority: high
+tags:
+- error-handling
+- idempotent
+- framework-create-sensor
+trigger:
+  fixture:
+    argv:
+    - write-sensor
+    - --out=/tmp/projectG/.harness/sensors
+    - /tmp/draft.yaml
+    draft_payload:
+      id: assert-charge-201
+      version: 0.1.0
+    project_state:
+      existing_file: .harness/sensors/assert-charge-201.yaml
+  shape: cli-argv
+  summary: Run create-sensor's write-sensor with an id whose YAML already exists in
+    <outDir>.
+version: 0.1.0

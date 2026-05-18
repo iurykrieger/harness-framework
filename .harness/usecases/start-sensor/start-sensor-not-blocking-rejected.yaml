@@ -1,0 +1,58 @@
+behavior:
+  business_rules:
+  - Non-blocking sensors MUST be invoked via /run-sensor, not /start-sensor.
+  - The rejection happens before deps run.
+  - Exit code is 2 (usage / pre-check failure class).
+  summary: |
+    After validating the sensor against schemas/sensor.yaml, runStart inspects
+    execution.blocking. If it is not true, the script emits a failed Signal
+    with cause=not_blocking and exits 2 before any preflight/spawn.
+description: |
+  Symmetric to /run-sensor refusing blocking sensors: /start-sensor refuses
+  to detach a sensor whose execution.blocking=false or is absent. Such a
+  sensor's command will exit on its own and does not need a watcher; the
+  agent should use /run-sensor instead. Exit 2 with cause=not_blocking.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  kind: implementation
+  line_end: 95
+  line_start: 89
+  rationale: blocking guard inside runStart that returns cause=not_blocking when execution.blocking
+    is missing/false.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares execution.blocking boolean that discriminates /start-sensor
+    vs /run-sensor.
+expected_outcome:
+  fixture:
+    metadata:
+      cause: not_blocking
+      kind: failed
+    sensor_id: lint-go-vet-computational
+    severity: high
+    verdict: error
+  invariants:
+  - metadata.cause == "not_blocking".
+  - Exit code is 2.
+  - No subprocess spawned, no registry entry written.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=failed, cause=not_blocking; exit 2.
+id: start-sensor-not-blocking-rejected
+journey_id: start-sensor
+name: Reject /start-sensor for a non-blocking sensor
+regression_priority: medium
+tags:
+- error-handling
+- framework-start-sensor
+trigger:
+  fixture:
+    argv:
+    - start-sensor
+    - lint-go-vet-computational
+    env:
+      CLAUDE_PLUGIN_ROOT: /path/to/harness-framework
+  shape: cli-argv
+  summary: Invoke start-sensor with the id of a sensor whose execution.blocking is
+    false.
+version: 0.1.0

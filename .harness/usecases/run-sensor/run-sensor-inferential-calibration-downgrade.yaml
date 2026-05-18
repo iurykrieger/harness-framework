@@ -1,0 +1,76 @@
+behavior:
+  business_rules:
+  - The downgrade only applies when the computed aggregate verdict is fail.
+  - The downgrade only applies when confidence < calibration.confidence_threshold.
+  - metadata.calibration_downgrade=true is stamped on the aggregate when the downgrade
+    fires.
+  - HARNESS_AGGREGATE_CONFIDENCE individuals are filtered out before computing counts/evidence.
+  summary: |
+    extractConfidenceAndFilter walks the streamed individuals, picks the first
+    HARNESS_AGGREGATE_CONFIDENCE=<float> line's value, and removes the magic
+    individual from the stream. signal.Aggregate computes the aggregate
+    verdict; if it is fail AND confidence < threshold the runner overrides
+    the verdict to warn/low and stamps calibration_downgrade=true.
+description: |
+  When an inferential sensor's subprocess emits a
+  `HARNESS_AGGREGATE_CONFIDENCE=<float>` line on stdout and the resulting
+  aggregate verdict would be "fail", the runner compares the parsed
+  confidence with calibration.confidence_threshold. If confidence is below
+  the threshold the verdict is downgraded to "warn" / severity "low" and
+  metadata.calibration_downgrade=true is stamped on the aggregate.
+evidence:
+- file: skills/run-sensor/scripts/run-inferential.go
+  kind: implementation
+  line_end: 327
+  line_start: 303
+  rationale: The downgrade decision and metadata stamping site.
+- file: skills/run-sensor/scripts/run-inferential.go
+  kind: implementation
+  line_end: 384
+  line_start: 367
+  rationale: extractConfidenceAndFilter that parses HARNESS_AGGREGATE_CONFIDENCE and
+    removes magic individuals.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares the inferential calibration block (confidence_threshold) consumed
+    by the downgrade decision.
+expected_outcome:
+  fixture:
+    final_aggregate:
+      confidence: 0.55
+      metadata:
+        calibration_downgrade: true
+        kind: aggregate
+        output_mode: stream
+      severity: low
+      verdict: warn
+  invariants:
+  - aggregate.verdict == "warn".
+  - aggregate.confidence == the parsed HARNESS_AGGREGATE_CONFIDENCE value.
+  - metadata.calibration_downgrade == true.
+  - No HARNESS_AGGREGATE_CONFIDENCE line appears as an individual Signal on stdout.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Aggregate Signal with verdict=warn, severity=low, metadata.calibration_downgrade=true.
+id: run-sensor-inferential-calibration-downgrade
+journey_id: run-sensor
+name: Inferential aggregate downgraded from fail to warn under confidence threshold
+regression_priority: critical
+tags:
+- happy-path
+- framework-run-sensor
+trigger:
+  fixture:
+    argv:
+    - run-inferential
+    - ai-review-code-inferential
+    sensor:
+      calibration:
+        confidence_threshold: 0.8
+    subprocess_stdout:
+    - 'Verdict: fail'
+    - HARNESS_AGGREGATE_CONFIDENCE=0.55
+  shape: cli-argv
+  summary: Run an inferential sensor whose calibrated judgment would be fail but whose
+    self-reported confidence is below the threshold.
+version: 0.1.0

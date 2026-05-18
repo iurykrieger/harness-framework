@@ -1,0 +1,82 @@
+behavior:
+  business_rules:
+  - Only blocking entries honor held_by; non-blocking entries skip this check.
+  - Manual hold is removed under the lock even when others still hold (the user said
+    stop).
+  - Stopping while held returns warn (not error) — the user's intent is recorded;
+    the action defers.
+  - metadata.holders is a summary list; metadata.dead_holders is the dead subset.
+  - Exit code is 0.
+  summary: |
+    Inside the lock, RemoveHolder strips the manual hold and IsHeld
+    inspects remaining HeldBy entries. With one sensor holder still alive,
+    runStop builds metadata.holders / metadata.dead_holders summaries via
+    registry.SummarizeHolders and emits warn/held, then returns exit 0.
+description: |
+  After removing the manual hold, /stop-sensor calls registry.IsHeld(entry).
+  If any held_by entry remains (e.g. another running sensor declared this
+  one as a requires[kind=sensor] dep), runStop emits a Signal verdict=warn,
+  metadata.kind=held listing the holders and the dead-only subset, and
+  returns exit 0 without killing the subprocess. The manual hold removal
+  IS persisted, so a re-run after the other holders release will succeed.
+evidence:
+- file: skills/stop-sensor/scripts/stop.go
+  kind: implementation
+  line_end: 194
+  line_start: 177
+  rationale: held emission path that inspects holders and emits warn/held.
+- file: lib/registry/state.go
+  kind: contract
+  rationale: HeldByEntry / IsHeld / SummarizeHolders contract used by the holder accounting.
+expected_outcome:
+  fixture:
+    metadata:
+      dead_holders: []
+      holders:
+      - id: integration-tests
+        kind: sensor
+        pid: 250
+        pid_alive: true
+      kind: held
+    sensor_id: postgres-blocking
+    severity: low
+    verdict: warn
+  invariants:
+  - metadata.kind == "held".
+  - The subprocess (PGID) is NOT signaled.
+  - The manual hold is removed from the registry entry.
+  - Exit code is 0.
+  shape: signal-jsonl
+  side_effects:
+  - <projectRoot>/.harness/runtime/running_sensors.json keeps the entry but loses
+    the manual hold.
+  summary: Signal verdict=warn, metadata.kind=held, with holders / dead_holders summaries;
+    exit 0.
+id: stop-sensor-held-by-other-sensors
+journey_id: stop-sensor
+name: Refuse to stop when other sensors still hold the run
+regression_priority: high
+tags:
+- error-handling
+- side-effects
+- framework-stop-sensor
+trigger:
+  fixture:
+    argv:
+    - stop-sensor
+    - postgres-blocking
+    registry_state:
+      entries:
+      - held_by:
+        - kind: manual
+        - id: integration-tests
+          kind: sensor
+          pid: 250
+          pid_alive: true
+        pgid: 200
+        run_id: 200-zzzz1111
+        sensor_id: postgres-blocking
+  shape: cli-argv
+  summary: Invoke stop-sensor on a sensor whose registry entry still has non-manual
+    holders.
+version: 0.1.0

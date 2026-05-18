@@ -1,0 +1,74 @@
+behavior:
+  business_rules:
+  - The gate runs BEFORE any spawn for the requested sensor's command.
+  - metadata.cause == "preflight_failed".
+  - metadata.missing_tools / missing_envs / missing_contexts list the blockers.
+  - Already-attached blocking deps are detached on failure.
+  - Exit code is 1.
+  summary: |
+    orchestrator.PreflightGate evaluates requires[] against the live env and
+    PATH. Missing entries produce the canonical signal (metadata.kind=failed,
+    cause=preflight_failed). runStart merges Diagnose, detaches deps, and
+    returns 1 with that Signal.
+description: |
+  After deps pass, runStart invokes orchestrator.PreflightGate(target, env,
+  output) on the requested sensor. If any requires[kind ∈ {env,tool,context}]
+  entry is unmet, PreflightGate returns the canonical "preflight_failed"
+  signal which runStart merges with the Diagnose block and emits as the
+  final Signal. Any already-attached blocking deps are detached. Exit 1.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  kind: implementation
+  line_end: 152
+  line_start: 137
+  rationale: Preflight gate invocation in runStart and Diagnose merge on failure.
+- file: lib/orchestrator/gate.go
+  kind: implementation
+  rationale: PreflightGate canonical implementation that builds the missing-env/tool/context
+    lists.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares requires[] entries with kind ∈ {env, tool, context, sensor}
+    consumed by the gate.
+expected_outcome:
+  fixture:
+    metadata:
+      cause: preflight_failed
+      kind: failed
+      missing_tools:
+      - docker
+    sensor_id: serve-app-blocking
+    severity: high
+    verdict: error
+  invariants:
+  - metadata.cause == "preflight_failed".
+  - missing_tools / missing_envs / missing_contexts in metadata reflect the actual
+    unmet requires entries.
+  - No subprocess spawned, no registry entry written.
+  - Exit code is 1.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=failed, cause=preflight_failed, with
+    missing_tools=["docker"]; exit 1.
+id: start-sensor-preflight-gate-failed
+journey_id: start-sensor
+name: Refuse to start when requires[env|tool|context] gate fails
+regression_priority: high
+tags:
+- error-handling
+- framework-start-sensor
+trigger:
+  fixture:
+    argv:
+    - start-sensor
+    - serve-app-blocking
+    env:
+      PATH: /usr/bin
+    sensor:
+      requires:
+      - kind: tool
+        name: docker
+  shape: cli-argv
+  summary: Invoke start-sensor on a sensor whose requires[].tool names a binary not
+    on PATH.
+version: 0.1.0

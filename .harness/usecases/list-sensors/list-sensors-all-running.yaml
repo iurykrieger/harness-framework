@@ -1,0 +1,80 @@
+behavior:
+  business_rules:
+  - state == "running" when registry.IsPIDAlive(e.PID) is true.
+  - watcher_pid / watcher_alive are populated only for blocking entries.
+  - signals_log_path uses the per-run path (.harness/runtime/<id>/<run_id>/signals.log)
+    unless run_id ends with "-legacy".
+  - held_by is summarized via registry.SummarizeHolders (each holder annotated with
+    pid_alive when kind=sensor).
+  summary: |
+    runList iterates rs.Entries, calls registry.IsPIDAlive(e.PID) for each,
+    sets state="running" when alive, and folds blocking-only fields
+    (watcher_pid, watcher_alive). The resulting entries[] is wrapped in a
+    Signal verdict=pass, metadata.kind=list.
+description: |
+  When the registry contains entries whose subprocess PIDs are alive
+  (kill(pid, 0) succeeds), runList annotates each entry with state="running"
+  and pid_alive=true. Each entry includes sensor_id, run_id, blocking, pid,
+  started_at, command, held_by, signals_log_path, and (for blocking)
+  watcher_pid + watcher_alive. The Signal verdict is pass.
+evidence:
+- file: skills/list-sensors/scripts/list.go
+  kind: implementation
+  line_end: 89
+  line_start: 50
+  rationale: Loop that annotates each registry entry with pid_alive, state, watcher
+    fields, and emits the list Signal.
+- file: lib/registry/state.go
+  kind: contract
+  rationale: RunningSensorEntry / HeldByEntry shape that defines every field projected
+    into metadata.entries[].
+expected_outcome:
+  fixture:
+    metadata:
+      entries:
+      - blocking: true
+        pid: 1234
+        pid_alive: true
+        run_id: 1234-aaaa1111
+        sensor_id: serve-app-blocking
+        state: running
+        watcher_alive: true
+        watcher_pid: 1235
+      kind: list
+    sensor_id: list-sensors
+    severity: info
+    verdict: pass
+  invariants:
+  - verdict == "pass".
+  - For each blocking entry, watcher_pid is set.
+  - Every entry includes state ∈ {"running", "orphan"}.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=pass, metadata.kind=list, metadata.entries=[…running…];
+    exit 0.
+id: list-sensors-all-running
+journey_id: list-sensors
+name: List running sensors with live PIDs
+regression_priority: critical
+tags:
+- happy-path
+- framework-list-sensors
+trigger:
+  fixture:
+    argv:
+    - list-sensors
+    registry_state:
+      entries:
+      - blocking: true
+        held_by:
+        - kind: manual
+        pid: 1234
+        pid_alive: true
+        run_id: 1234-aaaa1111
+        sensor_id: serve-app-blocking
+        watcher_alive: true
+        watcher_pid: 1235
+  shape: cli-argv
+  summary: Invoke list-sensors when the registry holds at least one entry with a live
+    PID.
+version: 0.1.0

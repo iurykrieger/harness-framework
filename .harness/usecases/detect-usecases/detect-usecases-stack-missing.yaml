@@ -1,0 +1,57 @@
+behavior:
+  business_rules:
+  - 'Cross-check ordering: a usecase cannot reference a journey that doesn''t exist
+    yet.'
+  - The stack_missing message names the expected path and the remediation skill.
+  - Exit code is 2 (usage/IO class).
+  summary: |
+    loadStack stats <project-root>/.harness/stack.yaml; if it errors, the
+    function prints "error: stack_missing: <path> — run /detect-sensors
+    first" and returns code 2 directly without touching .harness/usecases/.
+description: |
+  write-usecase requires .harness/stack.yaml in <project-root> to perform
+  the journey_id cross-check. When the file does not exist, loadStack
+  returns code=2 and prints "error: stack_missing: <path> — run
+  /detect-sensors first" on stderr. The script exits 2.
+evidence:
+- file: skills/detect-usecases/scripts/write-usecase.go
+  kind: implementation
+  line_end: 107
+  line_start: 90
+  rationale: loadStack helper that emits stack_missing and returns code 2.
+- file: skills/detect-usecases/scripts/write-usecase.go
+  kind: contract
+  line_end: 55
+  line_start: 36
+  rationale: flag.NewFlagSet that declares the --out / --project-root / positional
+    draft argv contract used by the trigger fixture.
+expected_outcome:
+  fixture:
+    exit_code: 2
+    stderr_substring: stack_missing
+  invariants:
+  - Exit code is 2.
+  - stderr names "/detect-sensors" remediation.
+  - No file is written under <out>/.
+  shape: cli-exit
+  side_effects: []
+  summary: stderr contains "stack_missing"; exit 2.
+id: detect-usecases-stack-missing
+journey_id: detect-usecases
+name: write-usecase refuses to run when .harness/stack.yaml is absent
+regression_priority: high
+tags:
+- error-handling
+- framework-detect-usecases
+trigger:
+  fixture:
+    argv:
+    - write-usecase
+    - --out=/tmp/projectF/.harness/usecases
+    - --project-root=/tmp/projectF
+    - /tmp/draft.yaml
+    project_state:
+      stack_yaml_exists: false
+  shape: cli-argv
+  summary: Run write-usecase against a project whose .harness/stack.yaml is missing.
+version: 0.1.0

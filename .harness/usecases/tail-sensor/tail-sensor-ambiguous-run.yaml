@@ -1,0 +1,64 @@
+behavior:
+  business_rules:
+  - A bare sensor id matching multiple live entries is always ambiguous.
+  - The Signal carries one evidence entry per live run_id.
+  - Exit code is 1.
+  summary: |
+    FindEntries(sensorID) returns 2 entries. runTail iterates them to build
+    evidence rows ("active run_id: <runID>"), then emits the ambiguous_run
+    Signal and returns exit 1.
+description: |
+  When the caller passes a bare sensor id (no /<run_id>) and FindEntries
+  returns more than one live entry for that id, runTail emits a Signal
+  verdict=error, metadata.kind=ambiguous_run with one evidence row per
+  active run_id. The agent is expected to retry with sensorID/runID. Exit 1.
+evidence:
+- file: skills/tail-sensor/scripts/tail.go
+  kind: implementation
+  line_end: 150
+  line_start: 117
+  rationale: Bare-id branch that detects multiple entries and emits ambiguous_run.
+- file: lib/registry/state.go
+  kind: contract
+  rationale: RunningSensorState.FindEntries contract used by the ambiguity detection.
+expected_outcome:
+  fixture:
+    evidence:
+    - rationale: 'active run_id: 100-aaaa'
+    - rationale: 'active run_id: 200-bbbb'
+    metadata:
+      kind: ambiguous_run
+    sensor_id: serve-app-blocking
+    severity: high
+    verdict: error
+  invariants:
+  - metadata.kind == "ambiguous_run".
+  - len(evidence) == number of live entries for the sensor id.
+  - Exit code is 1.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=ambiguous_run, evidence[] one per active
+    run_id; exit 1.
+id: tail-sensor-ambiguous-run
+journey_id: tail-sensor
+name: Reject bare sensor id when multiple runs of that sensor are active
+regression_priority: high
+tags:
+- error-handling
+- framework-tail-sensor
+trigger:
+  fixture:
+    argv:
+    - tail-sensor
+    - serve-app-blocking
+    - "0"
+    registry_state:
+      entries:
+      - run_id: 100-aaaa
+        sensor_id: serve-app-blocking
+      - run_id: 200-bbbb
+        sensor_id: serve-app-blocking
+  shape: cli-argv
+  summary: Invoke tail-sensor with a bare id where the registry holds multiple live
+    entries for it.
+version: 0.1.0

@@ -1,0 +1,75 @@
+behavior:
+  business_rules:
+  - A failed dep MUST cascade — the requested sensor is NOT spawned.
+  - metadata.kind="cascade" on the requested sensor's aggregate.
+  - metadata.failed_dep_id names the responsible dep.
+  - Exit code is 1.
+  summary: |
+    The orchestrator resolves the dep DAG topologically. For each dep, it runs
+    the full lifecycle and records the result. If FirstFailedDep returns a
+    non-nil blocker for the requested sensor, BuildCascadeSignal constructs a
+    cascade Signal naming the failed dep and the runner emits it without
+    invoking the requested sensor's command.
+description: |
+  When the requested sensor declares depends_on: [...] (transitive
+  requires[kind=sensor]) and one dep produces verdict in {fail, error}, the
+  runner emits a cascade Signal (metadata.kind="cascade") for the requested
+  sensor instead of spawning its command. The dep's own aggregate Signal is
+  also emitted earlier in the stream; the cascade is the LAST line. Exit
+  code is 1.
+evidence:
+- file: skills/run-sensor/scripts/run-inferential.go
+  kind: implementation
+  line_end: 232
+  line_start: 203
+  rationale: Cascade construction site for the inferential runner (FirstFailedDep
+    + BuildCascadeSignal).
+- file: lib/orchestrator/cascade.go
+  kind: implementation
+  rationale: BuildCascadeSignal and FirstFailedDep canonical implementation reused
+    by both runners.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares depends_on (transitive requires[kind=sensor]) that defines the
+    dep DAG.
+expected_outcome:
+  fixture:
+    last_jsonl_signal:
+      metadata:
+        failed_dep_id: smoke-checks
+        failed_dep_verdict: fail
+        kind: cascade
+      sensor_id: integration-tests
+      severity: high
+      verdict: fail
+  invariants:
+  - The cascade Signal is the LAST JSONL line on stdout.
+  - metadata.kind == "cascade".
+  - metadata.failed_dep_id matches the id of the failing dep.
+  - Exit code is 1.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Dep aggregate (fail) first, then cascade Signal for requested sensor as
+    LAST line.
+id: run-sensor-dep-cascade
+journey_id: run-sensor
+name: Requested sensor cascades when a dep fails
+regression_priority: high
+tags:
+- error-handling
+- framework-run-sensor
+trigger:
+  fixture:
+    argv:
+    - run-computational
+    - integration-tests
+    sensor_graph:
+      integration-tests:
+        depends_on:
+        - smoke-checks
+      smoke-checks:
+        execution:
+          command: exit 1
+  shape: cli-argv
+  summary: Invoke run-computational with a sensor whose dep aggregate is fail.
+version: 0.1.0

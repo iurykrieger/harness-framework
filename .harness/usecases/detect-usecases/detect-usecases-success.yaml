@@ -1,0 +1,84 @@
+behavior:
+  business_rules:
+  - The canonical write path is <out>/<journey_id>/<id>.yaml.
+  - Stack must be present; otherwise the script returns exit 2 stack_missing.
+  - Comments in the draft are NOT preserved through canonical YAML write.
+  summary: |
+    run() reads the draft, loads stack.yaml from <project-root>/.harness/,
+    and calls usecase.ValidateAndPersist (schema + journey cross-check +
+    evidence existence). On success it prints the absolute path and
+    returns exit 0.
+description: |
+  Happy path for write-usecase: a schema-valid draft whose journey_id
+  matches some stack.journeys[].id and every evidence[].file exists on
+  disk under projectRoot. usecase.ValidateAndPersist writes canonical
+  YAML to <out>/<journey_id>/<id>.yaml; the script prints the absolute
+  path and returns exit 0.
+evidence:
+- file: skills/detect-usecases/scripts/write-usecase.go
+  kind: implementation
+  line_end: 88
+  line_start: 36
+  rationale: Entry point that reads the draft, loads stack, and delegates to usecase.ValidateAndPersist.
+- file: lib/usecase/persist.go
+  kind: implementation
+  rationale: ValidateAndPersist implementation that validates + cross-checks + writes
+    canonical YAML.
+- file: schemas/usecase.yaml
+  kind: contract
+  rationale: Declares the UseCase schema the draft must satisfy.
+expected_outcome:
+  fixture:
+    exit_code: 0
+    stdout_substring: /user-registration/create-user-with-email.yaml
+  invariants:
+  - Exit code is 0.
+  - <out>/<journey_id>/<id>.yaml exists.
+  shape: cli-exit
+  side_effects:
+  - <out>/<journey_id>/<id>.yaml is created or overwritten with canonical YAML.
+  summary: stdout contains the absolute path under <journey_id>/; exit 0.
+id: detect-usecases-success
+journey_id: detect-usecases
+name: Persist a valid usecase draft via write-usecase
+regression_priority: critical
+tags:
+- happy-path
+- side-effects
+- framework-detect-usecases
+trigger:
+  fixture:
+    argv:
+    - write-usecase
+    - --out=/tmp/projectF/.harness/usecases
+    - --project-root=/tmp/projectF
+    - --schemas-dir=/abs/path/to/schemas
+    - /tmp/draft.yaml
+    draft_payload:
+      behavior:
+        summary: Validate, persist, emit.
+      description: POST /users with a valid email creates an account.
+      evidence:
+      - file: src/users/users.controller.ts
+        rationale: handler
+      expected_outcome:
+        fixture:
+          body:
+            id: uuid
+          status: 201
+        shape: HTTP response
+        summary: 201 with user object.
+      id: create-user-with-email
+      journey_id: user-registration
+      name: Create user with valid email
+      trigger:
+        fixture:
+          body:
+            email: alice@example.com
+        shape: HTTP request
+        summary: POST /users with body.email.
+      version: 0.1.0
+  shape: cli-argv
+  summary: Run write-usecase with --out=<dir>, --project-root=<dir>, a schema-valid
+    draft, and a stack.yaml that declares the journey_id.
+version: 0.1.0

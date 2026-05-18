@@ -1,0 +1,69 @@
+behavior:
+  business_rules:
+  - Targets are relative to <projectRoot>/.harness/fixtures/.
+  - Write is atomic (tmp + rename) — partial files are never visible.
+  - Empty payload is permitted (an empty JSON document is a valid fixture).
+  - Exit code is 0.
+  summary: |
+    The script reads stdin into bytes, resolves projectRoot via
+    registry.Lookup, and calls lib/fixture.Write(projectRoot, "order-valid.json",
+    payload). Write creates parent dirs, writes a temp file, and renames
+    into place atomically. The script emits the fixture_written Signal.
+description: |
+  Happy path for write-fixture: the target relative path is safe, the
+  payload is read from stdin (or --from-file), and lib/fixture.Write
+  atomically writes <projectRoot>/.harness/fixtures/<relPath>. The script
+  emits a Signal verdict=pass, metadata.kind=fixture_written with the
+  absolute path. Exit 0.
+evidence:
+- file: skills/create-sensor/scripts/write-fixture.go
+  kind: implementation
+  line_end: 90
+  line_start: 33
+  rationale: Entry point that reads stdin/--from-file and delegates to lib/fixture.Write.
+- file: lib/fixture/write.go
+  kind: implementation
+  rationale: Write implementation that performs the atomic tmp+rename write under
+    the fixtures root.
+- file: skills/create-sensor/scripts/write-fixture.go
+  kind: contract
+  line_end: 56
+  line_start: 37
+  rationale: flag.NewFlagSet declaration that defines the --from-file flag + positional
+    target argv contract used by the trigger fixture.
+expected_outcome:
+  fixture:
+    last_jsonl_signal:
+      metadata:
+        kind: fixture_written
+        path: /tmp/projectG/.harness/fixtures/order-valid.json
+      sensor_id: write-fixture
+      severity: info
+      verdict: pass
+  invariants:
+  - metadata.kind == "fixture_written".
+  - Exit code is 0.
+  - The target file exists and contains the payload bytes exactly.
+  shape: signal-jsonl
+  side_effects:
+  - <projectRoot>/.harness/fixtures/<relPath> is created or overwritten atomically.
+  summary: Signal verdict=pass, metadata.kind=fixture_written, metadata.path=<abs>;
+    exit 0.
+id: create-sensor-fixture-written
+journey_id: create-sensor
+name: Persist a fixture payload under .harness/fixtures via write-fixture
+regression_priority: critical
+tags:
+- happy-path
+- side-effects
+- framework-create-sensor
+trigger:
+  fixture:
+    argv:
+    - write-fixture
+    - order-valid.json
+    stdin_payload: |
+      {"id":"42","items":[]}
+  shape: cli-argv
+  summary: Run write-fixture with a safe relative target and a JSON payload on stdin.
+version: 0.1.0

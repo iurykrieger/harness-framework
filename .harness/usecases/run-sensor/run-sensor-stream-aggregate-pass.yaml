@@ -1,0 +1,70 @@
+behavior:
+  business_rules:
+  - JSONL on stdout, one Signal per line.
+  - The aggregate Signal MUST be the LAST line.
+  - metadata.counts on the aggregate reflects per-verdict counts from individuals.
+  - metadata.output_mode == "stream".
+  summary: |
+    The runner streams the subprocess, matches each `--- PASS:` line against the
+    declared patterns, emits one Signal per match, then ends with an aggregate
+    Signal whose verdict is the worst of exit-code-mapped verdict and the
+    highest-rank stream verdict.
+description: |
+  When /run-sensor receives a computational sensor with execution.output=stream,
+  the runner spawns sh -c <command>, scans stdout+stderr line-by-line against
+  execution.output_parsing.patterns, emits one Signal JSONL line per matched
+  line (individuals), and ends with one aggregate Signal as the LAST line.
+  Aggregate verdict combines exit_code_map[exit_code] and the worst stream
+  verdict. This case covers exit 0 plus only-pass individuals.
+evidence:
+- file: skills/run-sensor/scripts/run-computational.go
+  kind: implementation
+  line_end: 120
+  line_start: 56
+  rationale: Entry point that resolves the sensor and delegates streaming/aggregation
+    to orchestrator.RunWithDepsRoot.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares execution.output_parsing.patterns and stream/single discriminator
+    that gate this branch.
+expected_outcome:
+  fixture:
+    final_aggregate:
+      metadata:
+        counts:
+          error: 0
+          fail: 0
+          pass: 3
+          warn: 0
+        exit_code: 0
+        kind: aggregate
+        output_mode: stream
+        timed_out: false
+      severity: info
+      verdict: pass
+    individuals_count: 3
+  invariants:
+  - The aggregate Signal is the LAST JSONL line written to stdout.
+  - aggregate.metadata.counts sums equal the number of individual Signals emitted.
+  - aggregate.verdict reflects the max-rank verdict between exit_code_map and stream.
+  shape: signal-jsonl
+  side_effects: []
+  summary: N individual pass Signals followed by one aggregate Signal verdict=pass.
+id: run-sensor-stream-aggregate-pass
+journey_id: run-sensor
+name: Run a streaming computational sensor whose aggregate is pass
+regression_priority: critical
+tags:
+- happy-path
+- framework-run-sensor
+trigger:
+  fixture:
+    argv:
+    - run-computational
+    - go-test-verbose-computational
+    env:
+      HARNESS_REGISTRY_ROOT: /tmp/projectB
+  shape: cli-argv
+  summary: Invoke run-computational with a streaming sensor whose subprocess exits
+    0 and only emits pattern-matched pass lines.
+version: 0.1.0

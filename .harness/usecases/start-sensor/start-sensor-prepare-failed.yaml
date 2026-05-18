@@ -1,0 +1,74 @@
+behavior:
+  business_rules:
+  - prepare[] is fail-fast — subsequent steps are not run.
+  - execution.command MUST NOT be spawned if any prepare step failed.
+  - metadata.lifecycle.prepare records per-step verdict / exit_code / command.
+  - Already-attached blocking deps are detached on prepare failure.
+  - Exit code is 1.
+  summary: |
+    RunPreparePhase iterates prepare[]; the first non-pass step sets
+    prepFailed=true. runStart then emits a failed Signal with cause=
+    prepare_failed and metadata.lifecycle.prepare carrying per-step
+    verdicts.
+description: |
+  After preflight gate passes, runStart runs the target sensor's
+  execution.prepare[] steps via orchestrator.RunPreparePhase. The phase is
+  fail-fast: the first non-pass step aborts and the runner returns 1 with
+  cause=prepare_failed, carrying the per-step lifecycle results in
+  metadata.lifecycle.prepare. Already-attached blocking deps are detached.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  kind: implementation
+  line_end: 164
+  line_start: 154
+  rationale: RunPreparePhase call and prepare_failed emission path.
+- file: lib/orchestrator/run.go
+  kind: implementation
+  rationale: RunPreparePhase implementation that drives prepare[] fail-fast semantics.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares execution.prepare[] step shape.
+expected_outcome:
+  fixture:
+    metadata:
+      cause: prepare_failed
+      kind: failed
+      lifecycle:
+        prepare:
+        - command: cp .env.example .env
+          exit_code: 1
+          verdict: fail
+    sensor_id: serve-app-blocking
+    severity: high
+    verdict: error
+  invariants:
+  - metadata.cause == "prepare_failed".
+  - metadata.lifecycle.prepare reflects the executed steps (fail-fast cut-off).
+  - Sensor's main command did NOT execute.
+  - Exit code is 1.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=failed, cause=prepare_failed, with
+    metadata.lifecycle.prepare; exit 1.
+id: start-sensor-prepare-failed
+journey_id: start-sensor
+name: Refuse to start when target prepare[] fails fail-fast
+regression_priority: high
+tags:
+- error-handling
+- framework-start-sensor
+trigger:
+  fixture:
+    argv:
+    - start-sensor
+    - serve-app-blocking
+    prepare_step_0_exit: 1
+    sensor:
+      execution:
+        command: ./serve.sh
+        prepare:
+        - command: cp .env.example .env
+        - command: docker compose up -d postgres
+  shape: cli-argv
+  summary: Invoke start-sensor on a sensor whose first prepare[] step exits non-zero.
+version: 0.1.0

@@ -1,0 +1,71 @@
+behavior:
+  business_rules:
+  - mkdir uses mode 0o755.
+  - 'Idempotent: pre-existing directories are not an error.'
+  - The path is joined with root so traversal cannot escape.
+  - Exit code is 0.
+  summary: |
+    heal.Apply matches the action against the allowlist, calls
+    os.MkdirAll(rootJoinedPath, 0o755), and returns applied=true.
+    Subsequent invocations with the directory already present return
+    applied=true without error (MkdirAll is idempotent).
+description: |
+  Step 2 of /heal-sensor with a Plan containing a "mkdir" action.
+  lib/heal.Apply matches it against the allowlist, calls os.MkdirAll with
+  mode 0o755, and returns applied=true. When the directory already
+  exists, the action is a no-op (idempotent contract).
+evidence:
+- file: skills/heal-sensor/scripts/apply-safe.go
+  kind: implementation
+  line_end: 71
+  line_start: 29
+  rationale: Entry point that drives heal.Apply over Plan.AutoApply.
+- file: lib/heal/apply.go
+  kind: implementation
+  rationale: Apply implementation that performs the mkdir via os.MkdirAll.
+- file: lib/heal/plan.go
+  kind: contract
+  rationale: Plan / Action shape that defines the mkdir action's field names consumed
+    by the trigger fixture.
+expected_outcome:
+  fixture:
+    stdout_object:
+      results:
+      - action:
+          action: mkdir
+          path: tmp/uploads
+        applied: true
+        needs_input: false
+  invariants:
+  - results[0].applied is true.
+  - <root>/tmp/uploads exists after the run.
+  - Exit code is 0.
+  shape: stdout-json
+  side_effects:
+  - <root>/tmp/uploads (with any necessary parents) is created.
+  summary: results[0].applied=true; the directory exists; exit 0.
+id: heal-sensor-apply-safe-mkdir
+journey_id: heal-sensor
+name: apply-safe creates a missing directory idempotently
+regression_priority: high
+tags:
+- happy-path
+- idempotent
+- side-effects
+- framework-heal-sensor
+trigger:
+  fixture:
+    argv:
+    - apply-safe
+    - --plan=/tmp/plan.json
+    - --sensor=/tmp/failing-sensor.yaml
+    - --root=/tmp/projectH
+    plan_payload:
+      auto_apply:
+      - action: mkdir
+        path: tmp/uploads
+    project_state:
+      path_exists: false
+  shape: cli-argv
+  summary: Run apply-safe with a Plan containing one mkdir action.
+version: 0.1.0

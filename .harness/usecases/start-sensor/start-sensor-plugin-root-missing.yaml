@@ -1,0 +1,60 @@
+behavior:
+  business_rules:
+  - CLAUDE_PLUGIN_ROOT is mandatory because the watcher binary is run via go run -C
+    $CLAUDE_PLUGIN_ROOT.
+  - The check happens before sensor resolution / spawn, so nothing else is touched.
+  - Exit code is 1 (sensor-validation class).
+  summary: |
+    After argument parsing, runStart reads CLAUDE_PLUGIN_ROOT via
+    os.Getenv; an empty value produces a failed Signal with
+    cause=plugin_root_missing and exit 1.
+description: |
+  /start-sensor must know the plugin root to locate the watcher binary
+  (spawned via go run -C <pluginRoot> ./skills/start-sensor/scripts).
+  When CLAUDE_PLUGIN_ROOT is empty, the script refuses with metadata.kind=
+  failed, cause=plugin_root_missing and exits 1 without any spawn.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  kind: implementation
+  line_end: 64
+  line_start: 59
+  rationale: CLAUDE_PLUGIN_ROOT guard that triggers the plugin_root_missing failure.
+- file: skills/start-sensor/scripts/start.go
+  kind: contract
+  line_end: 40
+  line_start: 30
+  rationale: main() that consumes CLAUDE_PLUGIN_ROOT and defines the positional sensor
+    id argv shape.
+expected_outcome:
+  fixture:
+    metadata:
+      cause: plugin_root_missing
+      kind: failed
+    sensor_id: serve-app-blocking
+    severity: high
+    verdict: error
+  invariants:
+  - metadata.cause == "plugin_root_missing".
+  - Exit code is 1.
+  - No subprocess spawned, no registry entry written.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=failed, cause=plugin_root_missing;
+    exit 1.
+id: start-sensor-plugin-root-missing
+journey_id: start-sensor
+name: Refuse to start when CLAUDE_PLUGIN_ROOT is unset
+regression_priority: high
+tags:
+- error-handling
+- framework-start-sensor
+trigger:
+  fixture:
+    argv:
+    - start-sensor
+    - serve-app-blocking
+    env:
+      CLAUDE_PLUGIN_ROOT: ""
+  shape: cli-argv
+  summary: Invoke start-sensor with CLAUDE_PLUGIN_ROOT unset.
+version: 0.1.0

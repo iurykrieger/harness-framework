@@ -1,0 +1,57 @@
+behavior:
+  business_rules:
+  - Resolution is performed before any other validation.
+  - The exit code is 2 (usage class) because the input was unresolvable.
+  summary: |
+    sensor.Resolve walks both the bare-id and path-shaped resolution rules; if
+    nothing exists it returns a typed error which the runner prints and
+    propagates as exit 2.
+description: |
+  When the agent passes a sensor id (or path) that does not resolve to a
+  file under <projectRoot>/.harness/sensors/<id>.yaml, sensor.Resolve returns
+  an error. The runner forwards this to stderr ("error: resolve: ...") and
+  exits 2 (usage/IO error class) without spawning anything.
+evidence:
+- file: skills/run-sensor/scripts/run-computational.go
+  kind: implementation
+  line_end: 95
+  line_start: 90
+  rationale: sensor.Resolve call site that converts a non-existent id to exit-2 "error
+    resolve" output.
+- file: lib/sensor/path.go
+  kind: implementation
+  rationale: Implements bare-id vs path-shaped resolution rules and produces the typed
+    error surfaced here.
+- file: skills/run-sensor/scripts/run-computational.go
+  kind: contract
+  line_end: 84
+  line_start: 73
+  rationale: flag.NewFlagSet definition that declares the CLI argv shape consumed
+    by the trigger fixture.
+expected_outcome:
+  fixture:
+    exit_code: 2
+    stderr_substring: 'error: resolve:'
+    stdout: ""
+  invariants:
+  - Exit code is 2.
+  - 'Stderr leads with "error: resolve:".'
+  shape: cli-exit
+  side_effects: []
+  summary: 'Process exits 2 with "error: resolve:" on stderr; nothing on stdout.'
+id: run-sensor-missing-sensor
+journey_id: run-sensor
+name: Resolve a sensor id that does not exist on disk
+regression_priority: medium
+tags:
+- error-handling
+- framework-run-sensor
+trigger:
+  fixture:
+    argv:
+    - run-computational
+    - does-not-exist
+  shape: cli-argv
+  summary: Invoke run-computational with an id for which no .harness/sensors/<id>.yaml
+    exists.
+version: 0.1.0

@@ -1,0 +1,74 @@
+behavior:
+  business_rules:
+  - /heal-sensor never auto-applies an arbitrary shell command.
+  - Refused actions surface needs_input=true so the agent escalates.
+  - Refused actions do NOT change exit code.
+  - Exit code is 0.
+  summary: |
+    heal.Apply consults the action allowlist; "run_shell" is not present
+    so the function returns applied=false, needs_input=true with a reason
+    explaining the gate. The script emits the result and exits 0.
+description: |
+  Step 2 of /heal-sensor is intentionally narrow: lib/heal.Apply has a
+  fixed allowlist (cp .env.example .env, mkdir, touch, set-env-in-file
+  with chmod 600). Any action outside that set returns
+  ApplyResult{applied: false, needs_input: true, reason: "..."} so the
+  calling agent can decide whether to prompt the user / open a ticket /
+  abort. The script still exits 0 because applying nothing is not a
+  failure of apply-safe.
+evidence:
+- file: lib/heal/apply.go
+  kind: implementation
+  rationale: Apply implementation that gates actions against the allowlist and returns
+    needs_input on mismatch.
+- file: skills/heal-sensor/scripts/apply-safe.go
+  kind: implementation
+  line_end: 71
+  line_start: 65
+  rationale: Result serialization in the script that flows applied/needs_input/reason
+    through.
+- file: lib/heal/plan.go
+  kind: contract
+  rationale: Plan / Action shape that defines the action discriminator consulted by
+    the allowlist gate.
+expected_outcome:
+  fixture:
+    stdout_object:
+      results:
+      - action:
+          action: run_shell
+          command: docker compose up -d postgres
+        applied: false
+        needs_input: true
+        reason: action not in allowlist
+  invariants:
+  - applied is false.
+  - needs_input is true.
+  - reason is non-empty (explains why).
+  - Exit code is 0.
+  shape: stdout-json
+  side_effects: []
+  summary: results[0].applied=false, needs_input=true with a reason; exit 0.
+id: heal-sensor-apply-safe-refused
+journey_id: heal-sensor
+name: apply-safe refuses an action outside the allowlist
+regression_priority: critical
+tags:
+- error-handling
+- authz
+- framework-heal-sensor
+trigger:
+  fixture:
+    argv:
+    - apply-safe
+    - --plan=/tmp/plan.json
+    - --sensor=/tmp/failing-sensor.yaml
+    - --root=/tmp/projectH
+    plan_payload:
+      auto_apply:
+      - action: run_shell
+        command: docker compose up -d postgres
+  shape: cli-argv
+  summary: Run apply-safe with a Plan containing an action like "run_shell" that is
+    not on the safe allowlist.
+version: 0.1.0

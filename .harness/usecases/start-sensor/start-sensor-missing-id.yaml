@@ -1,0 +1,60 @@
+behavior:
+  business_rules:
+  - The sensor id is the first and only required positional argument.
+  - The missing-id Signal carries sensor_id="unknown".
+  - Exit code is 2 (usage class).
+  summary: |
+    After cli.Bootstrap succeeds, runStart inspects args; len(args) < 1
+    yields a failed Signal with cause=bootstrap_failed and exit code 2.
+description: |
+  When the user invokes /start-sensor with no positional argument, runStart
+  returns exit code 2 and emits a Signal verdict=error, metadata.kind=failed
+  with cause=bootstrap_failed and rationale naming the missing argument.
+  Nothing is spawned, nothing is written to the registry.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  kind: implementation
+  line_end: 56
+  line_start: 54
+  rationale: Guard that triggers the missing-id failure path.
+- file: skills/start-sensor/scripts/start.go
+  kind: implementation
+  line_end: 448
+  line_start: 420
+  rationale: startSignal helper that builds the failed verdict carrying cause=bootstrap_failed.
+- file: skills/start-sensor/scripts/start.go
+  kind: contract
+  line_end: 40
+  line_start: 30
+  rationale: main() that defines the CLI argv contract (positional sensor id) consumed
+    by the trigger fixture.
+expected_outcome:
+  fixture:
+    metadata:
+      cause: bootstrap_failed
+      kind: failed
+    sensor_id: unknown
+    severity: high
+    verdict: error
+  invariants:
+  - verdict == "error".
+  - metadata.kind == "failed" and metadata.cause == "bootstrap_failed".
+  - Exit code is 2.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=failed, cause=bootstrap_failed; exit
+    2.
+id: start-sensor-missing-id
+journey_id: start-sensor
+name: Reject /start-sensor invocation without a sensor id
+regression_priority: medium
+tags:
+- error-handling
+- framework-start-sensor
+trigger:
+  fixture:
+    argv:
+    - start-sensor
+  shape: cli-argv
+  summary: Invoke start-sensor with no positional sensor id.
+version: 0.1.0

@@ -1,0 +1,58 @@
+behavior:
+  business_rules:
+  - Missing-argument is exit code 2 (usage class).
+  - Verdict is warn (not error) because no real state was checked.
+  - metadata.kind == "not_running" with rationale "missing sensor id".
+  summary: |
+    runStop checks len(args) < 1 first; on miss, it builds a warn/not_running
+    Signal carrying the missing-id rationale, validates it, and returns exit
+    code 2.
+description: |
+  Calling /stop-sensor with no positional argument is treated as a soft
+  no-op: runStop emits a Signal verdict=warn, metadata.kind=not_running
+  with rationale "missing sensor id" and returns exit code 2. The registry
+  is not touched. This matches the project rule that /stop-sensor is
+  idempotent — stopping a non-running sensor MUST NOT error in
+  registry-state terms, but the missing-argument variant signals warn so
+  the agent can correct its call.
+evidence:
+- file: skills/stop-sensor/scripts/stop.go
+  kind: implementation
+  line_end: 56
+  line_start: 47
+  rationale: Missing-args guard inside runStop that emits warn/not_running.
+- file: skills/stop-sensor/scripts/stop.go
+  kind: contract
+  line_end: 44
+  line_start: 27
+  rationale: main() declaring the flag.FlagSet contract that defines the positional
+    sensor id argv shape.
+expected_outcome:
+  fixture:
+    metadata:
+      kind: not_running
+    sensor_id: stop
+    severity: low
+    verdict: warn
+  invariants:
+  - verdict == "warn" and metadata.kind == "not_running".
+  - Exit code is 2.
+  - The registry is untouched.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=warn, metadata.kind=not_running, rationale "missing sensor
+    id"; exit 2.
+id: stop-sensor-missing-sensor-id
+journey_id: stop-sensor
+name: Stop without an id emits a soft warn not_running
+regression_priority: medium
+tags:
+- error-handling
+- framework-stop-sensor
+trigger:
+  fixture:
+    argv:
+    - stop-sensor
+  shape: cli-argv
+  summary: Invoke stop-sensor with no positional argument.
+version: 0.1.0

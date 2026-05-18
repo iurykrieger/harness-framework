@@ -1,0 +1,73 @@
+behavior:
+  business_rules:
+  - prepare[] is silent and fail-fast — first non-pass step aborts.
+  - execution.command MUST NOT run if any prepare step failed.
+  - teardown[] still runs in finally fashion.
+  - metadata.lifecycle.prepare records per-step results on the aggregate.
+  summary: |
+    RunPreparePhase iterates the steps fail-fast. The first non-pass step
+    aborts the loop and signals prepFailed=true. The orchestrator then
+    skips execution.command but still runs teardown[]. The aggregate
+    Signal records metadata.lifecycle.prepare per-step results.
+description: |
+  When a sensor declares execution.prepare[] steps and the first prepare step
+  produces a non-pass verdict, the orchestrator's RunPreparePhase aborts the
+  remaining prepare steps AND skips execution.command entirely. Teardown
+  still runs (finally semantics). The aggregate Signal carries
+  metadata.lifecycle.prepare with the per-step results.
+evidence:
+- file: lib/orchestrator/run.go
+  kind: implementation
+  rationale: Orchestrator that drives the prepare → command → teardown lifecycle with
+    fail-fast semantics.
+- file: lib/subprocess/step.go
+  kind: implementation
+  rationale: Step execution primitive used by prepare/teardown phases.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares execution.prepare[] / execution.teardown[] step shape consumed
+    by the lifecycle.
+expected_outcome:
+  fixture:
+    final_aggregate:
+      metadata:
+        cause: prepare_failed
+        kind: aggregate
+        lifecycle:
+          prepare:
+          - command: docker compose up -d postgres
+            exit_code: 1
+            verdict: fail
+      severity: high
+      verdict: fail
+  invariants:
+  - aggregate.verdict == "fail".
+  - metadata.lifecycle.prepare contains exactly the executed prepare entries (fail-fast
+    cut-off).
+  - The sensor's main command did NOT execute.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Aggregate Signal with verdict=fail and metadata.lifecycle.prepare carrying
+    the failing step.
+id: run-sensor-prepare-failed
+journey_id: run-sensor
+name: Prepare step fails fail-fast and the command never runs
+regression_priority: high
+tags:
+- error-handling
+- framework-run-sensor
+trigger:
+  fixture:
+    argv:
+    - run-computational
+    - integration-test-with-fixture-load
+    prepare_step_0_exit: 1
+    sensor:
+      execution:
+        command: go test ./tests/...
+        prepare:
+        - command: docker compose up -d postgres
+        - command: ./scripts/load-fixtures.sh
+  shape: cli-argv
+  summary: Run a sensor whose first prepare[] step exits non-zero.
+version: 0.1.0

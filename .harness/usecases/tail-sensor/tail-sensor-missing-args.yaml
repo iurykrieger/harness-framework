@@ -1,0 +1,53 @@
+behavior:
+  business_rules:
+  - Exactly two positional arguments are required.
+  - The error message shows the expected usage to guide the agent.
+  - Exit code is 2.
+  summary: |
+    runTail checks len(args) < 2 first; on miss it builds the tail_invalid_args
+    Signal with sensor_id "tail" and rationale describing the expected shape
+    "<sensor.id>[/<run.id>] <cursor>" then returns exit 2.
+description: |
+  /tail-sensor requires exactly two positional arguments: the sensor id
+  (optionally with /<run_id>) and a non-negative cursor. With fewer than
+  two args, runTail emits a Signal verdict=error, metadata.kind=tail_invalid_args
+  with rationale showing the expected usage, and returns exit 2.
+evidence:
+- file: skills/tail-sensor/scripts/tail.go
+  kind: implementation
+  line_end: 47
+  line_start: 36
+  rationale: Missing-args guard inside runTail.
+- file: skills/tail-sensor/scripts/tail.go
+  kind: contract
+  line_end: 33
+  line_start: 27
+  rationale: main() declaring the positional-argv contract consumed by the trigger
+    fixture.
+expected_outcome:
+  fixture:
+    metadata:
+      kind: tail_invalid_args
+    sensor_id: tail
+    severity: high
+    verdict: error
+  invariants:
+  - metadata.kind == "tail_invalid_args".
+  - Exit code is 2.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=tail_invalid_args; exit 2.
+id: tail-sensor-missing-args
+journey_id: tail-sensor
+name: Reject /tail-sensor without sensor id and cursor
+regression_priority: medium
+tags:
+- error-handling
+- framework-tail-sensor
+trigger:
+  fixture:
+    argv:
+    - tail-sensor
+  shape: cli-argv
+  summary: Invoke tail-sensor with no arguments.
+version: 0.1.0
