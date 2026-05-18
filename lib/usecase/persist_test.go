@@ -210,3 +210,117 @@ func TestValidateAndPersist_IdempotentUnderJourneyDir(t *testing.T) {
 		t.Errorf("bytes differ between calls; idempotency broken")
 	}
 }
+
+// buildDraftWithFixtures returns a JSON UseCase body derived from the
+// canonical fixture but with trigger.fixture and expected_outcome.fixture
+// replaced by the supplied envelope maps. projectRoot is used to place
+// fixture files for ref-form envelopes so Task 3's existence check
+// (not yet wired) does not interfere when it lands.
+func buildDraftWithFixtures(
+	t *testing.T,
+	projectRoot string,
+	triggerFx map[string]any,
+	outcomeFx map[string]any,
+) []byte {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal(usecasetest.CanonicalBody(t), &doc); err != nil {
+		t.Fatalf("unmarshal canonical: %v", err)
+	}
+
+	trigger, _ := doc["trigger"].(map[string]any)
+	trigger["fixture"] = triggerFx
+	doc["trigger"] = trigger
+
+	outcome, _ := doc["expected_outcome"].(map[string]any)
+	outcome["fixture"] = outcomeFx
+	doc["expected_outcome"] = outcome
+
+	body, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal draft: %v", err)
+	}
+	return body
+}
+
+// createFixturePlaceholder writes an empty placeholder file at
+// <projectRoot>/.harness/fixtures/<name> so Task 3's existence check
+// (not yet wired in Task 1) does not fail when it lands.
+func createFixturePlaceholder(t *testing.T, projectRoot, name string) {
+	t.Helper()
+	full := filepath.Join(projectRoot, ".harness", "fixtures", name)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir for fixture placeholder %s: %v", name, err)
+	}
+	if err := os.WriteFile(full, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write fixture placeholder %s: %v", name, err)
+	}
+}
+
+func TestValidateAndPersist_FixtureRefEnvelope(t *testing.T) {
+	tests := []struct {
+		name       string
+		triggerFx  map[string]any
+		outcomeFx  map[string]any
+		wantErrSub string // empty means: expect success
+		refs       []string // fixture refs to create on disk
+	}{
+		{
+			name:      "ref form ok",
+			triggerFx: map[string]any{"ref": "framework/x/trigger.json"},
+			outcomeFx: map[string]any{"ref": "framework/x/outcome.json"},
+			refs:      []string{"framework/x/trigger.json", "framework/x/outcome.json"},
+		},
+		{
+			name:      "inline primitive ok",
+			triggerFx: map[string]any{"inline": "tick"},
+			outcomeFx: map[string]any{"inline": map[string]any{"exit_code": float64(0)}},
+		},
+		{
+			name:       "both arms rejected",
+			triggerFx:  map[string]any{"ref": "a.json", "inline": "x"},
+			outcomeFx:  map[string]any{"inline": "ok"},
+			wantErrSub: "oneOf",
+		},
+		{
+			name:       "neither arm rejected",
+			triggerFx:  map[string]any{},
+			outcomeFx:  map[string]any{"inline": "ok"},
+			wantErrSub: "oneOf",
+		},
+		{
+			name:       "extra property rejected",
+			triggerFx:  map[string]any{"ref": "a.json", "extra": 1},
+			outcomeFx:  map[string]any{"inline": "ok"},
+			wantErrSub: "additionalProperties",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			schemasDir := schematest.RepoSchemasDir(t)
+			outDir := t.TempDir()
+			projectRoot := projectRootWithEvidence(t)
+
+			// Create placeholder files for any ref-form fixtures.
+			for _, ref := range tc.refs {
+				createFixturePlaceholder(t, projectRoot, ref)
+			}
+
+			body := buildDraftWithFixtures(t, projectRoot, tc.triggerFx, tc.outcomeFx)
+			_, err := usecase.ValidateAndPersist(body, outDir, projectRoot, minimalStack(), schemasDir)
+
+			if tc.wantErrSub == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErrSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantErrSub)
+			}
+		})
+	}
+}
