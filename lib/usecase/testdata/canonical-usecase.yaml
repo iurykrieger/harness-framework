@@ -14,10 +14,11 @@ evidence:
     and expected_outcome.fixture.body
 expected_outcome:
   fixture:
-    body:
-      email: alice@example.com
-      id: uuid
-    status: 201
+    inline:
+      body:
+        email: alice@example.com
+        id: uuid
+      status: 201
   invariants:
   - Response.body.id is UUID v4.
   shape: HTTP response
@@ -33,10 +34,11 @@ tags:
 - registration
 trigger:
   fixture:
-    body:
-      email: alice@example.com
-    method: POST
-    path: /users
+    inline:
+      body:
+        email: alice@example.com
+      method: POST
+      path: /users
   preconditions:
   - No user with email 'alice@example.com' exists.
   shape: HTTP request

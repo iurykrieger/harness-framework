@@ -214,8 +214,8 @@ func TestValidateAndPersist_IdempotentUnderJourneyDir(t *testing.T) {
 // buildDraftWithFixtures returns a JSON UseCase body derived from the
 // canonical fixture but with trigger.fixture and expected_outcome.fixture
 // replaced by the supplied envelope maps. projectRoot is used to place
-// fixture files for ref-form envelopes so Task 3's existence check
-// (not yet wired) does not interfere when it lands.
+// fixture files for ref-form envelopes so a future ref-existence check
+// does not fail when it is introduced.
 func buildDraftWithFixtures(
 	t *testing.T,
 	projectRoot string,
@@ -244,8 +244,8 @@ func buildDraftWithFixtures(
 }
 
 // createFixturePlaceholder writes an empty placeholder file at
-// <projectRoot>/.harness/fixtures/<name> so Task 3's existence check
-// (not yet wired in Task 1) does not fail when it lands.
+// <projectRoot>/.harness/fixtures/<name>. Placeholder satisfies a future
+// ref-existence check without affecting current schema validation.
 func createFixturePlaceholder(t *testing.T, projectRoot, name string) {
 	t.Helper()
 	full := filepath.Join(projectRoot, ".harness", "fixtures", name)
