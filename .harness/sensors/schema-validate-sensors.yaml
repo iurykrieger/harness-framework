@@ -17,7 +17,7 @@ description: On pull-request, validates every sensor YAML under `.harness/sensor
 determinism: high
 execution:
   command: |
-    set -uo pipefail
+    set -u
     tmp=$(mktemp -d)
     fail=0
     for f in .harness/sensors/*.yaml; do

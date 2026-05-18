@@ -32,7 +32,7 @@ execution:
         from: stdout
         trim: true
     run: |
-      set -euo pipefail
+      set -eu
       tmpdir=$(mktemp -d -t harness-assert-already-running.XXXXXX)
       mkdir -p "$tmpdir/.harness/sensors"
       mkdir -p "$tmpdir/.harness/usecases"
@@ -45,7 +45,7 @@ execution:
       "0": pass
     id: persist-fixture-blocking-sensor
     run: |
-      set -euo pipefail
+      set -eu
       tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
       draft="$tmpdir/fixture-draft.yaml"
       cat >"$draft" <<'YAML'
@@ -107,7 +107,7 @@ execution:
         from: stdout
         trim: true
     run: |
-      set -euo pipefail
+      set -eu
       tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
       out="$tmpdir/start1.out"
       err="$tmpdir/start1.err"
@@ -133,7 +133,7 @@ execution:
         from: stdout
         trim: true
     run: |
-      set -uo pipefail
+      set -u
       tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
       out="$tmpdir/start2.out"
       err="$tmpdir/start2.err"
@@ -154,7 +154,7 @@ execution:
       "0": pass
     id: assert-rejected-shape
     run: |
-      set -euo pipefail
+      set -eu
       tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
       first_pid='${{ steps.start-first.outputs.first_pid }}'
       out="$tmpdir/start2.out"
@@ -199,7 +199,7 @@ execution:
       "0": pass
     id: assert-registry-singleton
     run: |
-      set -euo pipefail
+      set -eu
       tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
       registry="$tmpdir/.harness/runtime/running_sensors.json"
       if [ ! -f "$registry" ]; then

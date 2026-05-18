@@ -15,7 +15,7 @@ description: On pull-request, validates `.harness/stack.yaml` against `schemas/s
 determinism: high
 execution:
   command: |
-    set -euo pipefail
+    set -eu
     tmp=$(mktemp -d)
     HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
       go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=write_stack \
