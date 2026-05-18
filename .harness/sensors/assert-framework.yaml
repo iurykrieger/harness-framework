@@ -1,0 +1,149 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 64
+  latency:
+    p50_ms: 200
+    p95_ms: 2000
+    timeout_ms: 10000
+description: |
+  Asserts the artifact produced by `/detect-sensors` (Phase A) — the
+  persisted `.harness/stack.yaml` — against every business_rule of the
+  `framework` journey usecases: components carry the 3 self-containment
+  fields, the category follows the `<domain>/<role>` slug convention,
+  and deploy/CI artifacts present in the project are surfaced as
+  Components with the canonical role+name pair. Streams one Signal per
+  rule plus an aggregate at the end.
+determinism: high
+execution:
+  command: |
+    set -u
+    STACK=.harness/stack.yaml
+    if [ ! -f "$STACK" ]; then
+      echo "RULE rule-stack-present FAIL stack.yaml missing"
+      exit 1
+    fi
+
+    overall=0
+
+    # rule-1: every component has non-empty category
+    missing=$(yq -r '.components[] | select((.category // "") == "") | .name' "$STACK" | paste -sd "," -)
+    if [ -z "$missing" ]; then
+      echo "RULE rule-category-present PASS every component has non-empty category"
+    else
+      echo "RULE rule-category-present FAIL missing-category=$missing"
+      overall=1
+    fi
+
+    # rule-2: every component has >=1 capability
+    missing=$(yq -r '.components[] | select(((.capabilities // []) | length) < 1) | .name' "$STACK" | paste -sd "," -)
+    if [ -z "$missing" ]; then
+      echo "RULE rule-capabilities-nonempty PASS every component has >=1 capability"
+    else
+      echo "RULE rule-capabilities-nonempty FAIL empty-capabilities=$missing"
+      overall=1
+    fi
+
+    # rule-3: every component has >=1 observable_surface
+    missing=$(yq -r '.components[] | select(((.observable_surface // []) | length) < 1) | .name' "$STACK" | paste -sd "," -)
+    if [ -z "$missing" ]; then
+      echo "RULE rule-observable-surface-nonempty PASS every component has >=1 observable_surface entry"
+    else
+      echo "RULE rule-observable-surface-nonempty FAIL empty-observable-surface=$missing"
+      overall=1
+    fi
+
+    # rule-4: category follows <domain>/<role> slug convention
+    bad=$(yq -r '.components[] | select((.category // "") | test("^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*$") | not) | "\(.name)=\(.category // "")"' "$STACK" | paste -sd ";" -)
+    if [ -z "$bad" ]; then
+      echo "RULE rule-category-slug-convention PASS every category matches <domain>/<role>"
+    else
+      echo "RULE rule-category-slug-convention FAIL non-slug-category=$bad"
+      overall=1
+    fi
+
+    # rule-5: Dockerfile present => component name=docker role=container-runtime
+    if [ -f Dockerfile ]; then
+      found=$(yq -r '.components[] | select(.name == "docker" and .role == "container-runtime") | .name' "$STACK")
+      if [ -n "$found" ]; then
+        echo "RULE rule-dockerfile-mapped PASS dockerfile present and docker/container-runtime component exists"
+      else
+        echo "RULE rule-dockerfile-mapped FAIL dockerfile present but no docker/container-runtime component"
+        overall=1
+      fi
+    else
+      echo "RULE rule-dockerfile-mapped PASS dockerfile absent: rule N/A"
+    fi
+
+    # rule-6: helm Chart.yaml present => component name=helm role=deployment-tool
+    if ls helm/Chart.yaml charts/*/Chart.yaml chart/Chart.yaml 2>/dev/null | grep -q .; then
+      found=$(yq -r '.components[] | select(.name == "helm" and .role == "deployment-tool") | .name' "$STACK")
+      if [ -n "$found" ]; then
+        echo "RULE rule-helm-mapped PASS helm chart present and helm/deployment-tool component exists"
+      else
+        echo "RULE rule-helm-mapped FAIL helm chart present but no helm/deployment-tool component"
+        overall=1
+      fi
+    else
+      echo "RULE rule-helm-mapped PASS helm chart absent: rule N/A"
+    fi
+
+    # rule-7: GitHub workflow present => component name=github-actions role=ci-cd
+    if ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null | grep -q .; then
+      found=$(yq -r '.components[] | select(.name == "github-actions" and .role == "ci-cd") | .name' "$STACK")
+      if [ -n "$found" ]; then
+        echo "RULE rule-workflow-mapped PASS github workflow present and github-actions/ci-cd component exists"
+      else
+        echo "RULE rule-workflow-mapped FAIL github workflow present but no github-actions/ci-cd component"
+        overall=1
+      fi
+    else
+      echo "RULE rule-workflow-mapped PASS github workflow absent: rule N/A"
+    fi
+
+    # rule-8: deploy/ci components carry the 3 self-containment fields
+    bad=$(yq -r '.components[] | select(.role == "container-runtime" or .role == "deployment-tool" or .role == "ci-cd") | select((.category // "") == "" or ((.capabilities // []) | length) < 1 or ((.observable_surface // []) | length) < 1) | .name' "$STACK" | paste -sd "," -)
+    if [ -z "$bad" ]; then
+      echo "RULE rule-deploy-self-contained PASS deploy/ci components carry the 3 self-containment fields"
+    else
+      echo "RULE rule-deploy-self-contained FAIL deploy/ci components missing self-containment fields: $bad"
+      overall=1
+    fi
+
+    exit $overall
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+  output_parsing:
+    patterns:
+    - captures:
+        excerpt: 2
+        rationale: 1
+      regex: ^RULE\s+(\S+)\s+PASS\s+(.*)$
+      severity: info
+      verdict: pass
+    - captures:
+        excerpt: 2
+        rationale: 1
+      regex: ^RULE\s+(\S+)\s+FAIL\s+(.*)$
+      severity: high
+      verdict: fail
+id: assert-framework
+kind: assertion
+name: assert /detect-sensors stack.yaml satisfies framework journey rules
+output: stream
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- framework-detect-sensors-component-self-contained
+- framework-detect-sensors-deploy-artifacts-detected
+version: 0.1.0

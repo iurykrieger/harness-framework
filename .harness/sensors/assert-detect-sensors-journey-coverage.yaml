@@ -1,0 +1,74 @@
+cost:
+  class: cheap
+  compute:
+    cpu: medium
+    memory_mb: 512
+  latency:
+    p50_ms: 8000
+    p95_ms: 45000
+    timeout_ms: 180000
+description: |
+  Journey-level composite that exercises every usecase of detect-sensors
+  through its closest Go test, one step per usecase. Provides a single
+  pass/fail view at the journey granularity, complementing the per-script
+  bulk sensors (unit-test-write-sensor, unit-test-write-stack) and the
+  schema-only sensors (schema-validate-sensors, schema-validate-stack).
+  Each step fails fast on a regression in its corresponding business
+  rules: exit codes, stderr diagnostics, file-not-written invariant,
+  canonical YAML persistence.
+determinism: high
+execution:
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: usecase-sensor-success
+    run: |
+      go test -race -count=1 -tags=write_sensor -v -run '^TestRun_ValidComputationalSensor$' ./skills/detect-sensors/scripts/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: usecase-sensor-schema-fail
+    run: |
+      go test -race -count=1 -tags=write_sensor -v -run '^TestRun_SchemaViolation$' ./skills/detect-sensors/scripts/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: usecase-stack-success
+    run: |
+      go test -race -count=1 -tags=write_stack -v -run '^TestRun_Happy$' ./skills/detect-sensors/scripts/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: usecase-stack-schema-fail
+    run: |
+      go test -race -count=1 -tags=write_stack -v -run '^TestRun_SchemaFail$' ./skills/detect-sensors/scripts/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: usecase-stack-cross-check-fail
+    run: |
+      go test -race -count=1 -tags=write_stack -v -run '^TestRun_ProducedByOrphan$' ./skills/detect-sensors/scripts/...
+    type: shell
+id: assert-detect-sensors-journey-coverage
+kind: assertion
+name: Assert detect-sensors journey end-to-end per-usecase coverage
+output: single
+phase: pre-merge
+regulation: behaviour
+triggers:
+- "on": pull-request
+- "on": agent-request
+- "on": manual
+type: computational
+use_cases:
+- detect-sensors-sensor-success
+- detect-sensors-sensor-schema-fail
+- detect-sensors-stack-success
+- detect-sensors-stack-schema-fail
+- detect-sensors-stack-cross-check-fail
+version: 0.1.0

@@ -1,0 +1,336 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 256
+  latency:
+    p50_ms: 4000
+    p95_ms: 20000
+    timeout_ms: 90000
+description: |
+  Drives skills/tail-sensor/scripts/tail.go against a synthetic temp registry
+  to exercise every observable variation of the /tail-sensor journey:
+  happy-path cursor 0 / mid-stream / beyond-EOF, validation errors
+  (invalid_cursor, invalid_args), missing-registry error, and ambiguous_run
+  when two live entries share a sensor id. Each step builds a fresh fixture
+  inside a single tmpdir, invokes the tail binary via `go run -tags=tail_sensor`,
+  and asserts on the captured stdout JSONL plus exit code. End-to-end exercise
+  of the binary contract, complementary to skills/tail-sensor/scripts/tail_test.go.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: setup-tmp-registry
+    outputs:
+      tmpdir:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir=$(mktemp -d -t harness-assert-tail-sensor.XXXXXX)
+      printf '%s' "$tmpdir"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: tail-no-registry
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      # tmpdir intentionally has NO .harness/runtime → simulates absent registry.
+      out="$tmpdir/no-registry.out"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=tail_sensor \
+        ./skills/tail-sensor/scripts serve-app-blocking 0 \
+        >"$out" 2>/dev/null
+      rc=$?
+      if [ "$rc" != "1" ]; then
+        echo "expected exit=1 for tail_no_registry, got=$rc" >&2
+        cat "$out" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      registry_exists=$(printf '%s' "$last" | jq -r '.metadata.registry_exists | tostring')
+      if [ "$verdict" != "error" ]; then echo "verdict=$verdict (want error)" >&2; echo "$last" >&2; exit 1; fi
+      if [ "$kind" != "tail_no_registry" ]; then echo "kind=$kind (want tail_no_registry)" >&2; echo "$last" >&2; exit 1; fi
+      if [ "$registry_exists" != "false" ]; then echo "registry_exists=$registry_exists (want false)" >&2; echo "$last" >&2; exit 1; fi
+      echo "tail-no-registry OK"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: tail-missing-args
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/missing-args.out"
+      err="$tmpdir/missing-args.err"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=tail_sensor \
+        ./skills/tail-sensor/scripts \
+        >"$out" 2>"$err"
+      rc=$?
+      # go run masks non-zero child exit codes to 1; parse "exit status N"
+      # from its stderr to recover the actual exit code from tail-sensor.
+      if [ "$rc" = 0 ]; then
+        exit_code=0
+      else
+        exit_code=$(grep -E '^exit status [0-9]+$' "$err" | tail -n 1 | awk '{print $3}')
+        [ -n "$exit_code" ] || exit_code="$rc"
+      fi
+      if [ "$exit_code" != "2" ]; then
+        echo "expected exit=2 for tail_invalid_args, got=$exit_code (go-run rc=$rc)" >&2
+        cat "$out" >&2
+        cat "$err" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      rationale=$(printf '%s' "$last" | jq -r '.evidence[0].rationale // ""')
+      if [ "$verdict" != "error" ]; then echo "verdict=$verdict (want error)" >&2; echo "$last" >&2; exit 1; fi
+      if [ "$kind" != "tail_invalid_args" ]; then echo "kind=$kind (want tail_invalid_args)" >&2; echo "$last" >&2; exit 1; fi
+      case "$rationale" in
+        *"sensor.id"*"cursor"*) : ;;
+        *) echo "rationale does not show expected usage: $rationale" >&2; exit 1 ;;
+      esac
+      echo "tail-missing-args OK"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: persist-signals-log
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      sid="serve-app-blocking"
+      sdir="$tmpdir/.harness/runtime/$sid"
+      mkdir -p "$sdir"
+      # 5-line legacy/flat signals.log. Content is opaque to /tail-sensor.
+      cat >"$sdir/signals.log" <<'JSONL'
+      {"sensor_id":"serve-app-blocking","verdict":"pass","metadata":{"kind":"individual","line":1}}
+      {"sensor_id":"serve-app-blocking","verdict":"pass","metadata":{"kind":"individual","line":2}}
+      {"sensor_id":"serve-app-blocking","verdict":"warn","metadata":{"kind":"individual","line":3}}
+      {"sensor_id":"serve-app-blocking","verdict":"pass","metadata":{"kind":"individual","line":4}}
+      {"sensor_id":"serve-app-blocking","verdict":"fail","metadata":{"kind":"individual","line":5}}
+      JSONL
+      # Hash the file content to assert /tail-sensor never mutates it.
+      shasum -a 256 "$sdir/signals.log" | awk '{print $1}' >"$tmpdir/signals.sha"
+      # Registry with one legacy-style entry (RunID ends in -legacy → flat path).
+      mkdir -p "$tmpdir/.harness/runtime"
+      pid=$$
+      cat >"$tmpdir/.harness/runtime/running_sensors.json" <<EOF
+      {"version":1,"entries":[{"sensor_id":"$sid","run_id":"x-legacy","blocking":false,"pid":$pid,"pgid":$pid,"started_at":"2026-05-11T00:00:00Z","held_by":[{"kind":"manual","attached_at":"2026-05-11T00:00:00Z"}]}]}
+      EOF
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: tail-cursor-zero
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/cursor-zero.out"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=tail_sensor \
+        ./skills/tail-sensor/scripts serve-app-blocking 0 \
+        >"$out" 2>/dev/null
+      rc=$?
+      if [ "$rc" != "0" ]; then
+        echo "expected exit=0 for cursor 0, got=$rc" >&2
+        cat "$out" >&2
+        exit 1
+      fi
+      total=$(wc -l <"$out" | tr -d ' ')
+      # 5 raw lines + 1 envelope = 6 JSONL lines.
+      if [ "$total" != "6" ]; then
+        echo "expected 6 stdout lines (5 raw + envelope), got=$total" >&2
+        cat "$out" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      next_cursor=$(printf '%s' "$last" | jq -r '.metadata.next_cursor // ""')
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      if [ "$kind" != "envelope" ]; then echo "envelope kind=$kind (want envelope)" >&2; echo "$last" >&2; exit 1; fi
+      if [ "$next_cursor" != "5" ]; then echo "next_cursor=$next_cursor (want 5)" >&2; echo "$last" >&2; exit 1; fi
+      if [ "$verdict" != "pass" ]; then echo "envelope verdict=$verdict (want pass)" >&2; echo "$last" >&2; exit 1; fi
+      # Lines 1..5 emitted verbatim (NOT reparsed): line 3 raw should contain "line":3.
+      raw_line3=$(sed -n '3p' "$out")
+      case "$raw_line3" in
+        *'"line":3'*) : ;;
+        *) echo "expected raw line 3 to carry \"line\":3, got: $raw_line3" >&2; exit 1 ;;
+      esac
+      # Confirm signals.log was not mutated.
+      before=$(cat "$tmpdir/signals.sha")
+      after=$(shasum -a 256 "$tmpdir/.harness/runtime/serve-app-blocking/signals.log" | awk '{print $1}')
+      if [ "$before" != "$after" ]; then
+        echo "signals.log content was mutated by /tail-sensor" >&2; exit 1
+      fi
+      echo "tail-cursor-zero OK total=$total next_cursor=$next_cursor"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: tail-cursor-mid
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/cursor-mid.out"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=tail_sensor \
+        ./skills/tail-sensor/scripts serve-app-blocking 3 \
+        >"$out" 2>/dev/null
+      rc=$?
+      if [ "$rc" != "0" ]; then
+        echo "expected exit=0 for cursor 3, got=$rc" >&2; cat "$out" >&2; exit 1
+      fi
+      total=$(wc -l <"$out" | tr -d ' ')
+      # Skip first 3 → 2 raw lines + envelope = 3 JSONL lines.
+      if [ "$total" != "3" ]; then
+        echo "expected 3 stdout lines (2 raw + envelope), got=$total" >&2; cat "$out" >&2; exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      next_cursor=$(printf '%s' "$last" | jq -r '.metadata.next_cursor // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      if [ "$kind" != "envelope" ]; then echo "envelope kind=$kind (want envelope)" >&2; echo "$last" >&2; exit 1; fi
+      if [ "$next_cursor" != "5" ]; then echo "next_cursor=$next_cursor (want 5)" >&2; echo "$last" >&2; exit 1; fi
+      # First raw emitted line is line 4.
+      first_raw=$(sed -n '1p' "$out")
+      case "$first_raw" in
+        *'"line":4'*) : ;;
+        *) echo "expected first emitted raw line to be line 4, got: $first_raw" >&2; exit 1 ;;
+      esac
+      echo "tail-cursor-mid OK total=$total next_cursor=$next_cursor"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: tail-cursor-beyond-eof
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/cursor-beyond-eof.out"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=tail_sensor \
+        ./skills/tail-sensor/scripts serve-app-blocking 10 \
+        >"$out" 2>/dev/null
+      rc=$?
+      if [ "$rc" != "0" ]; then
+        echo "expected exit=0 for cursor beyond EOF, got=$rc" >&2; cat "$out" >&2; exit 1
+      fi
+      total=$(wc -l <"$out" | tr -d ' ')
+      # Skip all 5 → 0 raw + envelope = 1 JSONL line.
+      if [ "$total" != "1" ]; then
+        echo "expected 1 stdout line (envelope only), got=$total" >&2; cat "$out" >&2; exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      next_cursor=$(printf '%s' "$last" | jq -r '.metadata.next_cursor // ""')
+      if [ "$kind" != "envelope" ]; then echo "envelope kind=$kind (want envelope)" >&2; echo "$last" >&2; exit 1; fi
+      # next_cursor reflects actual file length (5), not the input cursor (10).
+      if [ "$next_cursor" != "5" ]; then echo "next_cursor=$next_cursor (want 5)" >&2; echo "$last" >&2; exit 1; fi
+      echo "tail-cursor-beyond-eof OK total=$total next_cursor=$next_cursor"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: tail-invalid-cursor
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/invalid-cursor.out"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=tail_sensor \
+        ./skills/tail-sensor/scripts serve-app-blocking -3 \
+        >"$out" 2>/dev/null
+      rc=$?
+      if [ "$rc" != "1" ]; then
+        echo "expected exit=1 for invalid cursor, got=$rc" >&2; cat "$out" >&2; exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      if [ "$verdict" != "error" ]; then echo "verdict=$verdict (want error)" >&2; echo "$last" >&2; exit 1; fi
+      if [ "$kind" != "tail_invalid_cursor" ]; then echo "kind=$kind (want tail_invalid_cursor)" >&2; echo "$last" >&2; exit 1; fi
+      echo "tail-invalid-cursor OK"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: persist-ambiguous-registry
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      pid=$$
+      cat >"$tmpdir/.harness/runtime/running_sensors.json" <<EOF
+      {"version":1,"entries":[
+        {"sensor_id":"ambig-sensor","run_id":"100-aaaa","blocking":false,"pid":$pid,"pgid":$pid,"started_at":"2026-05-11T00:00:00Z","held_by":[{"kind":"manual","attached_at":"2026-05-11T00:00:00Z"}]},
+        {"sensor_id":"ambig-sensor","run_id":"200-bbbb","blocking":false,"pid":$pid,"pgid":$pid,"started_at":"2026-05-11T00:00:00Z","held_by":[{"kind":"manual","attached_at":"2026-05-11T00:00:00Z"}]}
+      ]}
+      EOF
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: tail-ambiguous-run
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/ambiguous.out"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=tail_sensor \
+        ./skills/tail-sensor/scripts ambig-sensor 0 \
+        >"$out" 2>/dev/null
+      rc=$?
+      if [ "$rc" != "1" ]; then
+        echo "expected exit=1 for ambiguous_run, got=$rc" >&2; cat "$out" >&2; exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      ev_count=$(printf '%s' "$last" | jq -r '.evidence | length')
+      if [ "$verdict" != "error" ]; then echo "verdict=$verdict (want error)" >&2; echo "$last" >&2; exit 1; fi
+      if [ "$kind" != "ambiguous_run" ]; then echo "kind=$kind (want ambiguous_run)" >&2; echo "$last" >&2; exit 1; fi
+      if [ "$ev_count" != "2" ]; then echo "evidence count=$ev_count (want 2, one per live run_id)" >&2; echo "$last" >&2; exit 1; fi
+      # Confirm both run_ids are referenced in evidence rationales.
+      r1=$(printf '%s' "$last" | jq -r '[.evidence[].rationale] | join("|")')
+      case "$r1" in
+        *100-aaaa*200-bbbb*|*200-bbbb*100-aaaa*) : ;;
+        *) echo "evidence rationales missing run_ids: $r1" >&2; exit 1 ;;
+      esac
+      echo "tail-ambiguous-run OK ev_count=$ev_count"
+    type: shell
+  teardown:
+  - command: |
+      set -u
+      for d in /tmp/harness-assert-tail-sensor.* "${TMPDIR:-/tmp}"/harness-assert-tail-sensor.*; do
+        [ -d "$d" ] || continue
+        rm -rf "$d"
+      done
+      exit 0
+id: assert-tail-sensor
+kind: assertion
+name: Assert /tail-sensor cursor semantics and error handling
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- tail-sensor-ambiguous-run
+- tail-sensor-cursor-beyond-eof
+- tail-sensor-cursor-mid-stream
+- tail-sensor-cursor-zero-read-all
+- tail-sensor-invalid-cursor
+- tail-sensor-missing-args
+- tail-sensor-no-registry
+version: 0.1.0

@@ -1,0 +1,135 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 64
+  latency:
+    p50_ms: 4000
+    p95_ms: 20000
+    timeout_ms: 90000
+description: |
+  Creates an isolated temp project root with NO running_sensors.json,
+  invokes /list-sensors against it, and asserts the emitted Signal is
+  verdict=warn, metadata.kind=list, registry_exists=false, entries=[],
+  and exit code is 0. Validates the absent-registry warning path in
+  skills/list-sensors/scripts/list.go (cli.Bootstrap → runList when
+  b.Res.Exists is false).
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: setup-tmp-registry-root
+    outputs:
+      tmpdir:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir=$(mktemp -d -t harness-assert-list-empty.XXXXXX)
+      mkdir -p "$tmpdir/.harness"
+      printf '%s' "$tmpdir"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: invoke-list-sensors
+    outputs:
+      stdout_path:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry-root.outputs.tmpdir }}'
+      out="$tmpdir/list.out"
+      err="$tmpdir/list.err"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=list_sensors \
+        ./skills/list-sensors/scripts >"$out" 2>"$err"
+      rc=$?
+      if [ "$rc" != "0" ]; then
+        echo "expected list-sensors to exit 0, got=$rc" >&2
+        cat "$err" >&2
+        exit 1
+      fi
+      printf '%s' "$out"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: assert-warn-shape
+    run: |
+      set -eu
+      out='${{ steps.invoke-list-sensors.outputs.stdout_path }}'
+      tmpdir='${{ steps.setup-tmp-registry-root.outputs.tmpdir }}'
+      if [ ! -s "$out" ]; then
+        echo "list-sensors stdout is empty: $out" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      exists=$(printf '%s' "$last" | jq -r '.metadata.registry_exists | tostring')
+      source=$(printf '%s' "$last" | jq -r '.metadata.registry_source // ""')
+      entries_len=$(printf '%s' "$last" | jq -r '.metadata.entries | length')
+      registry_path=$(printf '%s' "$last" | jq -r '.metadata.registry_path // ""')
+      tmpdir_base=$(basename "$tmpdir")
+      want_suffix="$tmpdir_base/.harness/runtime/running_sensors.json"
+      if [ "$verdict" != "warn" ]; then
+        echo "expected verdict=warn, got=$verdict" >&2
+        echo "last=$last" >&2
+        exit 1
+      fi
+      if [ "$kind" != "list" ]; then
+        echo "expected metadata.kind=list, got=$kind" >&2
+        exit 1
+      fi
+      if [ "$exists" != "false" ]; then
+        echo "expected metadata.registry_exists=false, got=$exists" >&2
+        exit 1
+      fi
+      if [ "$source" != "env" ] && [ "$source" != "walk_up" ]; then
+        echo "expected metadata.registry_source in {env,walk_up}, got=$source" >&2
+        exit 1
+      fi
+      if [ "$entries_len" != "0" ]; then
+        echo "expected entries=[] (length 0), got length=$entries_len" >&2
+        exit 1
+      fi
+      case "$registry_path" in
+        *"$want_suffix") : ;;
+        *) echo "expected registry_path to end with $want_suffix, got=$registry_path" >&2; exit 1 ;;
+      esac
+      echo "list-empty-registry OK verdict=$verdict exists=$exists entries_len=$entries_len"
+    type: shell
+  teardown:
+  - command: |
+      set -u
+      for d in /tmp/harness-assert-list-empty.* "${TMPDIR:-/tmp}"/harness-assert-list-empty.*; do
+        [ -d "$d" ] || continue
+        rm -rf "$d"
+      done
+      exit 0
+id: assert-list-sensors-empty-registry
+kind: assertion
+name: Assert list-sensors warns when registry file is absent
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- list-sensors-empty-registry
+version: 0.1.0

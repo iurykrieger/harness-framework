@@ -1,0 +1,392 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 256
+  latency:
+    p50_ms: 5000
+    p95_ms: 60000
+    timeout_ms: 180000
+description: Validates the detect-usecases journey by running the canonical write-usecase
+  and lib/usecase tests that exercise each business rule of the five detect-usecases
+  use cases (success, schema-fail, stack-missing, journey-orphan, evidence-missing).
+  Emits one Signal per shell step plus the aggregate. Regulates behaviour.
+determinism: high
+execution:
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-1-evidence-row-must-point-at-real-file
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -tags=write_usecase -run '^TestRun_EvidenceMissing$' ./skills/detect-usecases/scripts/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-2-multiple-missing-files-listed
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -run '^TestCheckEvidenceFiles_Missing$' ./lib/usecase/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-3-evidence-missing-exit-code-1
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -tags=write_usecase -run '^TestRun_EvidenceMissing$' ./skills/detect-usecases/scripts/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-4-journey-reference-strict-empty
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -run '^TestCheckJourneyReference_EmptyStackJourneys$' ./lib/usecase/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-5-journey-orphan-exit-code-1
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -tags=write_usecase -run '^TestRun_JourneyOrphan$' ./skills/detect-usecases/scripts/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-6-orphan-message-names-journey-and-usecase
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -tags=write_usecase -run '^TestRun_JourneyOrphan$' ./skills/detect-usecases/scripts/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-7-schema-fail-exit-code-1-reserved
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -tags=write_usecase -run '^TestRun_SchemaViolation$' ./skills/detect-usecases/scripts/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-8-validation-tree-rendered-on-stderr
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -run '^TestValidateAndPersist_RejectsSchemaViolation$' ./lib/usecase/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-9-no-file-written-when-validation-fails
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -run '^TestValidateAndPersist_RejectsSchemaViolation$' ./lib/usecase/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-10-stack-missing-cross-check-ordering
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -tags=write_usecase -run '^TestRun_StackMissing$' ./skills/detect-usecases/scripts/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-11-stack-missing-message-names-path-and-skill
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -tags=write_usecase -run '^TestRun_StackMissing$' ./skills/detect-usecases/scripts/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-12-stack-missing-exit-code-2
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -tags=write_usecase -run '^TestRun_StackMissing$' ./skills/detect-usecases/scripts/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-13-success-canonical-write-path
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -run '^TestValidateAndPersist_Happy$' ./lib/usecase/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-14-success-stack-missing-fallthrough
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -tags=write_usecase -run '^TestRun_StackMissing$' ./skills/detect-usecases/scripts/...
+      2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-15-success-comments-not-preserved
+    parse:
+      patterns:
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- FAIL:\s+(\S+)
+        severity: high
+        verdict: fail
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- SKIP:\s+(\S+)
+        severity: low
+        verdict: warn
+      - captures:
+          excerpt: 1
+        regex: ^\s*--- PASS:\s+(\S+)
+        severity: info
+        verdict: pass
+    run: go test -count=1 -run '^TestValidateAndPersist_OverwritesAtomically$' ./lib/usecase/...
+      2>&1
+    type: shell
+id: assert-detect-usecases
+kind: assertion
+name: Assertion — detect-usecases journey business rules
+output: stream
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+type: computational
+use_cases:
+- detect-usecases-evidence-missing
+- detect-usecases-journey-orphan
+- detect-usecases-schema-fail
+- detect-usecases-stack-missing
+- detect-usecases-success
+version: 0.1.0
