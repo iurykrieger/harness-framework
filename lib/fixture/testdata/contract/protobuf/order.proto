@@ -1,0 +1,16 @@
+syntax = "proto3";
+package shop;
+
+message Order {
+  string sku = 1;
+  int32 qty = 2;
+  repeated string tags = 3;
+  Channel channel = 4;
+}
+
+enum Channel {
+  CHANNEL_UNSPECIFIED = 0;
+  WEB = 1;
+  IOS = 2;
+  AND = 3;
+}

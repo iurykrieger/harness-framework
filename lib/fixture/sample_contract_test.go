@@ -96,3 +96,27 @@ func TestDeriveFromContract_Avro(t *testing.T) {
 		t.Errorf("channel = %v want WEB (first declared symbol)", payload["channel"])
 	}
 }
+
+func TestDeriveFromContract_Protobuf(t *testing.T) {
+	abs, _ := filepath.Abs("testdata/contract/protobuf/order.proto")
+	decl := abs + ":shop.Order"
+	s, err := fixture.DeriveFromContract(fixture.Hint{Role: "event"}, fixture.SourceProtobuf, decl)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(s.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["sku"].(string); !ok {
+		t.Errorf("sku missing/wrong type: %v", payload["sku"])
+	}
+	// proto3 scalars: all zero. Repeated: empty list.
+	if got, ok := payload["tags"].([]any); !ok || len(got) != 0 {
+		t.Errorf("tags = %v want []", payload["tags"])
+	}
+	// Enum: first declared symbol.
+	if got, ok := payload["channel"].(string); !ok || got != "CHANNEL_UNSPECIFIED" {
+		t.Errorf("channel = %v want CHANNEL_UNSPECIFIED", payload["channel"])
+	}
+}

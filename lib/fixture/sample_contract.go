@@ -1,12 +1,16 @@
 package fixture
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/bufbuild/protocompile"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"sigs.k8s.io/yaml"
 )
 
@@ -228,7 +232,89 @@ func avroPrimitiveZero(t string) any {
 	return nil
 }
 func deriveFromProtobuf(declPath string) (*Sample, error) {
-	return nil, errors.New("protobuf: not implemented yet")
+	file, msgName, ok := strings.Cut(declPath, ":")
+	if !ok || msgName == "" {
+		return nil, fmt.Errorf("protobuf declPath must be '<file>:<MessageName>', got %q", declPath)
+	}
+	dir := filepath.Dir(file)
+	base := filepath.Base(file)
+	compiler := protocompile.Compiler{
+		Resolver: &protocompile.SourceResolver{
+			ImportPaths: []string{dir},
+		},
+	}
+	files, err := compiler.Compile(context.Background(), base)
+	if err != nil {
+		return nil, fmt.Errorf("compile proto: %w", err)
+	}
+	if len(files) != 1 {
+		return nil, fmt.Errorf("expected 1 compiled file, got %d", len(files))
+	}
+	fd := files[0]
+	msg := fd.Messages().ByName(protoreflect.Name(stripPackage(msgName)))
+	if msg == nil {
+		return nil, fmt.Errorf("message %q not found in %s", msgName, file)
+	}
+	payload := emitFromProtoMessage(msg)
+	out, _ := json.Marshal(payload)
+	return &Sample{
+		Payload: out,
+		Ext:     "json",
+		Source:  "contract",
+		BlindSpots: []string{
+			fmt.Sprintf("Derived from protobuf contract at %s; no real sample on disk near the entry point.", declPath),
+		},
+	}, nil
+}
+
+// stripPackage returns the unqualified message name. "shop.Order" -> "Order".
+func stripPackage(name string) string {
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+func emitFromProtoMessage(msg protoreflect.MessageDescriptor) map[string]any {
+	out := map[string]any{}
+	fields := msg.Fields()
+	for i := 0; i < fields.Len(); i++ {
+		f := fields.Get(i)
+		out[string(f.Name())] = protoZeroValue(f)
+	}
+	return out
+}
+
+func protoZeroValue(f protoreflect.FieldDescriptor) any {
+	if f.IsList() {
+		return []any{}
+	}
+	if f.IsMap() {
+		return map[string]any{}
+	}
+	switch f.Kind() {
+	case protoreflect.BoolKind:
+		return false
+	case protoreflect.StringKind, protoreflect.BytesKind:
+		return ""
+	case protoreflect.Int32Kind, protoreflect.Int64Kind,
+		protoreflect.Uint32Kind, protoreflect.Uint64Kind,
+		protoreflect.Sint32Kind, protoreflect.Sint64Kind,
+		protoreflect.Fixed32Kind, protoreflect.Fixed64Kind,
+		protoreflect.Sfixed32Kind, protoreflect.Sfixed64Kind:
+		return 0
+	case protoreflect.FloatKind, protoreflect.DoubleKind:
+		return 0.0
+	case protoreflect.EnumKind:
+		enumValues := f.Enum().Values()
+		if enumValues.Len() == 0 {
+			return ""
+		}
+		return string(enumValues.Get(0).Name())
+	case protoreflect.MessageKind, protoreflect.GroupKind:
+		return emitFromProtoMessage(f.Message())
+	}
+	return nil
 }
 
 // jsonSchemaNode is the subset of Draft 2020-12 / Draft 7 we need:
