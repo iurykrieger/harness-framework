@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["sku", "qty"],
+  "properties": {
+    "sku":   { "type": "string" },
+    "qty":   { "type": "integer" },
+    "tags":  { "type": "array", "items": { "type": "string" } },
+    "meta":  { "type": "object", "properties": { "source": { "type": "string", "enum": ["web", "ios", "android"] } } }
+  }
+}
