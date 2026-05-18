@@ -48,18 +48,29 @@ execution:
       set -eu
       tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
       registry="$tmpdir/.harness/runtime/running_sensors.json"
-      self_pid=$$
+      # Spawn long-lived background sleeps so the PIDs survive across sensor
+      # steps. $$ would point at this step's shell, which exits before
+      # /list-sensors checks liveness. Redirect FDs to /dev/null so the runner's
+      # exec.Cmd Wait doesn't block on inherited pipes (otherwise WaitDelay
+      # fires and SIGKILLs the whole pgid before /list-sensors can check).
+      sleep 300 </dev/null >/dev/null 2>&1 &
+      live_pid=$!
+      sleep 300 </dev/null >/dev/null 2>&1 &
+      watcher_pid=$!
+      disown "$live_pid" 2>/dev/null || true
+      disown "$watcher_pid" 2>/dev/null || true
+      printf '%s\n' "$live_pid $watcher_pid" >"$tmpdir/.live_pids"
       cat >"$registry" <<JSON
       {
         "version": 1,
         "entries": [
           {
             "sensor_id": "fixture-live-blocker",
-            "run_id": "${self_pid}-aaaa1111",
+            "run_id": "${live_pid}-aaaa1111",
             "blocking": true,
-            "pid": ${self_pid},
-            "pgid": ${self_pid},
-            "watcher_pid": ${self_pid},
+            "pid": ${live_pid},
+            "pgid": ${live_pid},
+            "watcher_pid": ${watcher_pid},
             "started_at": "2026-05-18T00:00:00Z",
             "command": "true",
             "held_by": [{"kind": "manual", "attached_at": "2026-05-18T00:00:00Z"}]
@@ -100,10 +111,10 @@ execution:
       last=$(tail -n 1 "$out")
       verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
       kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
-      exists=$(printf '%s' "$last" | jq -r '.metadata.registry_exists // false')
+      exists=$(printf '%s' "$last" | jq -r '.metadata.registry_exists | tostring')
       state=$(printf '%s' "$last" | jq -r '.metadata.entries[0].state // ""')
-      pid_alive=$(printf '%s' "$last" | jq -r '.metadata.entries[0].pid_alive // false')
-      blocking=$(printf '%s' "$last" | jq -r '.metadata.entries[0].blocking // false')
+      pid_alive=$(printf '%s' "$last" | jq -r '.metadata.entries[0].pid_alive | tostring')
+      blocking=$(printf '%s' "$last" | jq -r '.metadata.entries[0].blocking | tostring')
       watcher_pid=$(printf '%s' "$last" | jq -r '.metadata.entries[0].watcher_pid // 0')
       watcher_alive_present=$(printf '%s' "$last" | jq -r '.metadata.entries[0] | has("watcher_alive")')
       if [ "$verdict" != "pass" ]; then
@@ -144,8 +155,16 @@ execution:
   teardown:
   - command: |
       set -u
+      # Reap the background sleeps spawned by write-live-registry. Tmp dir name
+      # carries the registered pids so we can kill them even after the sensor
+      # subprocess that created them exited.
       for d in /tmp/harness-assert-list-all-running.* "${TMPDIR:-/tmp}"/harness-assert-list-all-running.*; do
         [ -d "$d" ] || continue
+        if [ -f "$d/.live_pids" ]; then
+          read -r live_pid watcher_pid < "$d/.live_pids" || true
+          [ -n "${live_pid:-}" ] && kill "$live_pid" 2>/dev/null || true
+          [ -n "${watcher_pid:-}" ] && kill "$watcher_pid" 2>/dev/null || true
+        fi
         rm -rf "$d"
       done
       exit 0

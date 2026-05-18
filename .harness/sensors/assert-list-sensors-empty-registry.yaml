@@ -79,11 +79,12 @@ execution:
       last=$(tail -n 1 "$out")
       verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
       kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
-      exists=$(printf '%s' "$last" | jq -r '.metadata.registry_exists // null')
+      exists=$(printf '%s' "$last" | jq -r '.metadata.registry_exists | tostring')
       source=$(printf '%s' "$last" | jq -r '.metadata.registry_source // ""')
       entries_len=$(printf '%s' "$last" | jq -r '.metadata.entries | length')
       registry_path=$(printf '%s' "$last" | jq -r '.metadata.registry_path // ""')
-      want_path="$tmpdir/.harness/runtime/running_sensors.json"
+      tmpdir_base=$(basename "$tmpdir")
+      want_suffix="$tmpdir_base/.harness/runtime/running_sensors.json"
       if [ "$verdict" != "warn" ]; then
         echo "expected verdict=warn, got=$verdict" >&2
         echo "last=$last" >&2
@@ -105,10 +106,10 @@ execution:
         echo "expected entries=[] (length 0), got length=$entries_len" >&2
         exit 1
       fi
-      if [ "$registry_path" != "$want_path" ]; then
-        echo "expected registry_path=$want_path, got=$registry_path" >&2
-        exit 1
-      fi
+      case "$registry_path" in
+        *"$want_suffix") : ;;
+        *) echo "expected registry_path to end with $want_suffix, got=$registry_path" >&2; exit 1 ;;
+      esac
       echo "list-empty-registry OK verdict=$verdict exists=$exists entries_len=$entries_len"
     type: shell
   teardown:

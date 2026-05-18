@@ -32,7 +32,8 @@ execution:
     run: |
       set -eu
       tmpdir=$(mktemp -d -t harness-assert-not-blocking.XXXXXX)
-      mkdir -p "$tmpdir/.harness/sensors"
+      mkdir -p "$tmpdir/.harness/sensors" "$tmpdir/.harness/usecases"
+      cp -R .harness/usecases/. "$tmpdir/.harness/usecases/"
       printf '%s' "$tmpdir"
     type: shell
   - exit_code_map:
@@ -105,7 +106,15 @@ execution:
         ./skills/start-sensor/scripts fixture-nonblocking-echo \
         >"$out" 2>"$err"
       rc=$?
-      printf '%s' "$rc"
+      # go run masks any non-zero child exit code to 1; parse stderr to
+      # recover the real exit code the start-sensor binary returned.
+      if [ "$rc" = 0 ]; then
+        exit_code=0
+      else
+        exit_code=$(grep -E '^exit status [0-9]+$' "$err" | tail -n 1 | awk '{print $3}')
+        [ -n "$exit_code" ] || exit_code="$rc"
+      fi
+      printf '%s' "$exit_code"
     type: shell
   - expect:
       equals: "2"

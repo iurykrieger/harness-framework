@@ -31,7 +31,8 @@ execution:
     run: |
       set -eu
       tmpdir=$(mktemp -d -t harness-assert-preflight.XXXXXX)
-      mkdir -p "$tmpdir/.harness/sensors"
+      mkdir -p "$tmpdir/.harness/sensors" "$tmpdir/.harness/usecases"
+      cp -R .harness/usecases/. "$tmpdir/.harness/usecases/"
       printf '%s' "$tmpdir"
     type: shell
   - exit_code_map:

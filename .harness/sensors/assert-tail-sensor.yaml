@@ -56,7 +56,7 @@ execution:
       last=$(tail -n 1 "$out")
       verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
       kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
-      registry_exists=$(printf '%s' "$last" | jq -r '.metadata.registry_exists // ""')
+      registry_exists=$(printf '%s' "$last" | jq -r '.metadata.registry_exists | tostring')
       if [ "$verdict" != "error" ]; then echo "verdict=$verdict (want error)" >&2; echo "$last" >&2; exit 1; fi
       if [ "$kind" != "tail_no_registry" ]; then echo "kind=$kind (want tail_no_registry)" >&2; echo "$last" >&2; exit 1; fi
       if [ "$registry_exists" != "false" ]; then echo "registry_exists=$registry_exists (want false)" >&2; echo "$last" >&2; exit 1; fi
@@ -70,20 +70,30 @@ execution:
       set -u
       tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
       out="$tmpdir/missing-args.out"
+      err="$tmpdir/missing-args.err"
       HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
         go run -C "$CLAUDE_PLUGIN_ROOT" -tags=tail_sensor \
         ./skills/tail-sensor/scripts \
-        >"$out" 2>/dev/null
+        >"$out" 2>"$err"
       rc=$?
-      if [ "$rc" != "2" ]; then
-        echo "expected exit=2 for tail_invalid_args, got=$rc" >&2
+      # go run masks non-zero child exit codes to 1; parse "exit status N"
+      # from its stderr to recover the actual exit code from tail-sensor.
+      if [ "$rc" = 0 ]; then
+        exit_code=0
+      else
+        exit_code=$(grep -E '^exit status [0-9]+$' "$err" | tail -n 1 | awk '{print $3}')
+        [ -n "$exit_code" ] || exit_code="$rc"
+      fi
+      if [ "$exit_code" != "2" ]; then
+        echo "expected exit=2 for tail_invalid_args, got=$exit_code (go-run rc=$rc)" >&2
         cat "$out" >&2
+        cat "$err" >&2
         exit 1
       fi
       last=$(tail -n 1 "$out")
       verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
       kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
-      rationale=$(printf '%s' "$last" | jq -r '.rationale // ""')
+      rationale=$(printf '%s' "$last" | jq -r '.evidence[0].rationale // ""')
       if [ "$verdict" != "error" ]; then echo "verdict=$verdict (want error)" >&2; echo "$last" >&2; exit 1; fi
       if [ "$kind" != "tail_invalid_args" ]; then echo "kind=$kind (want tail_invalid_args)" >&2; echo "$last" >&2; exit 1; fi
       case "$rationale" in

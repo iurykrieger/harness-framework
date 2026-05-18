@@ -101,7 +101,7 @@ execution:
       verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
       kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
       state=$(printf '%s' "$last" | jq -r '.metadata.entries[0].state // ""')
-      pid_alive=$(printf '%s' "$last" | jq -r '.metadata.entries[0].pid_alive // null')
+      pid_alive=$(printf '%s' "$last" | jq -r '.metadata.entries[0].pid_alive | tostring')
       sensor_id=$(printf '%s' "$last" | jq -r '.metadata.entries[0].sensor_id // ""')
       if [ "$verdict" != "pass" ]; then
         echo "expected verdict=pass, got=$verdict" >&2
