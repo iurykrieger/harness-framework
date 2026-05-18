@@ -119,7 +119,7 @@ func basenamePatternsFor(role string) (exact, alias map[string]bool) {
 	case "log-line":
 		exact["log-line"] = true
 		alias["log"] = true
-		alias["sample.log"] = true
+		alias["sample"] = true
 	case "event":
 		exact["event"] = true
 		alias["message"] = true

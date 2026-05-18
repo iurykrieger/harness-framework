@@ -70,6 +70,34 @@ func TestFindOnDisk(t *testing.T) {
 			searchPaths: []string{abs("does_not_exist")},
 			wantSource:  "",
 		},
+		{
+			name:         "outcome role matches response.json alias",
+			role:         "outcome",
+			searchPaths:  []string{abs("role_outcome")},
+			wantSource:   "disk",
+			wantBasename: "response.json",
+		},
+		{
+			name:         "body role matches payload.json alias",
+			role:         "body",
+			searchPaths:  []string{abs("role_body")},
+			wantSource:   "disk",
+			wantBasename: "payload.json",
+		},
+		{
+			name:         "log-line role matches sample.log alias",
+			role:         "log-line",
+			searchPaths:  []string{abs("role_log_line")},
+			wantSource:   "disk",
+			wantBasename: "sample.log",
+		},
+		{
+			name:         "event role matches message.json alias",
+			role:         "event",
+			searchPaths:  []string{abs("role_event")},
+			wantSource:   "disk",
+			wantBasename: "message.json",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
