@@ -1,0 +1,10 @@
+{
+  "last_jsonl_signal": {
+    "metadata": {
+      "kind": "fixture_path_escape"
+    },
+    "sensor_id": "write-fixture",
+    "severity": "high",
+    "verdict": "error"
+  }
+}

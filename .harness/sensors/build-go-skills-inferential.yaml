@@ -1,0 +1,36 @@
+cost:
+  class: cheap
+  compute:
+    cpu: medium
+    memory_mb: 1024
+  latency:
+    p50_ms: 5000
+    p95_ms: 30000
+    timeout_ms: 120000
+description: On pull-request, runs `go build -tags=run_inferential -o /dev/null ./skills/run-sensor/scripts`
+  to prove the inferential runner compiles. Auto-detected from .github/workflows/test.yml
+  step "Build inferential runner". Output is single because the Go compiler is silent
+  on success; verdict comes from exit code. Regulates architecture-fitness.
+determinism: high
+execution:
+  command: go build -tags=run_inferential -o /dev/null ./skills/run-sensor/scripts
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+id: build-go-skills-inferential
+kind: assertion
+name: Build inferential runner
+output: single
+phase: pre-merge
+regulation: architecture-fitness
+triggers:
+- "on": pull-request
+- "on": agent-request
+type: computational
+use_cases:
+- run-sensor-inferential-calibration-downgrade
+version: 0.1.0

@@ -1,0 +1,56 @@
+cost:
+  class: cheap
+  compute:
+    cpu: medium
+    memory_mb: 512
+  latency:
+    p50_ms: 5000
+    p95_ms: 30000
+    timeout_ms: 120000
+description: On pull-request, runs `go test -race -count=1 -tags=write_stack -v ./skills/detect-sensors/scripts/...`
+  and emits one Signal per test case. Auto-detected from .github/workflows/test.yml
+  step "Test write-stack". Output is stream because the testing component emits one
+  `--- PASS:` / `--- FAIL:` / `--- SKIP:` line per test (log_shape go-test-verbose).
+  Regulates behaviour.
+determinism: high
+execution:
+  command: go test -race -count=1 -tags=write_stack -v ./skills/detect-sensors/scripts/...
+    2>&1
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+  output_parsing:
+    patterns:
+    - captures:
+        excerpt: 1
+      regex: ^\s*--- FAIL:\s+(\S+)
+      severity: high
+      verdict: fail
+    - captures:
+        excerpt: 1
+      regex: ^\s*--- SKIP:\s+(\S+)
+      severity: low
+      verdict: warn
+    - captures:
+        excerpt: 1
+      regex: ^\s*--- PASS:\s+(\S+)
+      severity: info
+      verdict: pass
+id: unit-test-write-stack
+kind: assertion
+name: Unit tests — write-stack script
+output: stream
+phase: pre-merge
+regulation: behaviour
+triggers:
+- "on": pull-request
+- "on": agent-request
+type: computational
+use_cases:
+- detect-sensors-stack-success
+- detect-sensors-stack-schema-fail
+version: 0.1.0

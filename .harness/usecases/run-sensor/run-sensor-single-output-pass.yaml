@@ -1,0 +1,52 @@
+behavior:
+  business_rules:
+  - Subprocess stdout lines MUST NOT be parsed in single-output mode.
+  - Verdict is derived solely from execution.exit_code_map[exit_code].
+  - Aggregate Signal is the LAST (and only) JSONL line on stdout.
+  summary: |
+    The runner resolves the sensor file, validates it against schemas/sensor.yaml,
+    spawns sh -c "go vet ./...", waits for exit, looks up exit_code_map[0],
+    and emits the aggregate Signal.
+description: |
+  When /run-sensor receives a computational sensor whose execution.output=single,
+  the runner spawns sh -c <command>, ignores subprocess stdout lines, and emits
+  exactly one aggregate Signal whose verdict comes from exit_code_map[0]. This
+  is the canonical happy path for "verdict from exit status only" checks
+  (go vet, make build, structural tests with no per-test streaming).
+evidence:
+- file: skills/run-sensor/scripts/run-computational.go
+  kind: implementation
+  line_end: 120
+  line_start: 56
+  rationale: Entry point that resolves the sensor, validates, and delegates to orchestrator.RunWithDepsRoot
+    which emits the aggregate Signal.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Defines execution.exit_code_map and output=single/stream discriminator
+    that drive the verdict mapping.
+expected_outcome:
+  fixture:
+    ref: run-sensor/run-sensor-single-output-pass/outcome.json
+  invariants:
+  - Exactly one JSONL line is emitted on stdout.
+  - metadata.kind == "aggregate".
+  - metadata.output_mode == "single".
+  - The runner exits 0.
+  shape: signal-jsonl
+  side_effects: []
+  summary: One aggregate Signal with verdict=pass and exit_code=0 in metadata.
+id: run-sensor-single-output-pass
+journey_id: run-sensor
+name: Run a computational single-output sensor that passes
+regression_priority: critical
+tags:
+- happy-path
+- framework-run-sensor
+trigger:
+  fixture:
+    ref: run-sensor/run-sensor-single-output-pass/trigger.json
+  shape: cli-argv
+  summary: |
+    Invoke run-computational with the id of a computational, single-output sensor
+    whose command exits 0.
+version: 0.1.0

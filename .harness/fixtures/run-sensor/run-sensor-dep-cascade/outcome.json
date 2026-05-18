@@ -1,0 +1,12 @@
+{
+  "last_jsonl_signal": {
+    "metadata": {
+      "failed_dep_id": "smoke-checks",
+      "failed_dep_verdict": "fail",
+      "kind": "cascade"
+    },
+    "sensor_id": "integration-tests",
+    "severity": "high",
+    "verdict": "fail"
+  }
+}

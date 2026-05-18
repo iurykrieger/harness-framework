@@ -1,0 +1,51 @@
+behavior:
+  business_rules:
+  - The aggregate verdict is the worst of exit_code_map[code] and MaxStreamVerdict(individuals).
+  - One fail-ranked individual is sufficient to make the aggregate fail.
+  - evidence[] on the aggregate is bounded by SelectTopEvidence (top-N worst).
+  summary: |
+    The runner emits individual Signals as it matches each line; once the
+    subprocess exits, signal.MaxStreamVerdict picks the worst-rank verdict
+    observed across individuals and signal.Aggregate crosses it with the
+    exit-code-mapped verdict to compute the final aggregate.
+description: |
+  When the streaming subprocess emits one or more pattern-matched lines with
+  verdict=fail (e.g. a `--- FAIL: TestFoo` line for a sensor watching `go test
+  -v`), the aggregate verdict resolves to fail regardless of exit code mapping
+  via signal.MaxStreamVerdict. The aggregate's metadata.counts records per-
+  verdict totals; SelectTopEvidence picks the worst-ranked individuals for
+  the evidence[] field.
+evidence:
+- file: skills/run-sensor/scripts/run-computational.go
+  kind: implementation
+  line_end: 120
+  line_start: 56
+  rationale: Delegates to orchestrator.RunWithDepsRoot which performs the streaming
+    + aggregation.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares the output_parsing.patterns array with verdict/severity per
+    pattern.
+expected_outcome:
+  fixture:
+    ref: run-sensor/run-sensor-stream-fail-verdict/outcome.json
+  invariants:
+  - aggregate.verdict == "fail" whenever any individual has verdict=fail.
+  - aggregate is still the LAST JSONL line on stdout.
+  shape: signal-jsonl
+  side_effects: []
+  summary: A stream of individual Signals (some fail) followed by an aggregate verdict=fail.
+id: run-sensor-stream-fail-verdict
+journey_id: run-sensor
+name: Run a streaming computational sensor whose aggregate is fail
+regression_priority: critical
+tags:
+- error-handling
+- framework-run-sensor
+trigger:
+  fixture:
+    ref: run-sensor/run-sensor-stream-fail-verdict/trigger.json
+  shape: cli-argv
+  summary: Invoke run-computational with a streaming sensor whose subprocess produces
+    at least one fail-ranked line.
+version: 0.1.0

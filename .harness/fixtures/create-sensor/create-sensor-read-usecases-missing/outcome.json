@@ -1,0 +1,10 @@
+{
+  "last_jsonl_signal": {
+    "metadata": {
+      "kind": "usecase_not_found"
+    },
+    "sensor_id": "read-usecases",
+    "severity": "high",
+    "verdict": "error"
+  }
+}

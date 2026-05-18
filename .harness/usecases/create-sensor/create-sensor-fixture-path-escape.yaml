@@ -1,0 +1,60 @@
+behavior:
+  business_rules:
+  - Targets are interpreted relative to <projectRoot>/.harness/fixtures/.
+  - Traversal that escapes the fixtures root is rejected.
+  - No partial files are left on disk after a rejection.
+  - Exit code is 2.
+  summary: |
+    write-fixture rejects targets prefixed with ".harness/sensors/fixtures/"
+    or ".harness/fixtures/" up front. For other inputs lib/fixture.Write
+    resolves the absolute path, compares prefixes, and produces
+    *PathEscapeError when the target falls outside the fixtures root.
+description: |
+  /create-sensor's write-fixture writes fixture payloads under
+  <projectRoot>/.harness/fixtures/. lib/fixture.Write validates that the
+  target relative path does not escape the fixtures root (no traversal,
+  no leading "../"). On escape, it returns *PathEscapeError, which the
+  script forwards as Signal verdict=error, metadata.kind=fixture_path_escape
+  and returns exit 2.
+evidence:
+- file: skills/create-sensor/scripts/write-fixture.go
+  kind: implementation
+  line_end: 84
+  line_start: 75
+  rationale: errors.As branch catching *fixture.PathEscapeError and emitting the canonical
+    Signal.
+- file: lib/fixture/write.go
+  kind: implementation
+  rationale: Write implementation that detects path escape and produces the typed
+    error.
+- file: skills/create-sensor/scripts/write-fixture.go
+  kind: contract
+  line_end: 56
+  line_start: 37
+  rationale: flag.NewFlagSet declaration that defines the --from-file flag + positional
+    target argv contract used by the trigger fixture.
+expected_outcome:
+  fixture:
+    ref: create-sensor/create-sensor-fixture-path-escape/outcome.json
+  invariants:
+  - metadata.kind == "fixture_path_escape".
+  - Exit code is 2.
+  - No file is created outside <projectRoot>/.harness/fixtures/.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=fixture_path_escape; exit 2.
+id: create-sensor-fixture-path-escape
+journey_id: create-sensor
+name: write-fixture rejects a target path that escapes the fixtures root
+regression_priority: high
+tags:
+- error-handling
+- validation
+- authz
+- framework-create-sensor
+trigger:
+  fixture:
+    ref: create-sensor/create-sensor-fixture-path-escape/trigger.json
+  shape: cli-argv
+  summary: Run write-fixture with a target path that includes traversal segments.
+version: 0.1.0

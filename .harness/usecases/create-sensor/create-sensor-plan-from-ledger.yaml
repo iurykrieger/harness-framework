@@ -1,0 +1,54 @@
+behavior:
+  business_rules:
+  - The Aggregate envelope is the LAST JSONL line on stdout.
+  - One Plan line per proposed sensor in the order planning.Build returns.
+  - Planning logic stays in lib/planning — this script is just the wire adapter.
+  - Exit code is 0.
+  summary: |
+    The script reads all of stdin, JSON-unmarshals into the local ledger
+    struct, calls planning.Build which returns a []Plan, emits each Plan
+    as a JSONL line, then emits planning.MakeAggregate(plans) as the LAST
+    line. Exit 0.
+description: |
+  /create-sensor's plan-sensors is the JSON-on-stdin → JSONL-on-stdout
+  adapter for the planner. It reads a ledger (the wire format emitted by
+  read-usecases.go), runs planning.Build over the usecases, and emits one
+  Plan line per proposed sensor followed by one Aggregate envelope as the
+  last line. Exit 0 on success.
+evidence:
+- file: skills/create-sensor/scripts/plan-sensors.go
+  kind: implementation
+  line_end: 52
+  line_start: 30
+  rationale: Entry point that reads stdin, calls planning.Build + MakeAggregate, and
+    emits JSONL.
+- file: lib/planning/plan.go
+  kind: implementation
+  rationale: Build / MakeAggregate canonical implementations consumed by plan-sensors.
+- file: schemas/usecase.yaml
+  kind: contract
+  rationale: Declares the UseCase schema each ledger entry conforms to (consumed by
+    planning.Build).
+expected_outcome:
+  fixture:
+    ref: create-sensor/create-sensor-plan-from-ledger/outcome.json
+  invariants:
+  - The last JSONL line is the aggregate envelope.
+  - Each Plan line has a stable shape for downstream LLM consumption.
+  - Exit code is 0.
+  shape: signal-jsonl
+  side_effects: []
+  summary: 2 Plan lines + 1 Aggregate envelope; exit 0.
+id: create-sensor-plan-from-ledger
+journey_id: create-sensor
+name: Emit a JSONL plan from a usecase ledger on stdin via plan-sensors
+regression_priority: high
+tags:
+- happy-path
+- framework-create-sensor
+trigger:
+  fixture:
+    ref: create-sensor/create-sensor-plan-from-ledger/trigger.json
+  shape: stdin-json
+  summary: Pipe a ledger of two usecases into plan-sensors via stdin.
+version: 0.1.0

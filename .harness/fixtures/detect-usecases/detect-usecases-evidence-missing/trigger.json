@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "write-usecase",
+    "--out=/tmp/projectF/.harness/usecases",
+    "--project-root=/tmp/projectF",
+    "/tmp/draft-missing-evidence.yaml"
+  ],
+  "draft_payload": {
+    "evidence": [
+      {
+        "file": "src/does-not-exist.ts",
+        "rationale": "ghost"
+      }
+    ],
+    "id": "x-with-bad-evidence",
+    "journey_id": "user-registration"
+  },
+  "project_state": {
+    "file_exists": "src/users/users.controller.ts"
+  }
+}

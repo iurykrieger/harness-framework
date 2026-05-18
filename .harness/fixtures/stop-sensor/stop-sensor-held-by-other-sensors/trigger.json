@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "stop-sensor",
+    "postgres-blocking"
+  ],
+  "registry_state": {
+    "entries": [
+      {
+        "held_by": [
+          {
+            "kind": "manual"
+          },
+          {
+            "id": "integration-tests",
+            "kind": "sensor",
+            "pid": 250,
+            "pid_alive": true
+          }
+        ],
+        "pgid": 200,
+        "run_id": "200-zzzz1111",
+        "sensor_id": "postgres-blocking"
+      }
+    ]
+  }
+}

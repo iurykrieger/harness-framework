@@ -1,0 +1,7 @@
+{
+  "argv": [
+    "write-fixture",
+    "order-valid.json"
+  ],
+  "stdin_payload": "{\"id\":\"42\",\"items\":[]}\n"
+}

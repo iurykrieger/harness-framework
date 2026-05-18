@@ -1,0 +1,9 @@
+{
+  "metadata": {
+    "cause": "plugin_root_missing",
+    "kind": "failed"
+  },
+  "sensor_id": "serve-app-blocking",
+  "severity": "high",
+  "verdict": "error"
+}

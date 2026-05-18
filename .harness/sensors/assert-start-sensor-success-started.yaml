@@ -1,0 +1,222 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 256
+  latency:
+    p50_ms: 6000
+    p95_ms: 30000
+    timeout_ms: 120000
+description: |
+  Builds a synthetic blocking sensor in an isolated temp registry,
+  invokes /start-sensor against it, and asserts the success shape
+  declared by the start-sensor-success-started usecase: exit code 0,
+  last JSONL line carries verdict=pass, metadata.kind=started, with
+  metadata.pid > 0, metadata.watcher_pid > 0, metadata.log_dir matching
+  .harness/runtime/<id>/<pid>-<uuid8>. After success the registry holds
+  exactly one entry for the sensor with held_by=[{kind:manual}], and
+  the raw.log + signals.log files under metadata.log_dir exist. Stops
+  the spawned subprocess via /stop-sensor at teardown so the host system
+  is left clean. Validates the full runStart lifecycle at start.go:50-391.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: setup-tmp-registry
+    outputs:
+      tmpdir:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir=$(mktemp -d -t harness-assert-success-started.XXXXXX)
+      mkdir -p "$tmpdir/.harness/sensors" "$tmpdir/.harness/usecases"
+      cp -R .harness/usecases/. "$tmpdir/.harness/usecases/"
+      printf '%s' "$tmpdir"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: persist-fixture-blocking-sensor
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      draft="$tmpdir/fixture-draft.yaml"
+      cat >"$draft" <<'YAML'
+      id: fixture-blocking-success
+      version: 0.1.0
+      name: Fixture blocking sensor used by the start-sensor happy path
+      description: |
+        Synthetic blocking sensor that prints `ready` and sleeps so the
+        success-started assertion can attach to a real running subprocess
+        and observe its registry entry. Generated at runtime by
+        assert-start-sensor-success-started.
+      kind: assertion
+      type: computational
+      regulation: behaviour
+      phase: on-demand
+      determinism: high
+      output: stream
+      cost:
+        class: cheap
+        compute:
+          cpu: low
+          memory_mb: 16
+        latency:
+          p50_ms: 5
+          p95_ms: 50
+      triggers:
+      - "on": manual
+      use_cases:
+      - start-sensor-success-started
+      execution:
+        blocking: true
+        graceful_timeout_ms: 2000
+        command: printf 'ready\n' && sleep 60
+        exit_code_map:
+        - exit_code: 0
+          severity: info
+          verdict: pass
+        - exit_code: '*'
+          severity: high
+          verdict: fail
+        output_parsing:
+          patterns:
+          - regex: '.*'
+            verdict: pass
+            severity: info
+      YAML
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=write_sensor \
+        ./skills/create-sensor/scripts \
+        --out "$tmpdir/.harness/sensors" \
+        --schemas-dir "$CLAUDE_PLUGIN_ROOT/schemas" \
+        "$draft" >/dev/null
+    type: shell
+  - exit_code_map:
+      '*': pass
+      "0": pass
+    id: start-sensor-happy-path
+    outputs:
+      exit_code:
+        from: stdout
+        trim: true
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start.out"
+      err="$tmpdir/start.err"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=start_sensor \
+        ./skills/start-sensor/scripts fixture-blocking-success \
+        >"$out" 2>"$err"
+      rc=$?
+      printf '%s' "$rc"
+    type: shell
+  - expect:
+      equals: "0"
+      value: ${{ steps.start-sensor-happy-path.outputs.exit_code }}
+    id: assert-exit-code-is-0
+    type: assert
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: assert-started-signal-shape
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start.out"
+      if [ ! -s "$out" ]; then
+        echo "expected non-empty stdout capture at $out" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      pid=$(printf '%s' "$last" | jq -r '.metadata.pid // 0')
+      watcher_pid=$(printf '%s' "$last" | jq -r '.metadata.watcher_pid // 0')
+      log_dir=$(printf '%s' "$last" | jq -r '.metadata.log_dir // ""')
+      sensor_id=$(printf '%s' "$last" | jq -r '.sensor_id // ""')
+      if [ "$verdict" != "pass" ]; then
+        echo "expected verdict=pass, got=$verdict last=$last" >&2; exit 1
+      fi
+      if [ "$kind" != "started" ]; then
+        echo "expected metadata.kind=started, got=$kind last=$last" >&2; exit 1
+      fi
+      if [ -z "$pid" ] || [ "$pid" = "0" ] || [ "$pid" = "null" ]; then
+        echo "expected metadata.pid > 0, got=$pid last=$last" >&2; exit 1
+      fi
+      if [ -z "$watcher_pid" ] || [ "$watcher_pid" = "0" ] || [ "$watcher_pid" = "null" ]; then
+        echo "expected metadata.watcher_pid > 0, got=$watcher_pid last=$last" >&2; exit 1
+      fi
+      if [ "$sensor_id" != "fixture-blocking-success" ]; then
+        echo "expected sensor_id=fixture-blocking-success, got=$sensor_id last=$last" >&2; exit 1
+      fi
+      case "$log_dir" in
+        .harness/runtime/fixture-blocking-success/${pid}-*) : ;;
+        *)
+          echo "expected metadata.log_dir prefix '.harness/runtime/fixture-blocking-success/<pid>-' got=$log_dir pid=$pid" >&2
+          exit 1
+          ;;
+      esac
+      registry="$tmpdir/.harness/runtime/running_sensors.json"
+      if [ ! -f "$registry" ]; then
+        echo "expected running_sensors.json at $registry" >&2
+        exit 1
+      fi
+      count=$(jq '[.entries[] | select(.sensor_id == "fixture-blocking-success")] | length' "$registry")
+      if [ "$count" != "1" ]; then
+        echo "expected exactly 1 registry entry for fixture-blocking-success, got=$count" >&2
+        cat "$registry" >&2
+        exit 1
+      fi
+      held_kind=$(jq -r '.entries[] | select(.sensor_id == "fixture-blocking-success") | .held_by[0].kind' "$registry")
+      if [ "$held_kind" != "manual" ]; then
+        echo "expected held_by[0].kind=manual, got=$held_kind" >&2
+        cat "$registry" >&2
+        exit 1
+      fi
+      raw_log="$tmpdir/$log_dir/raw.log"
+      signals_log="$tmpdir/$log_dir/signals.log"
+      if [ ! -f "$raw_log" ]; then
+        echo "expected raw.log at $raw_log" >&2
+        ls -la "$tmpdir/.harness/runtime/fixture-blocking-success/" >&2 || true
+        exit 1
+      fi
+      if [ ! -f "$signals_log" ]; then
+        echo "expected signals.log at $signals_log" >&2
+        ls -la "$tmpdir/$log_dir" >&2 || true
+        exit 1
+      fi
+      echo "success-started shape OK pid=$pid watcher_pid=$watcher_pid log_dir=$log_dir"
+    type: shell
+  teardown:
+  - command: |
+      set -u
+      for d in /tmp/harness-assert-success-started.* "${TMPDIR:-/tmp}"/harness-assert-success-started.*; do
+        [ -d "$d" ] || continue
+        if [ -f "$d/.harness/runtime/running_sensors.json" ]; then
+          HARNESS_REGISTRY_ROOT="$d" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+            go run -C "$CLAUDE_PLUGIN_ROOT" -tags=stop_sensor \
+            ./skills/stop-sensor/scripts fixture-blocking-success >/dev/null 2>&1 || true
+        fi
+        rm -rf "$d"
+      done
+      exit 0
+id: assert-start-sensor-success-started
+kind: assertion
+name: Assert start-sensor happy path spawns a blocking sensor and registers it
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- start-sensor-success-started
+version: 0.1.0

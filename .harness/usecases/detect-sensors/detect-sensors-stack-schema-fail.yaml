@@ -1,0 +1,51 @@
+behavior:
+  business_rules:
+  - Exit code 1 is reserved for schema-class failures (vs 2 for usage/IO).
+  - The full validation tree is rendered on stderr to aid the LLM author.
+  - Nothing is written to .harness/stack.yaml on schema failure.
+  summary: |
+    schema.LoadValidator + v.Validate returns a typed ValidationError when
+    the draft omits the required `purpose` / `archetypes` / etc fields.
+    write-stack passes it to schema.PrintValidationOrPlain (which walks the
+    error tree onto stderr) and returns exit 1.
+description: |
+  When the draft stack JSON violates schemas/stack.yaml (e.g. missing the
+  required `purpose` or `archetypes` field), stack.ValidateAndPersist
+  returns a jsonschema.ValidationError. write-stack catches it via
+  errors.As, prints the validation tree via schema.PrintValidationOrPlain
+  on stderr, and returns exit 1. Nothing is written.
+evidence:
+- file: skills/detect-sensors/scripts/write-stack.go
+  kind: implementation
+  line_end: 73
+  line_start: 58
+  rationale: errors.As branch that converts a jsonschema.ValidationError to exit 1.
+- file: schemas/stack.yaml
+  kind: contract
+  rationale: Declares the stack schema whose validation produces the rejected error.
+expected_outcome:
+  fixture:
+    inline:
+      exit_code: 1
+      file_written: false
+      stderr_substring: INVALID
+  invariants:
+  - Exit code is 1.
+  - <out>/.harness/stack.yaml is NOT created.
+  shape: cli-exit
+  side_effects: []
+  summary: stderr contains the validation tree; exit 1; .harness/stack.yaml unchanged.
+id: detect-sensors-stack-schema-fail
+journey_id: detect-sensors
+name: write-stack rejects a draft that fails schema validation
+regression_priority: high
+tags:
+- error-handling
+- validation
+- framework-detect-sensors
+trigger:
+  fixture:
+    ref: detect-sensors/detect-sensors-stack-schema-fail/trigger.json
+  shape: cli-argv
+  summary: Run write-stack against a draft that omits required top-level fields.
+version: 0.1.0

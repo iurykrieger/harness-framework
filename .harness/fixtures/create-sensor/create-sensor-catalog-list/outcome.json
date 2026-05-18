@@ -1,0 +1,21 @@
+{
+  "digests": [
+    {
+      "id": "lint-go-vet-computational",
+      "kind": "observation",
+      "path": ".harness/sensors/lint-go-vet-computational.yaml"
+    },
+    {
+      "id": "smoke-tests",
+      "kind": "observation",
+      "path": ".harness/sensors/smoke-tests.yaml"
+    }
+  ],
+  "warn_signal": {
+    "metadata": {
+      "kind": "catalog_entry_skipped"
+    },
+    "sensor_id": "catalog-sensors",
+    "verdict": "warn"
+  }
+}

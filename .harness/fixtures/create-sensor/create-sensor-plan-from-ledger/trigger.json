@@ -1,0 +1,52 @@
+{
+  "stdin_payload": {
+    "usecases": [
+      {
+        "behavior": {
+          "summary": "persist + emit"
+        },
+        "expected_outcome": {
+          "fixture": {
+            "status": 201
+          },
+          "shape": "HTTP",
+          "summary": 201
+        },
+        "id": "charge-happy-path",
+        "journey_id": "charges",
+        "trigger": {
+          "fixture": {
+            "body": {
+              "amount": 100
+            }
+          },
+          "shape": "HTTP",
+          "summary": "POST /charges"
+        }
+      },
+      {
+        "behavior": {
+          "summary": "validation fails"
+        },
+        "expected_outcome": {
+          "fixture": {
+            "status": 422
+          },
+          "shape": "HTTP",
+          "summary": 422
+        },
+        "id": "charge-validation-fail",
+        "journey_id": "charges",
+        "trigger": {
+          "fixture": {
+            "body": {
+              "amount": -1
+            }
+          },
+          "shape": "HTTP",
+          "summary": "POST /charges with negative amount"
+        }
+      }
+    ]
+  }
+}

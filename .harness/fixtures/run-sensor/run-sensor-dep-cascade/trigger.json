@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "run-computational",
+    "integration-tests"
+  ],
+  "sensor_graph": {
+    "integration-tests": {
+      "depends_on": [
+        "smoke-checks"
+      ]
+    },
+    "smoke-checks": {
+      "execution": {
+        "command": "exit 1"
+      }
+    }
+  }
+}

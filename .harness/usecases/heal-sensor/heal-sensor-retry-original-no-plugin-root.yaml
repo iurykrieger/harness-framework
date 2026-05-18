@@ -1,0 +1,51 @@
+behavior:
+  business_rules:
+  - CLAUDE_PLUGIN_ROOT is required to locate the runner script.
+  - The check happens before any subprocess spawn.
+  - Exit code is 2.
+  summary: |
+    After reading the sensor and selecting the build tag, the script
+    inspects os.Getenv("CLAUDE_PLUGIN_ROOT"); an empty value yields the
+    stderr message and exit 2.
+description: |
+  retry-original must shell out via `go -C $CLAUDE_PLUGIN_ROOT run ...` to
+  invoke the runner from the plugin checkout. When CLAUDE_PLUGIN_ROOT is
+  empty, the script prints "error: CLAUDE_PLUGIN_ROOT not set" on stderr
+  and returns exit 2 before any exec. No subprocess is spawned.
+evidence:
+- file: skills/heal-sensor/scripts/retry-original.go
+  kind: implementation
+  line_end: 65
+  line_start: 60
+  rationale: CLAUDE_PLUGIN_ROOT guard inside run().
+- file: skills/heal-sensor/scripts/retry-original.go
+  kind: contract
+  line_end: 45
+  line_start: 30
+  rationale: flag.NewFlagSet declaration that defines the --sensor argv contract used
+    by the trigger fixture.
+expected_outcome:
+  fixture:
+    inline:
+      exit_code: 2
+      stderr_substring: CLAUDE_PLUGIN_ROOT not set
+  invariants:
+  - Exit code is 2.
+  - stderr names "CLAUDE_PLUGIN_ROOT".
+  - No `go run` subprocess is spawned.
+  shape: cli-exit
+  side_effects: []
+  summary: stderr contains "CLAUDE_PLUGIN_ROOT not set"; exit 2; no exec performed.
+id: heal-sensor-retry-original-no-plugin-root
+journey_id: heal-sensor
+name: retry-original refuses to run when CLAUDE_PLUGIN_ROOT is unset
+regression_priority: medium
+tags:
+- error-handling
+- framework-heal-sensor
+trigger:
+  fixture:
+    ref: heal-sensor/heal-sensor-retry-original-no-plugin-root/trigger.json
+  shape: cli-argv
+  summary: Run retry-original with CLAUDE_PLUGIN_ROOT unset in the environment.
+version: 0.1.0

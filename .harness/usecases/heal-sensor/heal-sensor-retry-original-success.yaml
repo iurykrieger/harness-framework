@@ -1,0 +1,54 @@
+behavior:
+  business_rules:
+  - The retry happens exactly once per /heal-sensor invocation.
+  - The script's exit code mirrors the runner's exit code.
+  - Computational vs inferential dispatch is driven solely by sensor.type.
+  summary: |
+    The script reads the sensor JSON, parses .type, selects the runner
+    build tag, then runs `go -C $CLAUDE_PLUGIN_ROOT run -tags=<tag>
+    ./skills/run-sensor/scripts <sensor>` with GOWORK=off appended to
+    the inherited env. Stdout/stderr are forwarded; the script returns
+    the runner's exit code.
+description: |
+  Step 4 of /heal-sensor. retry-original reads the failing sensor's
+  type field (computational | inferential), picks the matching build tag
+  (run_computational | run_inferential), and shells out to
+  `go -C $CLAUDE_PLUGIN_ROOT run -tags=<tag> ./skills/run-sensor/scripts
+  <sensor-path>`. The runner's stdout/stderr is piped through unchanged.
+  Exit code is the runner's exit code.
+evidence:
+- file: skills/heal-sensor/scripts/retry-original.go
+  kind: implementation
+  line_end: 78
+  line_start: 30
+  rationale: Entry point that selects the runner tag and execs the runner once.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares the sensor.type discriminator (computational | inferential)
+    the script reads.
+expected_outcome:
+  fixture:
+    inline:
+      exit_code: 0
+      stdout_forwarded: true
+  invariants:
+  - Exit code matches the runner's exit code.
+  - The selected build tag is "run_computational" for type=computational, "run_inferential"
+    for type=inferential.
+  shape: cli-exit
+  side_effects: []
+  summary: Runner stdout is forwarded; exit code is 0.
+id: heal-sensor-retry-original-success
+journey_id: heal-sensor
+name: retry-original re-invokes the failing sensor exactly once
+regression_priority: critical
+tags:
+- happy-path
+- framework-heal-sensor
+trigger:
+  fixture:
+    ref: heal-sensor/heal-sensor-retry-original-success/trigger.json
+  shape: cli-argv
+  summary: Run retry-original on a computational sensor whose runner exits 0 after
+    step 2 + step 3 fixes.
+version: 0.1.0

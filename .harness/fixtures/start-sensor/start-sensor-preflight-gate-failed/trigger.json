@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "start-sensor",
+    "serve-app-blocking"
+  ],
+  "env": {
+    "PATH": "/usr/bin"
+  },
+  "sensor": {
+    "requires": [
+      {
+        "kind": "tool",
+        "name": "docker"
+      }
+    ]
+  }
+}

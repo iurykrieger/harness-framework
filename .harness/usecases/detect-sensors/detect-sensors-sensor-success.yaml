@@ -1,0 +1,54 @@
+behavior:
+  business_rules:
+  - The persisted filename is <id>.yaml (no journey grouping on this path; that is
+    /create-sensor's job for a different output dir).
+  - Comments in the draft are NOT preserved through canonical YAML write.
+  - Exit code is 0.
+  summary: |
+    write-sensor reads the draft, calls sensor.ValidateAndPersist with the
+    given OutDir, which validates against schemas/sensor.yaml and writes
+    canonical YAML to <OutDir>/<id>.yaml. The absolute path goes to stdout.
+description: |
+  Phase B of /detect-sensors writes one sensor JSON/YAML per capability
+  inferred from stack archetypes. write-sensor delegates persistence to
+  sensor.ValidateAndPersist; on success it writes
+  <outDir>/<id>.yaml atomically and prints the absolute path on stdout.
+  Exit code 0.
+evidence:
+- file: skills/detect-sensors/scripts/write-sensor.go
+  kind: implementation
+  line_end: 75
+  line_start: 29
+  rationale: Entry point that reads the draft and delegates to sensor.ValidateAndPersist.
+- file: lib/sensor/persist.go
+  kind: implementation
+  rationale: ValidateAndPersist that performs schema validation and atomic YAML write.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares the sensor schema each draft must satisfy.
+expected_outcome:
+  fixture:
+    inline:
+      exit_code: 0
+      stdout_substring: /lint-go-vet-computational.yaml
+  invariants:
+  - Exit code is 0.
+  - <out>/<id>.yaml exists after the run.
+  shape: cli-exit
+  side_effects:
+  - <out>/<id>.yaml is created or overwritten with canonical YAML.
+  summary: stdout contains the absolute path; exit 0; the sensor file exists.
+id: detect-sensors-sensor-success
+journey_id: detect-sensors
+name: Persist a valid sensor draft via write-sensor
+regression_priority: critical
+tags:
+- happy-path
+- side-effects
+- framework-detect-sensors
+trigger:
+  fixture:
+    ref: detect-sensors/detect-sensors-sensor-success/trigger.json
+  shape: cli-argv
+  summary: Run write-sensor with --out=<dir> against a schema-valid sensor draft.
+version: 0.1.0

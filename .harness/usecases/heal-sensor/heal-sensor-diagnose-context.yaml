@@ -1,0 +1,59 @@
+behavior:
+  business_rules:
+  - Documents are capped at 16KB to keep the output bounded.
+  - Template previews are capped at 4KB.
+  - The .git, node_modules, and .cache directories are skipped during walk.
+  - 'Failing-step localization is opportunistic: when metadata.steps[] is present,
+    the last fail/error step is surfaced as failing_step.'
+  summary: |
+    The script reads the failing signal and sensor JSON, walks the project
+    root once to find docs and *.example files (skipping .git / node_modules /
+    .cache), truncates them, and emits a single pretty-printed JSON
+    document on stdout.
+description: |
+  Step 1 of /heal-sensor. diagnose reads (failing Signal JSON, failing
+  sensor JSON, project root) and emits a JSON document containing the
+  signal, the sensor, every recognised root-level doc (README/CLAUDE/
+  AGENTS/GEMINI/CONTRIBUTING, truncated to 16KB), and every "*.example"
+  template (preview truncated to 4KB). This becomes the prompt context
+  the agent uses to fill in the Setup Plan slots.
+evidence:
+- file: skills/heal-sensor/scripts/diagnose.go
+  kind: implementation
+  line_end: 82
+  line_start: 32
+  rationale: Entry point that collects signal/sensor/documents/templates and emits
+    the JSON bundle.
+- file: skills/heal-sensor/scripts/diagnose.go
+  kind: implementation
+  line_end: 119
+  line_start: 84
+  rationale: readDocuments / listTemplates / truncate helpers that bound the output.
+- file: schemas/signal.yaml
+  kind: contract
+  rationale: Declares the Signal schema the input file conforms to.
+expected_outcome:
+  fixture:
+    ref: heal-sensor/heal-sensor-diagnose-context/outcome.json
+  invariants:
+  - Exit code is 0.
+  - documents.<filename> is present for every recognised doc file.
+  - templates is an array (possibly empty when no .example files exist).
+  shape: stdout-json
+  side_effects: []
+  summary: Pretty-printed JSON with signal/failed_sensor/documents/templates fields;
+    exit 0.
+id: heal-sensor-diagnose-context
+journey_id: heal-sensor
+name: Diagnose emits the deterministic input bundle for setup planning
+regression_priority: critical
+tags:
+- happy-path
+- framework-heal-sensor
+trigger:
+  fixture:
+    ref: heal-sensor/heal-sensor-diagnose-context/trigger.json
+  shape: cli-argv
+  summary: Run diagnose with --signal, --sensor, and --root pointing at a project
+    containing a README and a .env.example.
+version: 0.1.0

@@ -1,0 +1,19 @@
+{
+  "final_aggregate": {
+    "metadata": {
+      "counts": {
+        "error": 0,
+        "fail": 0,
+        "pass": 3,
+        "warn": 0
+      },
+      "exit_code": 0,
+      "kind": "aggregate",
+      "output_mode": "stream",
+      "timed_out": false
+    },
+    "severity": "info",
+    "verdict": "pass"
+  },
+  "individuals_count": 3
+}

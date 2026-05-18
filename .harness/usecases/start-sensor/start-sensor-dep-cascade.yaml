@@ -1,0 +1,55 @@
+behavior:
+  business_rules:
+  - A failed dep aggregate cancels the start before any spawn.
+  - Already-attached blocking deps MUST be detached on failure.
+  - metadata.failed_dep_id / failed_dep_verdict are carried on the failed Signal.
+  - Exit code is 1.
+  summary: |
+    orchestrator.RunDeps runs each dep through its full lifecycle; on failure
+    it returns a populated CascadeSig. runStart unwraps metadata.failed_dep_*
+    into the aux map, detaches every live blocking dep, and emits the failed
+    Signal with cause=dep_cascade.
+description: |
+  Before spawning, runStart runs the dep DAG via orchestrator.RunDeps. If
+  any non-blocking dep produces verdict in {fail, error} (or a blocking
+  dep's AttachLiveDep returns a failed health gate), RunDeps populates
+  CascadeSig with metadata.failed_dep_id / failed_dep_verdict. runStart
+  detaches any already-attached blocking deps, emits a Signal with
+  cause=dep_cascade naming the failing dep, and exits 1.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  kind: implementation
+  line_end: 129
+  line_start: 115
+  rationale: dep-cascade branch in runStart that unwraps CascadeSig and emits cause=dep_cascade.
+- file: lib/orchestrator/cascade.go
+  kind: implementation
+  rationale: BuildCascadeSignal canonical implementation reused by RunDeps.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: depends_on / requires[kind=sensor] contract that defines the dep DAG.
+expected_outcome:
+  fixture:
+    ref: start-sensor/start-sensor-dep-cascade/outcome.json
+  invariants:
+  - metadata.cause == "dep_cascade".
+  - metadata.failed_dep_id is a string naming the failing dep.
+  - No subprocess for the requested sensor is spawned.
+  - Exit code is 1.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=failed, cause=dep_cascade, with failed_dep_*
+    fields; exit 1.
+id: start-sensor-dep-cascade
+journey_id: start-sensor
+name: Refuse to start when a dep aggregate failed
+regression_priority: high
+tags:
+- error-handling
+- framework-start-sensor
+trigger:
+  fixture:
+    ref: start-sensor/start-sensor-dep-cascade/trigger.json
+  shape: cli-argv
+  summary: Invoke start-sensor where one of the requested sensor's deps produces verdict=fail.
+version: 0.1.0

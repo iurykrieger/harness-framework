@@ -1,0 +1,11 @@
+{
+  "metadata": {
+    "killed_forcefully": false,
+    "kind": "aggregate",
+    "output_mode": "stream",
+    "watcher_kill_forced": false
+  },
+  "sensor_id": "serve-app-blocking",
+  "severity": "info",
+  "verdict": "pass"
+}

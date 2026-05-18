@@ -1,0 +1,159 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 64
+  latency:
+    p50_ms: 4000
+    p95_ms: 20000
+    timeout_ms: 90000
+description: |
+  Builds a synthetic running_sensors.json against an isolated temp registry
+  whose entry uses an unreachable PID (3999999), invokes /list-sensors,
+  and asserts the emitted Signal carries verdict=pass, metadata.kind=list,
+  entries[0].state="orphan", pid_alive=false, and the orphan entry remains
+  in the registry on disk after the call. Validates the orphan-classification
+  branch in skills/list-sensors/scripts/list.go where IsPIDAlive returns false.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: setup-tmp-registry
+    outputs:
+      tmpdir:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir=$(mktemp -d -t harness-assert-list-orphan.XXXXXX)
+      mkdir -p "$tmpdir/.harness/runtime"
+      printf '%s' "$tmpdir"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: write-orphan-registry
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      registry="$tmpdir/.harness/runtime/running_sensors.json"
+      cat >"$registry" <<'JSON'
+      {
+        "version": 1,
+        "entries": [
+          {
+            "sensor_id": "fixture-orphan-sensor",
+            "run_id": "3999999-orphan01",
+            "blocking": false,
+            "pid": 3999999,
+            "pgid": 3999999,
+            "watcher_pid": 0,
+            "started_at": "2026-05-18T00:00:00Z",
+            "command": "true",
+            "held_by": [{"kind": "manual", "attached_at": "2026-05-18T00:00:00Z"}]
+          }
+        ]
+      }
+      JSON
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: invoke-list-sensors
+    outputs:
+      stdout_path:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/list.out"
+      err="$tmpdir/list.err"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=list_sensors \
+        ./skills/list-sensors/scripts >"$out" 2>"$err"
+      printf '%s' "$out"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: assert-orphan-shape
+    run: |
+      set -eu
+      out='${{ steps.invoke-list-sensors.outputs.stdout_path }}'
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      if [ ! -s "$out" ]; then
+        echo "list-sensors stdout is empty: $out" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      state=$(printf '%s' "$last" | jq -r '.metadata.entries[0].state // ""')
+      pid_alive=$(printf '%s' "$last" | jq -r '.metadata.entries[0].pid_alive | tostring')
+      sensor_id=$(printf '%s' "$last" | jq -r '.metadata.entries[0].sensor_id // ""')
+      if [ "$verdict" != "pass" ]; then
+        echo "expected verdict=pass, got=$verdict" >&2
+        echo "last=$last" >&2
+        exit 1
+      fi
+      if [ "$kind" != "list" ]; then
+        echo "expected metadata.kind=list, got=$kind" >&2
+        exit 1
+      fi
+      if [ "$state" != "orphan" ]; then
+        echo "expected entries[0].state=orphan, got=$state" >&2
+        exit 1
+      fi
+      if [ "$pid_alive" != "false" ]; then
+        echo "expected entries[0].pid_alive=false, got=$pid_alive" >&2
+        exit 1
+      fi
+      if [ "$sensor_id" != "fixture-orphan-sensor" ]; then
+        echo "expected entries[0].sensor_id=fixture-orphan-sensor, got=$sensor_id" >&2
+        exit 1
+      fi
+      registry="$tmpdir/.harness/runtime/running_sensors.json"
+      if [ ! -f "$registry" ]; then
+        echo "expected registry file still present after /list-sensors" >&2
+        exit 1
+      fi
+      count=$(jq '[.entries[] | select(.sensor_id == "fixture-orphan-sensor")] | length' "$registry")
+      if [ "$count" != "1" ]; then
+        echo "expected orphan entry to remain in registry, count=$count" >&2
+        exit 1
+      fi
+      echo "list-orphan OK verdict=$verdict state=$state pid_alive=$pid_alive"
+    type: shell
+  teardown:
+  - command: |
+      set -u
+      for d in /tmp/harness-assert-list-orphan.* "${TMPDIR:-/tmp}"/harness-assert-list-orphan.*; do
+        [ -d "$d" ] || continue
+        rm -rf "$d"
+      done
+      exit 0
+id: assert-list-sensors-orphan
+kind: assertion
+name: Assert list-sensors annotates a dead PID as state=orphan
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- list-sensors-orphan
+version: 0.1.0

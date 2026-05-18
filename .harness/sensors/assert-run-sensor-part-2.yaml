@@ -1,0 +1,83 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 512
+  latency:
+    p50_ms: 4000
+    p95_ms: 30000
+    timeout_ms: 90000
+description: |
+  Exercises the run-sensor journey's streaming aggregate path: the runner
+  emits the aggregate Signal as the LAST JSONL line on stdout, populates
+  metadata.counts from the individuals, stamps metadata.output_mode="stream",
+  computes the aggregate verdict as the worst of the stream's max-rank verdict
+  and the exit_code_map[code] entry, and bounds aggregate.evidence[] via
+  SelectTopEvidence. Each step invokes the Go test that anchors the rule.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-stream-aggregate-is-last-jsonl-line
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestRunOne_WithRoot_StreamSensorPersistsIndividualsAndRawLog$' ./lib/orchestrator/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-stream-metadata-counts-populated
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestCountVerdicts$' ./lib/signal/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-stream-output-mode-stream
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestRunWithDepsRoot_DepSignalsPopulated$' ./lib/orchestrator/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-stream-aggregate-verdict-worst-of-two
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestAggregate_WorstOfTwo$' ./lib/signal/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-stream-max-verdict-fail-wins
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestMaxStreamVerdict_Mixed$|^TestMaxStreamVerdict_Empty$' ./lib/signal/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-stream-select-top-evidence-bound
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestSelectTopEvidence_PrefersWorseVerdict$' ./lib/signal/...
+    type: shell
+id: assert-run-sensor-part-2
+kind: assertion
+name: Assert run-sensor stream aggregation and fail-rank semantics
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- run-sensor-stream-aggregate-pass
+- run-sensor-stream-fail-verdict
+version: 0.1.0

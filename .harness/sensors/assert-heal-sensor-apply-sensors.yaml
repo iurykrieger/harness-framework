@@ -1,0 +1,56 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 256
+  latency:
+    p50_ms: 4000
+    p95_ms: 30000
+    timeout_ms: 90000
+description: |
+  Runs the Go tests behind build tag heal_apply_sensors to validate the
+  apply-sensors usecase: patches go through heal.BumpPatch (version
+  monotonically advances), new and patched entries share the
+  ValidateAndPersist primitive, exit 1 on validation failure (some
+  written entries may still exist), exit 0 when every entry persists.
+  Each step invokes `go test -run` against
+  ./skills/heal-sensor/scripts/... ; evidence is Go-only with no shell
+  surface so the canonical wrap is `go test -run` per the create-sensor
+  SKILL.
+determinism: high
+execution:
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-new-setup-sensor-persists
+    run: |
+      go test -count=1 -tags=heal_apply_sensors -run '^TestApplySensors_NewSetupSensor$' -v ./skills/heal-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-patch-bumps-version
+    run: |
+      go test -count=1 -tags=heal_apply_sensors -run '^TestApplySensors_PatchBumpsPatchVersion$' -v ./skills/heal-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-invalid-sensor-rejected-exit-1
+    run: |
+      go test -count=1 -tags=heal_apply_sensors -run '^TestApplySensors_InvalidSensorRejected$' -v ./skills/heal-sensor/scripts/... 2>&1
+    type: shell
+id: assert-heal-sensor-apply-sensors
+kind: assertion
+name: Assert heal-sensor apply-sensors persistence, BumpPatch, validation gate
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- heal-sensor-apply-sensors-persisted
+version: 0.1.0

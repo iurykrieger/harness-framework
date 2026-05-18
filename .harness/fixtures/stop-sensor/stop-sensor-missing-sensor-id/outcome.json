@@ -1,0 +1,8 @@
+{
+  "metadata": {
+    "kind": "not_running"
+  },
+  "sensor_id": "stop",
+  "severity": "low",
+  "verdict": "warn"
+}

@@ -1,0 +1,11 @@
+{
+  "last_jsonl_signal": {
+    "metadata": {
+      "kind": "envelope",
+      "next_cursor": 5
+    },
+    "sensor_id": "serve-app-blocking",
+    "severity": "info",
+    "verdict": "pass"
+  }
+}

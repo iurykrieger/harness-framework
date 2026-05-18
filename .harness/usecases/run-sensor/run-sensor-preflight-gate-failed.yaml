@@ -1,0 +1,58 @@
+behavior:
+  business_rules:
+  - Preflight gate runs BEFORE any subprocess spawn for the sensor's command.
+  - The gate's canonical Signal MUST carry metadata.cause="preflight_failed".
+  - metadata.missing_envs / missing_tools / missing_contexts list the specific blockers.
+  - Dependents of a gate-failed sensor cascade.
+  summary: |
+    orchestrator.PreflightGate inspects requires[] entries and emits a
+    canonical "failed/preflight_failed" Signal listing every unmet env/tool/
+    context. The runner forwards this Signal as the aggregate and aborts.
+description: |
+  Before spawning a sensor's command, the orchestrator runs
+  orchestrator.PreflightGate against requires[kind ∈ {env, tool, context}].
+  Any unmet requirement produces a canonical Signal carrying
+  metadata.kind="failed", metadata.cause="preflight_failed", and the
+  machine-readable missing_envs / missing_tools / missing_contexts lists.
+  The runner emits this aggregate and aborts the spawn. Dependents cascade
+  via FirstFailedDep.
+evidence:
+- file: skills/run-sensor/scripts/run-inferential.go
+  kind: implementation
+  line_end: 250
+  line_start: 240
+  rationale: PreflightGate invocation that emits the canonical signal and aborts spawn
+    on failure.
+- file: lib/orchestrator/gate.go
+  kind: implementation
+  rationale: PreflightGate implementation that aggregates missing env/tool/context
+    lists into the canonical Signal.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares requires[] entries with kind ∈ {env, tool, context, sensor}
+    consumed by the gate.
+expected_outcome:
+  fixture:
+    ref: run-sensor/run-sensor-preflight-gate-failed/outcome.json
+  invariants:
+  - metadata.cause == "preflight_failed".
+  - No subprocess of the sensor's command is spawned.
+  - The runner exits 0 because the canonical Signal was emitted (gate failure is an
+    observation, not a runner crash).
+  shape: signal-jsonl
+  side_effects: []
+  summary: One aggregate Signal with verdict=error, metadata.kind=failed, metadata.cause=preflight_failed.
+id: run-sensor-preflight-gate-failed
+journey_id: run-sensor
+name: Preflight gate fails on missing requires[env|tool|context]
+regression_priority: high
+tags:
+- error-handling
+- framework-run-sensor
+trigger:
+  fixture:
+    ref: run-sensor/run-sensor-preflight-gate-failed/trigger.json
+  shape: cli-argv
+  summary: Invoke run-inferential with a sensor whose requires[].env names an unset
+    variable.
+version: 0.1.0

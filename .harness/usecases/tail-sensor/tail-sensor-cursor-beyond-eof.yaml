@@ -1,0 +1,47 @@
+behavior:
+  business_rules:
+  - A cursor beyond EOF is a valid input (the agent is polling).
+  - The envelope's next_cursor reflects the actual file length, not the input cursor.
+  - Exit code is 0.
+  summary: |
+    The bufio.Scanner loop runs 5 times, each time satisfying current <=
+    cursor and skipping; nothing is written. After the loop, the envelope
+    Signal carries next_cursor=current=5.
+description: |
+  When cursor exceeds the number of lines currently in signals.log (e.g.,
+  the agent passed the previous envelope's next_cursor before any new
+  lines were appended), runTail's skip loop produces zero raw output and
+  emits just the envelope Signal with next_cursor unchanged. Exit 0.
+evidence:
+- file: skills/tail-sensor/scripts/tail.go
+  kind: implementation
+  line_end: 198
+  line_start: 175
+  rationale: Skip loop and envelope emission that handle cursor>EOF correctly.
+- file: schemas/signal.yaml
+  kind: contract
+  rationale: Declares the Signal schema the envelope conforms to.
+expected_outcome:
+  fixture:
+    ref: tail-sensor/tail-sensor-cursor-beyond-eof/outcome.json
+  invariants:
+  - Stdout contains exactly one JSONL line (the envelope).
+  - metadata.next_cursor equals the current signals.log line count.
+  - Exit code is 0.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Only the envelope Signal is emitted; next_cursor=5; exit 0.
+id: tail-sensor-cursor-beyond-eof
+journey_id: tail-sensor
+name: Tail with cursor past the end emits only the envelope
+regression_priority: medium
+tags:
+- happy-path
+- idempotent
+- framework-tail-sensor
+trigger:
+  fixture:
+    ref: tail-sensor/tail-sensor-cursor-beyond-eof/trigger.json
+  shape: cli-argv
+  summary: Invoke tail-sensor with cursor 10 against a 5-line signals.log.
+version: 0.1.0

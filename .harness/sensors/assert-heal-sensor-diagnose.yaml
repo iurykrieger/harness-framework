@@ -1,0 +1,88 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 256
+  latency:
+    p50_ms: 4000
+    p95_ms: 30000
+    timeout_ms: 90000
+description: |
+  Runs the Go tests behind build tag heal_diagnose to validate the
+  diagnose-context usecase: the diagnose command reads the failed
+  Signal, the failing sensor JSON and the project root, then emits a
+  bounded structured bundle that caps documents at 16KB, template
+  previews at 4KB, skips .git/node_modules/.cache during walk, and
+  opportunistically surfaces the last fail/error step from
+  metadata.steps[] as failing_step (legacy shapes without that array
+  emit no failing_step, all-pass shapes also emit no failing_step).
+  Each step invokes `go test -run` against
+  ./skills/heal-sensor/scripts/... ; evidence is Go-only with no
+  shell surface so the canonical wrap is `go test -run` per the
+  create-sensor SKILL.
+determinism: high
+execution:
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-diagnose-happy-path-bundle
+    run: |
+      go test -count=1 -tags=heal_diagnose -run '^TestDiagnose_HappyPath$' -v ./skills/heal-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-diagnose-missing-args
+    run: |
+      go test -count=1 -tags=heal_diagnose -run '^TestDiagnose_MissingArgs$' -v ./skills/heal-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-diagnose-signal-unreadable
+    run: |
+      go test -count=1 -tags=heal_diagnose -run '^TestDiagnose_SignalUnreadable$' -v ./skills/heal-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-diagnose-failing-step-from-metadata
+    run: |
+      go test -count=1 -tags=heal_diagnose -run '^TestDiagnose_FailingStepFromMetadataSteps$' -v ./skills/heal-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-diagnose-failing-step-picks-last-fail-or-error
+    run: |
+      go test -count=1 -tags=heal_diagnose -run '^TestDiagnose_FailingStepPicksLastFailOrError$' -v ./skills/heal-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-diagnose-no-failing-step-legacy-shape
+    run: |
+      go test -count=1 -tags=heal_diagnose -run '^TestDiagnose_NoFailingStepWhenLegacyShape$' -v ./skills/heal-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-diagnose-no-failing-step-all-pass
+    run: |
+      go test -count=1 -tags=heal_diagnose -run '^TestDiagnose_NoFailingStepWhenAllPass$' -v ./skills/heal-sensor/scripts/... 2>&1
+    type: shell
+id: assert-heal-sensor-diagnose
+kind: assertion
+name: Assert heal-sensor diagnose bundles signal/sensor/docs/templates with bounded
+  output
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- heal-sensor-diagnose-context
+version: 0.1.0

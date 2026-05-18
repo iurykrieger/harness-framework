@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "write-usecase",
+    "--out=/tmp/projectF/.harness/usecases",
+    "--project-root=/tmp/projectF",
+    "/tmp/bad-draft.yaml"
+  ],
+  "draft_payload": {
+    "id": "orphan-draft",
+    "name": "missing journey_id",
+    "version": "0.1.0"
+  }
+}

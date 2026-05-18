@@ -1,0 +1,59 @@
+cost:
+  class: cheap
+  compute:
+    cpu: medium
+    memory_mb: 512
+  latency:
+    p50_ms: 5000
+    p95_ms: 30000
+    timeout_ms: 120000
+description: On pull-request, runs `go test -race -count=1 -tags=write_sensor -v ./skills/create-sensor/scripts/...`
+  and emits one Signal per test case. Validates create-sensor's write-sensor script
+  — the entry point that translates draft YAML + ValidateAndPersist outcomes into
+  the canonical schema_invalid, usecase_not_found, sensor_already_exists, and pass
+  Signals. Output is stream because the testing component emits one `--- PASS:` /
+  `--- FAIL:` / `--- SKIP:` line per test (log_shape go-test-verbose). Regulates behaviour.
+determinism: high
+execution:
+  command: go test -race -count=1 -tags=write_sensor -v ./skills/create-sensor/scripts/...
+    2>&1
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+  output_parsing:
+    patterns:
+    - captures:
+        excerpt: 1
+      regex: ^\s*--- FAIL:\s+(\S+)
+      severity: high
+      verdict: fail
+    - captures:
+        excerpt: 1
+      regex: ^\s*--- SKIP:\s+(\S+)
+      severity: low
+      verdict: warn
+    - captures:
+        excerpt: 1
+      regex: ^\s*--- PASS:\s+(\S+)
+      severity: info
+      verdict: pass
+id: unit-test-create-sensor-write-sensor
+kind: assertion
+name: Unit tests — create-sensor write-sensor script
+output: stream
+phase: pre-merge
+regulation: behaviour
+triggers:
+- "on": pull-request
+- "on": agent-request
+type: computational
+use_cases:
+- create-sensor-already-exists
+- create-sensor-missing-usecase
+- create-sensor-schema-invalid
+- create-sensor-success
+version: 0.1.0

@@ -1,0 +1,51 @@
+behavior:
+  business_rules:
+  - Cursor 0 means "read all lines from the start".
+  - The envelope Signal is always the LAST JSONL line on stdout.
+  - metadata.next_cursor records the total lines read so the agent can resume.
+  - signals.log file content is NEVER mutated by /tail-sensor.
+  summary: |
+    runTail opens signals.log, iterates with bufio.Scanner, emits each line
+    on stdout, then constructs the envelope Signal with next_cursor=current
+    (the total line count after this read). The envelope is validated and
+    written as the LAST JSONL line.
+description: |
+  When cursor==0, runTail emits every line of signals.log on stdout, then
+  ends with one envelope Signal verdict=pass, metadata.kind=envelope,
+  metadata.next_cursor=<total-line-count>. The envelope is the LAST JSONL
+  line; the agent uses next_cursor as the input for its next /tail-sensor
+  call to read only new lines.
+evidence:
+- file: skills/tail-sensor/scripts/tail.go
+  kind: implementation
+  line_end: 198
+  line_start: 173
+  rationale: bufio.Scanner loop and envelope-emission site.
+- file: schemas/signal.yaml
+  kind: contract
+  rationale: Declares the Signal schema the envelope conforms to.
+expected_outcome:
+  fixture:
+    ref: tail-sensor/tail-sensor-cursor-zero-read-all/outcome.json
+  invariants:
+  - The envelope Signal is the LAST JSONL line.
+  - metadata.next_cursor equals the count of lines in signals.log at read time.
+  - Exit code is 0.
+  shape: signal-jsonl
+  side_effects: []
+  summary: N raw signal lines followed by one envelope Signal with next_cursor=N;
+    exit 0.
+id: tail-sensor-cursor-zero-read-all
+journey_id: tail-sensor
+name: Tail with cursor=0 streams every line and advances next_cursor
+regression_priority: critical
+tags:
+- happy-path
+- framework-tail-sensor
+trigger:
+  fixture:
+    ref: tail-sensor/tail-sensor-cursor-zero-read-all/trigger.json
+  shape: cli-argv
+  summary: Invoke tail-sensor with cursor 0 against a sensor whose signals.log has
+    N lines.
+version: 0.1.0

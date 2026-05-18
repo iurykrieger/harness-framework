@@ -1,0 +1,49 @@
+behavior:
+  business_rules:
+  - Cursor must satisfy cursor >= 0.
+  - Cursor 0 means "read all lines from the start"; positive N means "skip first N".
+  - Exit code is 1.
+  summary: |
+    strconv.Atoi(args[1]) either errors or yields cursor<0. runTail emits
+    the tail_invalid_cursor Signal carrying the bad value in the rationale.
+    Exit code is 1.
+description: |
+  The cursor argument must be a non-negative integer (0 = read all, N > 0 =
+  skip first N lines). When strconv.Atoi fails or returns a negative value,
+  runTail emits a Signal verdict=error, metadata.kind=tail_invalid_cursor
+  with rationale naming the offending value, and returns exit 1.
+evidence:
+- file: skills/tail-sensor/scripts/tail.go
+  kind: implementation
+  line_end: 70
+  line_start: 58
+  rationale: Cursor parse and validation site that emits tail_invalid_cursor.
+- file: skills/tail-sensor/scripts/tail.go
+  kind: contract
+  line_end: 33
+  line_start: 27
+  rationale: main() declaring the positional-argv contract consumed by the trigger
+    fixture.
+expected_outcome:
+  fixture:
+    ref: tail-sensor/tail-sensor-invalid-cursor/outcome.json
+  invariants:
+  - metadata.kind == "tail_invalid_cursor".
+  - Exit code is 1.
+  - The signals.log file is not opened.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=tail_invalid_cursor; exit 1.
+id: tail-sensor-invalid-cursor
+journey_id: tail-sensor
+name: Reject /tail-sensor with negative or non-integer cursor
+regression_priority: medium
+tags:
+- validation
+- framework-tail-sensor
+trigger:
+  fixture:
+    ref: tail-sensor/tail-sensor-invalid-cursor/trigger.json
+  shape: cli-argv
+  summary: Invoke tail-sensor with a cursor that is not a non-negative integer.
+version: 0.1.0

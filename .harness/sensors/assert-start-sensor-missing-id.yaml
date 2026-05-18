@@ -1,0 +1,129 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 128
+  latency:
+    p50_ms: 2000
+    p95_ms: 8000
+    timeout_ms: 30000
+description: |
+  Invokes /start-sensor with no positional argument against an isolated
+  temp registry and asserts the failure shape declared by the
+  start-sensor-missing-id usecase: exit code 2, last JSONL line carries
+  verdict=error, metadata.kind=failed, metadata.cause=bootstrap_failed,
+  and sensor_id=="unknown". No subprocess spawned, no registry file
+  appended. Validates the len(args) < 1 guard at start.go:54-56 and the
+  startSignal helper at lines 420-448.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: setup-tmp-registry
+    outputs:
+      tmpdir:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir=$(mktemp -d -t harness-assert-missing-id.XXXXXX)
+      mkdir -p "$tmpdir/.harness/sensors"
+      printf '%s' "$tmpdir"
+    type: shell
+  - exit_code_map:
+      '*': pass
+      "0": pass
+    id: start-without-id
+    outputs:
+      exit_code:
+        from: stdout
+        trim: true
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start.out"
+      err="$tmpdir/start.err"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=start_sensor \
+        ./skills/start-sensor/scripts \
+        >"$out" 2>"$err"
+      rc=$?
+      # go run masks any non-zero child exit code to 1 and prints
+      # "exit status N" on its own stderr. Parse that to recover the
+      # actual exit code from the start-sensor binary.
+      if [ "$rc" = 0 ]; then
+        exit_code=0
+      else
+        exit_code=$(grep -E '^exit status [0-9]+$' "$err" | tail -n 1 | awk '{print $3}')
+        [ -n "$exit_code" ] || exit_code="$rc"
+      fi
+      printf '%s' "$exit_code"
+    type: shell
+  - expect:
+      equals: "2"
+      value: ${{ steps.start-without-id.outputs.exit_code }}
+    id: assert-exit-code-is-2
+    type: assert
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: assert-missing-id-shape
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start.out"
+      if [ ! -s "$out" ]; then
+        echo "expected non-empty stdout capture at $out" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      cause=$(printf '%s' "$last" | jq -r '.metadata.cause // ""')
+      sensor_id=$(printf '%s' "$last" | jq -r '.sensor_id // ""')
+      if [ "$verdict" != "error" ]; then
+        echo "expected verdict=error, got=$verdict last=$last" >&2; exit 1
+      fi
+      if [ "$kind" != "failed" ]; then
+        echo "expected metadata.kind=failed, got=$kind last=$last" >&2; exit 1
+      fi
+      if [ "$cause" != "bootstrap_failed" ]; then
+        echo "expected metadata.cause=bootstrap_failed, got=$cause last=$last" >&2; exit 1
+      fi
+      if [ "$sensor_id" != "unknown" ]; then
+        echo "expected sensor_id=unknown, got=$sensor_id last=$last" >&2; exit 1
+      fi
+      registry="$tmpdir/.harness/runtime/running_sensors.json"
+      if [ -f "$registry" ]; then
+        count=$(jq '[.entries[]] | length' "$registry" 2>/dev/null || echo 0)
+        if [ "$count" != "0" ]; then
+          echo "expected no registry entries, got=$count" >&2; cat "$registry" >&2; exit 1
+        fi
+      fi
+      echo "missing-id shape OK verdict=$verdict kind=$kind cause=$cause sensor_id=$sensor_id"
+    type: shell
+  teardown:
+  - command: |
+      set -u
+      for d in /tmp/harness-assert-missing-id.* "${TMPDIR:-/tmp}"/harness-assert-missing-id.*; do
+        [ -d "$d" ] || continue
+        rm -rf "$d"
+      done
+      exit 0
+id: assert-start-sensor-missing-id
+kind: assertion
+name: Assert start-sensor refuses invocation without a sensor id
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- start-sensor-missing-id
+version: 0.1.0

@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "cause": "dep_cascade",
+    "failed_dep_id": "smoke-checks",
+    "failed_dep_severity": "high",
+    "failed_dep_verdict": "fail",
+    "kind": "failed"
+  },
+  "sensor_id": "serve-app-blocking",
+  "severity": "high",
+  "verdict": "error"
+}

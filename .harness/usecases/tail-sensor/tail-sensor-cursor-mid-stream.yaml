@@ -1,0 +1,48 @@
+behavior:
+  business_rules:
+  - cursor is 1-based — cursor=N skips lines 1..N inclusive.
+  - The envelope's next_cursor equals the total line count after this read.
+  - Lines are emitted as raw JSON text — they are NOT reparsed by the tail.
+  summary: |
+    bufio.Scanner increments `current` for each line; the conditional
+    `if current <= cursor { continue }` skips the first cursor lines and
+    emits the rest. After the loop, the envelope Signal stamps
+    next_cursor=current (the total line count, here 5).
+description: |
+  When cursor=N (positive, <= total line count), runTail walks signals.log
+  line by line, ignores the first N lines, then emits each subsequent line
+  on stdout. The envelope Signal carries metadata.next_cursor=<new-total>
+  so the agent can chain reads. This is the canonical incremental-tail
+  pattern used by long-running blocking sensors.
+evidence:
+- file: skills/tail-sensor/scripts/tail.go
+  kind: implementation
+  line_end: 198
+  line_start: 175
+  rationale: Line-skip loop and envelope emission with cursor accounting.
+- file: schemas/signal.yaml
+  kind: contract
+  rationale: Declares the Signal schema the envelope conforms to.
+expected_outcome:
+  fixture:
+    ref: tail-sensor/tail-sensor-cursor-mid-stream/outcome.json
+  invariants:
+  - Number of raw lines emitted equals total_lines - cursor.
+  - The envelope Signal is the LAST JSONL line on stdout.
+  - Exit code is 0.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Lines 4..5 emitted, then envelope with next_cursor=5; exit 0.
+id: tail-sensor-cursor-mid-stream
+journey_id: tail-sensor
+name: Tail with cursor=N skips first N lines and emits only new ones
+regression_priority: critical
+tags:
+- happy-path
+- framework-tail-sensor
+trigger:
+  fixture:
+    ref: tail-sensor/tail-sensor-cursor-mid-stream/trigger.json
+  shape: cli-argv
+  summary: Invoke tail-sensor with cursor 3 against a 5-line signals.log.
+version: 0.1.0

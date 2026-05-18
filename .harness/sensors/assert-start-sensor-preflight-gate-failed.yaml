@@ -1,0 +1,186 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 128
+  latency:
+    p50_ms: 3000
+    p95_ms: 12000
+    timeout_ms: 60000
+description: |
+  Builds a fixture blocking sensor whose requires[] names a tool that
+  cannot exist on PATH (`harness-nonexistent-tool-xyz`) in an isolated
+  temp registry, invokes /start-sensor, and asserts the failure shape
+  declared by the start-sensor-preflight-gate-failed usecase: exit code
+  1, last JSONL line carries verdict=error, metadata.kind=failed,
+  metadata.cause=preflight_failed, and metadata.missing_tools includes
+  the unmet tool. Validates orchestrator.PreflightGate at start.go:137-152.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: setup-tmp-registry
+    outputs:
+      tmpdir:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir=$(mktemp -d -t harness-assert-preflight.XXXXXX)
+      mkdir -p "$tmpdir/.harness/sensors" "$tmpdir/.harness/usecases"
+      cp -R .harness/usecases/. "$tmpdir/.harness/usecases/"
+      printf '%s' "$tmpdir"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: persist-fixture-with-missing-tool
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      draft="$tmpdir/fixture-draft.yaml"
+      cat >"$draft" <<'YAML'
+      id: fixture-blocking-requires-missing-tool
+      version: 0.1.0
+      name: Fixture blocking sensor requiring an unavailable tool
+      description: |
+        Synthetic blocking sensor whose requires[] names a tool that is
+        guaranteed not to exist on PATH so the preflight gate fails.
+        Used by assert-start-sensor-preflight-gate-failed.
+      kind: assertion
+      type: computational
+      regulation: behaviour
+      phase: on-demand
+      determinism: high
+      output: stream
+      cost:
+        class: cheap
+        compute:
+          cpu: low
+          memory_mb: 16
+        latency:
+          p50_ms: 5
+          p95_ms: 50
+      triggers:
+      - "on": manual
+      use_cases:
+      - start-sensor-preflight-gate-failed
+      requires:
+      - kind: tool
+        name: harness-nonexistent-tool-xyz
+      execution:
+        blocking: true
+        graceful_timeout_ms: 2000
+        command: printf 'ready\n' && sleep 60
+        exit_code_map:
+        - exit_code: 0
+          severity: info
+          verdict: pass
+        - exit_code: '*'
+          severity: high
+          verdict: fail
+        output_parsing:
+          patterns:
+          - regex: '.*'
+            verdict: pass
+            severity: info
+      YAML
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=write_sensor \
+        ./skills/create-sensor/scripts \
+        --out "$tmpdir/.harness/sensors" \
+        --schemas-dir "$CLAUDE_PLUGIN_ROOT/schemas" \
+        "$draft" >/dev/null
+    type: shell
+  - exit_code_map:
+      '*': pass
+      "0": pass
+    id: start-with-missing-tool
+    outputs:
+      exit_code:
+        from: stdout
+        trim: true
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start.out"
+      err="$tmpdir/start.err"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=start_sensor \
+        ./skills/start-sensor/scripts fixture-blocking-requires-missing-tool \
+        >"$out" 2>"$err"
+      rc=$?
+      printf '%s' "$rc"
+    type: shell
+  - expect:
+      equals: "1"
+      value: ${{ steps.start-with-missing-tool.outputs.exit_code }}
+    id: assert-exit-code-is-1
+    type: assert
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: assert-preflight-shape
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start.out"
+      if [ ! -s "$out" ]; then
+        echo "expected non-empty stdout capture at $out" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      cause=$(printf '%s' "$last" | jq -r '.metadata.cause // ""')
+      missing=$(printf '%s' "$last" | jq -r '.metadata.missing_tools // [] | join(",")')
+      if [ "$verdict" != "error" ]; then
+        echo "expected verdict=error, got=$verdict last=$last" >&2; exit 1
+      fi
+      if [ "$kind" != "failed" ]; then
+        echo "expected metadata.kind=failed, got=$kind last=$last" >&2; exit 1
+      fi
+      if [ "$cause" != "preflight_failed" ]; then
+        echo "expected metadata.cause=preflight_failed, got=$cause last=$last" >&2; exit 1
+      fi
+      case ",$missing," in
+        *,harness-nonexistent-tool-xyz,*) : ;;
+        *)
+          echo "expected metadata.missing_tools to include harness-nonexistent-tool-xyz, got=$missing last=$last" >&2
+          exit 1
+          ;;
+      esac
+      registry="$tmpdir/.harness/runtime/running_sensors.json"
+      if [ -f "$registry" ]; then
+        count=$(jq '[.entries[] | select(.sensor_id == "fixture-blocking-requires-missing-tool")] | length' "$registry" 2>/dev/null || echo 0)
+        if [ "$count" != "0" ]; then
+          echo "expected no registry entries for fixture, got=$count" >&2; cat "$registry" >&2; exit 1
+        fi
+      fi
+      echo "preflight-failed shape OK verdict=$verdict cause=$cause missing=$missing"
+    type: shell
+  teardown:
+  - command: |
+      set -u
+      for d in /tmp/harness-assert-preflight.* "${TMPDIR:-/tmp}"/harness-assert-preflight.*; do
+        [ -d "$d" ] || continue
+        rm -rf "$d"
+      done
+      exit 0
+id: assert-start-sensor-preflight-gate-failed
+kind: assertion
+name: Assert start-sensor refuses to start when requires gate fails
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- start-sensor-preflight-gate-failed
+version: 0.1.0

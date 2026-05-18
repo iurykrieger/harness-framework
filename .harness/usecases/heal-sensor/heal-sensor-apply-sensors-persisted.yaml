@@ -1,0 +1,55 @@
+behavior:
+  business_rules:
+  - Patches go through heal.BumpPatch to advance their version (no silent overwrites).
+  - Both patches and new sensors share the SAME persistence primitive.
+  - Exit code is 1 on any validation failure (some sensors may have been written;
+    written ones were valid).
+  - Exit code is 0 when every entry persists successfully.
+  summary: |
+    The script marshals each patch's JSON, calls heal.BumpPatch to advance
+    the version, and persists via lib/sensor.ValidateAndPersist. New setup
+    sensors are persisted directly. Each persisted path is added to the
+    written[] list emitted on stdout.
+description: |
+  Step 3 of /heal-sensor reuses lib/sensor.ValidateAndPersist — the SAME
+  primitive /detect-sensors uses — for every Plan.SensorPatches[] (with
+  heal.BumpPatch applied first) and every Plan.NewSetupSensors[]. The
+  script emits a JSON document with the absolute paths it wrote.
+evidence:
+- file: skills/heal-sensor/scripts/apply-sensors.go
+  kind: implementation
+  line_end: 101
+  line_start: 30
+  rationale: Entry point that persists each patch (after BumpPatch) and each new sensor
+    via lib/sensor.ValidateAndPersist.
+- file: lib/heal/plan.go
+  kind: implementation
+  rationale: Plan / ParsePlan / BumpPatch implementation consumed by the script.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares the sensor schema each persisted entry conforms to.
+expected_outcome:
+  fixture:
+    ref: heal-sensor/heal-sensor-apply-sensors-persisted/outcome.json
+  invariants:
+  - len(written) equals patches + new_setup_sensors counts.
+  - Every written path exists on disk and has bytes matching the persisted body.
+  - Exit code is 0.
+  shape: stdout-json
+  side_effects:
+  - <out>/<id>.yaml is created or overwritten for each entry.
+  summary: stdout JSON with written=[<patched-path>, <new-sensor-path>]; exit 0.
+id: heal-sensor-apply-sensors-persisted
+journey_id: heal-sensor
+name: apply-sensors persists sensor patches + new setup sensors
+regression_priority: high
+tags:
+- happy-path
+- side-effects
+- framework-heal-sensor
+trigger:
+  fixture:
+    ref: heal-sensor/heal-sensor-apply-sensors-persisted/trigger.json
+  shape: cli-argv
+  summary: Run apply-sensors with a Plan containing one patch and one new setup sensor.
+version: 0.1.0

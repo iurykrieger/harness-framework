@@ -10,7 +10,8 @@ trigger:
   shape: CLI invocation
   summary: /tail-sensor invoked with no registry on disk.
   fixture:
-    argv: [tail-sensor, dev-server, "0"]
+    inline:
+      argv: [tail-sensor, dev-server, "0"]
 behavior:
   summary: registry_exists=false branch produces tail_no_registry.
   business_rules:
@@ -20,7 +21,8 @@ expected_outcome:
   shape: One JSON line on stdout + exit code
   summary: One Signal verdict=error, metadata.kind=tail_no_registry, exit code 1.
   fixture:
-    exit_code: 1
+    inline:
+      exit_code: 1
   invariants:
     - Exit code is 1.
   side_effects: []

@@ -1,0 +1,59 @@
+behavior:
+  business_rules:
+  - The journey-reference cross-check is strict — empty stack.Journeys with a non-empty
+    journey_id fails.
+  - Exit code is 1.
+  - The error message names the orphan journey_id and the usecase id.
+  summary: |
+    usecase.ValidateAndPersist passes schema validation but CheckJourneyReference
+    walks stack.Journeys and returns *stack.CrossCheckError("journey_reference_orphan")
+    when no id matches. write-usecase reports it and returns exit 1.
+description: |
+  When the draft is schema-valid but its journey_id does not appear in any
+  stack.journeys[].id, usecase.CheckJourneyReference returns a
+  *stack.CrossCheckError with Kind="journey_reference_orphan". write-usecase
+  catches it via errors.As, prints "error: journey_reference_orphan: ..."
+  on stderr, and returns exit 1. The strict matching catches stale drafts
+  that point at deleted journeys.
+evidence:
+- file: skills/detect-usecases/scripts/write-usecase.go
+  kind: implementation
+  line_end: 85
+  line_start: 76
+  rationale: errors.As branch catching *stack.CrossCheckError and rendering the kind-prefixed
+    error message.
+- file: lib/usecase/cross_check.go
+  kind: implementation
+  rationale: CheckJourneyReference that produces the journey_reference_orphan typed
+    error.
+- file: schemas/stack.yaml
+  kind: contract
+  rationale: Declares the Journey shape whose id field is the cross-check anchor.
+expected_outcome:
+  fixture:
+    inline:
+      exit_code: 1
+      file_written: false
+      stderr_substring: journey_reference_orphan
+  invariants:
+  - Exit code is 1.
+  - stderr names the orphan journey id.
+  - No usecase file is written.
+  shape: cli-exit
+  side_effects: []
+  summary: stderr names the orphan journey_id; exit 1; no file written.
+id: detect-usecases-journey-orphan
+journey_id: detect-usecases
+name: write-usecase rejects a draft whose journey_id is not in stack.journeys[]
+regression_priority: high
+tags:
+- error-handling
+- validation
+- framework-detect-usecases
+trigger:
+  fixture:
+    ref: detect-usecases/detect-usecases-journey-orphan/trigger.json
+  shape: cli-argv
+  summary: Run write-usecase with a draft.journey_id that no journey in stack.yaml
+    declares.
+version: 0.1.0

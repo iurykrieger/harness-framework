@@ -1,0 +1,58 @@
+behavior:
+  business_rules:
+  - Blocking sensors MUST be brought up via /start-sensor, not /run-sensor.
+  - The rejection MUST happen before subprocess spawn — no side effects.
+  - Exit code is 2 (usage / pre-check failure).
+  summary: |
+    After reading and parsing the sensor JSON, run-computational inspects
+    execution.blocking; if true it writes "sensor is blocking; use /start-sensor
+    instead" to stderr and exits 2 before any subprocess is spawned.
+description: |
+  /run-sensor refuses to spawn a sensor whose execution.blocking=true.
+  Blocking sensors do not terminate on their own (e.g. a long-running web
+  server, a queue consumer) and must be brought up via /start-sensor so the
+  registry tracks them and a watcher tails signals.log. The runner aborts
+  with exit code 2 and an explicit "use /start-sensor instead" diagnostic
+  on stderr.
+evidence:
+- file: skills/run-sensor/scripts/run-computational.go
+  kind: implementation
+  line_end: 111
+  line_start: 106
+  rationale: Inspects execution.blocking after parsing the sensor JSON and refuses
+    with exit 2.
+- file: skills/run-sensor/scripts/run-inferential.go
+  kind: implementation
+  line_end: 142
+  line_start: 136
+  rationale: Same guard on the inferential path.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares execution.blocking boolean discriminator that distinguishes
+    /run-sensor from /start-sensor.
+expected_outcome:
+  fixture:
+    inline:
+      exit_code: 2
+      stderr_substring: use /start-sensor instead
+      stdout: ""
+  invariants:
+  - Exit code is 2.
+  - Stderr contains the "use /start-sensor instead" hint.
+  - No subprocess of the sensor's command is spawned.
+  shape: cli-exit
+  side_effects: []
+  summary: Process exits 2 with a clear stderr diagnostic; nothing on stdout.
+id: run-sensor-blocking-rejected
+journey_id: run-sensor
+name: Reject a blocking sensor with use-/start-sensor advice
+regression_priority: high
+tags:
+- error-handling
+- framework-run-sensor
+trigger:
+  fixture:
+    ref: run-sensor/run-sensor-blocking-rejected/trigger.json
+  shape: cli-argv
+  summary: Invoke run-computational with the id of a sensor declaring execution.blocking=true.
+version: 0.1.0

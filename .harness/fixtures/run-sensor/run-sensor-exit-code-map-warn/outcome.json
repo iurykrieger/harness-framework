@@ -1,0 +1,12 @@
+{
+  "final_aggregate": {
+    "metadata": {
+      "exit_code": 1,
+      "kind": "aggregate",
+      "output_mode": "stream",
+      "timed_out": false
+    },
+    "severity": "low",
+    "verdict": "warn"
+  }
+}

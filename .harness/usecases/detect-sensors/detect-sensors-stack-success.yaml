@@ -1,0 +1,56 @@
+behavior:
+  business_rules:
+  - The draft is converted to canonical YAML (via sigs.k8s.io/yaml) on write.
+  - The canonical path is <out>/.harness/stack.yaml.
+  - Comments in the draft are NOT preserved (yaml round-trip strips them).
+  - Exit code is 0.
+  summary: |
+    write-stack reads the draft, calls stack.ValidateAndPersist (schema +
+    cross-checks), which writes canonical YAML to .harness/stack.yaml.
+    The absolute path is printed on stdout; exit code is 0.
+description: |
+  Phase A of /detect-sensors writes a draft stack payload (JSON/YAML) to
+  <project>/.harness/stack.yaml. write-stack delegates validation +
+  cross-checks (CheckProducedBy, CheckJourneyArchetypes) to
+  stack.ValidateAndPersist; on success it prints the absolute path and
+  returns exit 0.
+evidence:
+- file: skills/detect-sensors/scripts/write-stack.go
+  kind: implementation
+  line_end: 76
+  line_start: 29
+  rationale: Entry point that reads the draft and delegates to stack.ValidateAndPersist.
+- file: lib/stack/persist.go
+  kind: implementation
+  rationale: ValidateAndPersist implementation that validates + cross-checks + writes
+    canonical YAML.
+- file: schemas/stack.yaml
+  kind: contract
+  rationale: Declares the stack schema the draft must satisfy.
+expected_outcome:
+  fixture:
+    inline:
+      exit_code: 0
+      stdout_substring: /.harness/stack.yaml
+  invariants:
+  - Exit code is 0.
+  - <out>/.harness/stack.yaml exists after the run.
+  shape: cli-exit
+  side_effects:
+  - <out>/.harness/stack.yaml is created or overwritten.
+  summary: stdout contains the absolute path; exit 0; .harness/stack.yaml exists.
+id: detect-sensors-stack-success
+journey_id: detect-sensors
+name: Persist a valid stack draft via write-stack
+regression_priority: critical
+tags:
+- happy-path
+- side-effects
+- framework-detect-sensors
+trigger:
+  fixture:
+    ref: detect-sensors/detect-sensors-stack-success/trigger.json
+  shape: cli-argv
+  summary: Run write-stack with --out=<project> against a schema-valid draft whose
+    journeys and producers cross-reference resolved components.
+version: 0.1.0

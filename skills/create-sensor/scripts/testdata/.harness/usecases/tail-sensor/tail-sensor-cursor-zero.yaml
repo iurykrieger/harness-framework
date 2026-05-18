@@ -7,7 +7,8 @@ trigger:
   shape: CLI invocation
   summary: /tail-sensor invoked with cursor=0.
   fixture:
-    argv: [tail-sensor, dev-server, "0"]
+    inline:
+      argv: [tail-sensor, dev-server, "0"]
 behavior:
   summary: cursor=0 read path emits every signal verbatim.
   business_rules:
@@ -17,7 +18,8 @@ expected_outcome:
   shape: JSONL on stdout + exit code 0
   summary: All signals echoed with exit code 0.
   fixture:
-    exit_code: 0
+    inline:
+      exit_code: 0
   invariants:
     - Exit code is 0.
   side_effects: []

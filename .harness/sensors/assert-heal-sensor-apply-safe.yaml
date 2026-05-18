@@ -1,0 +1,73 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 256
+  latency:
+    p50_ms: 4000
+    p95_ms: 30000
+    timeout_ms: 120000
+description: |
+  Runs the Go tests behind build tag heal_apply_safe (script-level CLI
+  surface) and the lib/heal apply tests (path-join + mkdir allowlist) to
+  validate the three apply-safe usecases: copy_template idempotent atomic
+  write, mkdir mode-0o755 idempotent traversal-safe, and arbitrary-shell
+  refusal that surfaces needs_input without changing exit code. Each
+  step invokes `go test -run <Test>`; the test bodies internally cover
+  the business rules (idempotency loops, atomic visibility, JSON result
+  shape, exit 0, allowlist refusal). Derived evidence is Go-only — no
+  shell surface in production code — so per the create-sensor SKILL
+  the canonical wrap is `go test -run`.
+determinism: high
+execution:
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-apply-safe-copy-template
+    run: |
+      go test -count=1 -tags=heal_apply_safe -run '^TestApplySafe_HappyPath$' -v ./skills/heal-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-lib-heal-copy-template
+    run: |
+      go test -count=1 -run '^TestApply_CopyTemplate_(Success|DstAlreadyExists)$' -v ./lib/heal/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-lib-heal-mkdir
+    run: |
+      go test -count=1 -run '^TestApply_Mkdir_(PathInContext|PathOutsideContext)$' -v ./lib/heal/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-apply-safe-refused-needs-input
+    run: |
+      go test -count=1 -tags=heal_apply_safe -run '^TestApplySafe_NeedsInput_PromptsCaller$' -v ./skills/heal-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: test-lib-heal-unknown-kind-refused
+    run: |
+      go test -count=1 -run '^TestApply_UnknownKind$' -v ./lib/heal/... 2>&1
+    type: shell
+id: assert-heal-sensor-apply-safe
+kind: assertion
+name: Assert heal-sensor apply-safe idempotency, atomicity, allowlist refusal
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- heal-sensor-apply-safe-copy-template
+- heal-sensor-apply-safe-mkdir
+- heal-sensor-apply-safe-refused
+version: 0.1.0

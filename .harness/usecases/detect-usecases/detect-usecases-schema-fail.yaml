@@ -1,0 +1,50 @@
+behavior:
+  business_rules:
+  - Exit code 1 is reserved for schema validation failures.
+  - The validation tree is rendered on stderr.
+  - No file is written when validation fails.
+  summary: |
+    schema.Validate against schemas/usecase.yaml returns a ValidationError
+    naming the missing required field. write-usecase routes this via
+    schema.PrintValidationOrPlain to stderr and returns exit 1.
+description: |
+  When the draft violates schemas/usecase.yaml (e.g. missing required
+  `journey_id` or `evidence`), usecase.ValidateAndPersist returns a
+  jsonschema.ValidationError. write-usecase catches it via errors.As,
+  prints the validation tree via schema.PrintValidationOrPlain on stderr,
+  and returns exit 1. Nothing is written.
+evidence:
+- file: skills/detect-usecases/scripts/write-usecase.go
+  kind: implementation
+  line_end: 85
+  line_start: 72
+  rationale: errors.As branch catching the ValidationError and returning exit 1.
+- file: schemas/usecase.yaml
+  kind: contract
+  rationale: Declares the UseCase schema whose violation produces the rejection.
+expected_outcome:
+  fixture:
+    inline:
+      exit_code: 1
+      file_written: false
+      stderr_substring: INVALID
+  invariants:
+  - Exit code is 1.
+  - No usecase file is written.
+  shape: cli-exit
+  side_effects: []
+  summary: stderr contains the validation tree; exit 1; no file written.
+id: detect-usecases-schema-fail
+journey_id: detect-usecases
+name: write-usecase rejects a draft that fails schema validation
+regression_priority: high
+tags:
+- error-handling
+- validation
+- framework-detect-usecases
+trigger:
+  fixture:
+    ref: detect-usecases/detect-usecases-schema-fail/trigger.json
+  shape: cli-argv
+  summary: Run write-usecase against a draft that omits required fields like journey_id.
+version: 0.1.0

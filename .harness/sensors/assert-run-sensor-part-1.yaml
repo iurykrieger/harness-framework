@@ -1,0 +1,147 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 512
+  latency:
+    p50_ms: 8000
+    p95_ms: 60000
+    timeout_ms: 180000
+description: |
+  Exercises the run-sensor journey's regulatory branches that do not involve
+  the streaming aggregate path: /run-sensor refuses blocking sensors at
+  pre-spawn; cascade Signals on failing deps; exit_code_map worst-of-two
+  semantics; inferential calibration downgrade; missing sensor resolution;
+  preflight gate denial of spawn; prepare fail-fast with teardown still
+  running; and the canonical single-output pass. Each step invokes the
+  precise Go test that anchors the behavior in the codebase so the assertion
+  shape is the test runner's own pass/fail status.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-blocking-rejected-computational
+    run: |
+      set -eu
+      GOWORK=off go test -tags=run_computational -count=1 -run '^TestRun_BlockingSensorRejected$' ./skills/run-sensor/scripts/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-blocking-rejected-inferential
+    run: |
+      set -eu
+      GOWORK=off go test -tags=run_inferential -count=1 -run '^TestRunInferential_BlockingSensorRejected$' ./skills/run-sensor/scripts/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-dep-cascade-builds-canonical-signal
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestRunWithDeps_CascadesOnDepFail$' ./lib/orchestrator/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-dep-cascade-build-cascade-signal-shape
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestBuildCascadeSignal_Envelope$|^TestBuildCascadeSignal_ValidatesAgainstSchema$' ./lib/orchestrator/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-exit-code-map-warn-applies
+    run: |
+      set -eu
+      GOWORK=off go test -tags=run_inferential -count=1 -run '^TestRunInferential_HonoursExitCodeMap$' ./skills/run-sensor/scripts/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-exit-code-map-worst-of-two
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestAggregate_WorstOfTwo$' ./lib/signal/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-inferential-calibration-downgrade
+    run: |
+      set -eu
+      GOWORK=off go test -tags=run_inferential -count=1 -run '^TestRunInferential_CalibrationDowngrade$' ./skills/run-sensor/scripts/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-missing-sensor-resolution-fails-early
+    run: |
+      set -eu
+      GOWORK=off go test -tags=run_computational -count=1 -run '^TestRun_SensorNotFound$' ./skills/run-sensor/scripts/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-preflight-gate-canonical-signal
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestPreflightGate_FailReturnsCanonicalSignal$|^TestPreflightGate_PassReturnsNilSignal$' ./lib/orchestrator/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-preflight-gate-blocks-spawn
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestRunOne_GateFailure_Env$|^TestRunOne_GateFailure_Tool$|^TestRunOne_GateFailure_Context$' ./lib/orchestrator/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-prepare-fail-fast-skips-command
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestRunOne_PrepareFailFast$' ./lib/orchestrator/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-teardown-runs-after-command-fail
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -run '^TestRunOne_TeardownRunsAfterCommandFail$|^TestRunOne_TeardownBestEffort$' ./lib/orchestrator/...
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-single-output-pass-canonical
+    run: |
+      set -eu
+      GOWORK=off go test -tags=run_computational -count=1 -run '^TestRun_NoDeps$' ./skills/run-sensor/scripts/...
+    type: shell
+id: assert-run-sensor-part-1
+kind: assertion
+name: Assert run-sensor refusals, cascade, gate, lifecycle, single-output
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- run-sensor-blocking-rejected
+- run-sensor-dep-cascade
+- run-sensor-exit-code-map-warn
+- run-sensor-inferential-calibration-downgrade
+- run-sensor-missing-sensor
+- run-sensor-preflight-gate-failed
+- run-sensor-prepare-failed
+- run-sensor-single-output-pass
+version: 0.1.0

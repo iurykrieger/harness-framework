@@ -1,0 +1,57 @@
+behavior:
+  business_rules:
+  - Missing ids are listed comma-separated in the error rationale.
+  - The script exits 1 and emits NO ledger payload (only the error Signal).
+  - Warnings (parse / schema failures) are emitted as warn Signals before the error
+    if any.
+  summary: |
+    indexUsecaseFiles walks .harness/usecases/ and returns a map id→path.
+    For each requested id, missing entries accumulate. When len(missing)
+    > 0, the script emits the usecase_not_found error Signal naming every
+    missing id and returns exit 1. No ledger is emitted in this case.
+description: |
+  /create-sensor's read-usecases resolves a set of usecase ids (--usecases
+  or --journey) and emits a JSON ledger. When the resolver cannot find one
+  or more requested ids under <projectRoot>/.harness/usecases/, the
+  script emits a Signal verdict=error, metadata.kind=usecase_not_found
+  listing the missing ids and returns exit 1.
+evidence:
+- file: skills/create-sensor/scripts/read-usecases.go
+  kind: implementation
+  line_end: 148
+  line_start: 138
+  rationale: Branch that emits usecase_not_found and returns 1 when len(missing) >
+    0.
+- file: skills/create-sensor/scripts/read-usecases.go
+  kind: implementation
+  line_end: 240
+  line_start: 208
+  rationale: loadUsecases that classifies ids as loaded/warned/missing.
+- file: schemas/usecase.yaml
+  kind: contract
+  rationale: Declares the UseCase schema that each loaded file is validated against.
+expected_outcome:
+  fixture:
+    ref: create-sensor/create-sensor-read-usecases-missing/outcome.json
+  invariants:
+  - metadata.kind == "usecase_not_found".
+  - Exit code is 1.
+  - No ledger JSON document is emitted.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=usecase_not_found naming the missing
+    id(s); exit 1.
+id: create-sensor-read-usecases-missing
+journey_id: create-sensor
+name: read-usecases reports usecase_not_found and exits 1
+regression_priority: high
+tags:
+- error-handling
+- framework-create-sensor
+trigger:
+  fixture:
+    ref: create-sensor/create-sensor-read-usecases-missing/trigger.json
+  shape: cli-argv
+  summary: Run read-usecases with --usecases naming a usecase id that does not exist
+    on disk.
+version: 0.1.0

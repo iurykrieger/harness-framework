@@ -1,0 +1,48 @@
+behavior:
+  business_rules:
+  - 'Verdict mapping per CLAUDE.md: /list-sensors is warn when registry is absent.'
+  - metadata.entries is always present, even when empty.
+  - Exit code is 0 because absent-registry is not an error.
+  summary: |
+    cli.Bootstrap detects b.Res.Exists=false. runList builds a warn/list
+    Signal with empty entries and rationale referencing the resolved
+    registry path. Exit 0.
+description: |
+  When .harness/runtime/running_sensors.json is absent on disk, /list-sensors
+  emits a Signal verdict=warn, metadata.kind=list, metadata.entries=[]
+  with a rationale pointing the user at HARNESS_REGISTRY_ROOT or a wrong-cwd
+  diagnosis. Exit code 0 because listing nothing is a valid project state.
+evidence:
+- file: skills/list-sensors/scripts/list.go
+  kind: implementation
+  line_end: 49
+  line_start: 35
+  rationale: warn/list emission path when b.Res.Exists is false.
+- file: lib/registry/state.go
+  kind: contract
+  rationale: RunningSensorState shape; Entries=[] is the canonical empty state surfaced
+    when the file is absent.
+expected_outcome:
+  fixture:
+    ref: list-sensors/list-sensors-empty-registry/outcome.json
+  invariants:
+  - verdict == "warn".
+  - metadata.entries is an empty array.
+  - Exit code is 0.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=warn, metadata.kind=list, metadata.entries=[]; exit 0.
+id: list-sensors-empty-registry
+journey_id: list-sensors
+name: List sensors when no registry file exists
+regression_priority: medium
+tags:
+- happy-path
+- framework-list-sensors
+trigger:
+  fixture:
+    ref: list-sensors/list-sensors-empty-registry/trigger.json
+  shape: cli-argv
+  summary: Invoke list-sensors when no .harness/runtime/running_sensors.json file
+    exists.
+version: 0.1.0

@@ -71,6 +71,18 @@ jobs:
       - name: Test plan-sensors
         run: go test -race -count=1 -tags=plan_sensors ./skills/create-sensor/scripts/...
 
+      - name: Vet (find_on_disk build tag)
+        run: go vet -tags=find_on_disk ./...
+
+      - name: Test find-on-disk
+        run: go test -race -count=1 -tags=find_on_disk ./skills/detect-usecases/scripts/...
+
+      - name: Vet (derive_from_contract build tag)
+        run: go vet -tags=derive_from_contract ./...
+
+      - name: Test derive-from-contract
+        run: go test -race -count=1 -tags=derive_from_contract ./skills/detect-usecases/scripts/...
+
       - name: Build computational runner
         run: go build -tags=run_computational -o /dev/null ./skills/run-sensor/scripts
 

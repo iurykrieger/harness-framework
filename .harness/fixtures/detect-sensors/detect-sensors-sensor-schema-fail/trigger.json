@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "write-sensor",
+    "--out=/tmp/projectE/.harness/sensors",
+    "/tmp/bad-draft.yaml"
+  ],
+  "draft_payload": {
+    "cost": {
+      "compute": "low",
+      "latency": {
+        "timeout_ms": 5000
+      }
+    },
+    "execution": {
+      "command": false
+    },
+    "id": "bad-sensor",
+    "kind": "observation",
+    "output": "single",
+    "type": "computational",
+    "version": "0.1.0"
+  }
+}

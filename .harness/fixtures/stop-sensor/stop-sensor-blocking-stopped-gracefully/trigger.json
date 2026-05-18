@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "stop-sensor",
+    "serve-app-blocking"
+  ],
+  "registry_state": {
+    "entries": [
+      {
+        "held_by": [
+          {
+            "kind": "manual"
+          }
+        ],
+        "pgid": 100,
+        "run_id": "100-abcd1234",
+        "sensor_id": "serve-app-blocking",
+        "watcher_pid": 101
+      }
+    ]
+  }
+}

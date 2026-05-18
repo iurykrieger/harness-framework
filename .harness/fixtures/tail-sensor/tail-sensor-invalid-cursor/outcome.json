@@ -1,0 +1,8 @@
+{
+  "metadata": {
+    "kind": "tail_invalid_cursor"
+  },
+  "sensor_id": "serve-app-blocking",
+  "severity": "high",
+  "verdict": "error"
+}

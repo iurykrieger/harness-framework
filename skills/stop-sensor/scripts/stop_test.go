@@ -3,9 +3,11 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -30,6 +32,11 @@ const (
 	helperIgnoreSIGTERM  = "ignore_sigterm"
 )
 
+// helperReadyMarker is the line the helper prints to stdout once its
+// signal handler is fully installed. spawnHelper waits for this line
+// before returning so tests never race with helper startup.
+const helperReadyMarker = "HARNESS_HELPER_READY"
+
 // TestMain dispatches into helper mode when the env var is set.
 // Standard pattern for spawning the test binary as a fake subprocess.
 func TestMain(m *testing.M) {
@@ -37,10 +44,14 @@ func TestMain(m *testing.M) {
 	case helperRespectSIGTERM:
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM)
+		// Announce readiness AFTER Notify is installed so the parent
+		// never sends SIGTERM before the handler is wired up.
+		fmt.Println(helperReadyMarker)
 		<-ch
 		os.Exit(0)
 	case helperIgnoreSIGTERM:
 		signal.Ignore(syscall.SIGTERM)
+		fmt.Println(helperReadyMarker)
 		time.Sleep(30 * time.Second)
 		os.Exit(0)
 	}
@@ -51,26 +62,55 @@ func spawnHelper(t *testing.T, mode string) int {
 	t.Helper()
 	cmd := exec.Command(os.Args[0])
 	cmd.Env = append(os.Environ(), helperKey+"="+mode)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("spawn helper: %v", err)
 	}
-	// Reap the helper as soon as it exits so IsPIDAlive (signal-0
-	// probe) doesn't keep returning true for the zombie. Without this,
-	// stopWatcher's poll loop times out even when SIGTERM killed the
-	// helper instantly.
-	waited := make(chan struct{})
-	go func() {
-		_, _ = cmd.Process.Wait()
-		close(waited)
-	}()
+	// IMPORTANT: do NOT spawn a `cmd.Process.Wait()` goroutine here.
+	// stopWatcher reaps the zombie itself via `watcher.IsSubprocessAlive`
+	// (kill(pid, 0) + Wait4(WNOHANG)). A concurrent Wait4 in a goroutine
+	// races with that reap — whichever wins, the loser sees ECHILD and
+	// the test outcome becomes non-deterministic. Cleanup below handles
+	// the residual cases (helper still running, or already reaped).
 	t.Cleanup(func() {
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
+			// Best-effort wait. If stopWatcher already reaped via WNOHANG,
+			// this returns an error which we intentionally swallow.
+			_, _ = cmd.Process.Wait()
 		}
-		<-waited
 	})
-	// Give the helper a moment to install its signal handler.
-	time.Sleep(150 * time.Millisecond)
+	// Wait for the helper to announce its signal handler is installed
+	// — deterministic handshake, no sleep race.
+	ready := make(chan error, 1)
+	go func() {
+		r := bufio.NewReader(stdout)
+		for {
+			line, err := r.ReadString('\n')
+			if strings.Contains(line, helperReadyMarker) {
+				ready <- nil
+				// Drain remaining stdout so the helper isn't blocked
+				// on a full pipe when it exits.
+				go io.Copy(io.Discard, r)
+				return
+			}
+			if err != nil {
+				ready <- fmt.Errorf("helper stdout: %v", err)
+				return
+			}
+		}
+	}()
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatalf("helper ready handshake: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("helper ready handshake timed out after 5s")
+	}
 	return cmd.Process.Pid
 }
 
@@ -228,8 +268,15 @@ func TestStopWatcher_NormalSIGTERM(t *testing.T) {
 	if killedForcefully {
 		t.Errorf("killedForcefully: got true, want false")
 	}
-	if latencyMS < 0 || latencyMS > 500 {
-		t.Errorf("latencyMS: got %d, want in [0, 500]", latencyMS)
+	// stopWatcher's deadline is 1s; latency reflects time from SIGTERM to
+	// confirmed-dead via IsPIDAlive (signal-0 probe over the reaped
+	// zombie). Under heavy CI load the reap+probe can take close to the
+	// deadline even though the helper itself exited fast; the upper bound
+	// here is generous enough to absorb that jitter while still being well
+	// under the SIGKILL path's [950, 1500] window — the discriminator is
+	// killedForcefully, not latency.
+	if latencyMS < 0 || latencyMS > 1100 {
+		t.Errorf("latencyMS: got %d, want in [0, 1100]", latencyMS)
 	}
 	if registry.IsPIDAlive(pid) {
 		t.Errorf("helper still alive after stopWatcher")

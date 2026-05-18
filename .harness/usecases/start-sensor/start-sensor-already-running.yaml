@@ -1,0 +1,62 @@
+behavior:
+  business_rules:
+  - 'Singleton: each blocking sensor id can have at most one live registry entry.'
+  - The rejection path emits exactly one Signal — no second subprocess, no second
+    watcher.
+  - The existing PID is exposed in metadata for the agent to /stop-sensor it.
+  - Exit code is 1.
+  summary: |
+    The file-lock-protected critical section in runStart loads the registry,
+    calls FindBlockingEntry; when the entry exists and IsPIDAlive(entry.PID)
+    is true, the function records alreadyRunning=true and skips spawn. After
+    releasing the lock, the runner emits the rejected Signal and returns 1.
+description: |
+  Inside the registry file lock, runStart calls
+  registry.RunningSensorState.FindBlockingEntry(id). If an entry exists AND
+  registry.IsPIDAlive(existing.PID) returns true, runStart returns a Signal
+  with metadata.kind=rejected and metadata.existing_pid set to the live PID,
+  with exit 1. The subprocess is NOT spawned a second time.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  kind: implementation
+  line_end: 197
+  line_start: 192
+  rationale: Singleton guard inside the registry file lock that flips alreadyRunning
+    when a live entry exists.
+- file: skills/start-sensor/scripts/start.go
+  kind: implementation
+  line_end: 352
+  line_start: 346
+  rationale: Emits the rejected Signal carrying metadata.existing_pid after the lock
+    releases.
+- file: lib/registry/state.go
+  kind: contract
+  rationale: RunningSensorState.FindBlockingEntry / IsPIDAlive contract used by the
+    guard.
+expected_outcome:
+  fixture:
+    ref: start-sensor/start-sensor-already-running/outcome.json
+  invariants:
+  - metadata.kind == "rejected".
+  - metadata.existing_pid > 0.
+  - Exit code is 1.
+  - No new entry is appended to the registry.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=error, metadata.kind=rejected, metadata.existing_pid=<live
+    pid>; exit 1.
+id: start-sensor-already-running
+journey_id: start-sensor
+name: Singleton guard rejects start when sensor is already running
+regression_priority: high
+tags:
+- error-handling
+- idempotent
+- framework-start-sensor
+trigger:
+  fixture:
+    ref: start-sensor/start-sensor-already-running/trigger.json
+  shape: cli-argv
+  summary: Invoke start-sensor while a previous /start-sensor invocation has a live
+    registry entry for the same id.
+version: 0.1.0

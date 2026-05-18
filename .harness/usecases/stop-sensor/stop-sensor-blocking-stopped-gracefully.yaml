@@ -1,0 +1,67 @@
+behavior:
+  business_rules:
+  - The manual hold is removed BEFORE the SIGTERM (atomic registry update).
+  - graceful_timeout_ms (default 5000) bounds the SIGTERM wait.
+  - SIGKILL is only sent if the process is still alive after the timeout.
+  - The watcher follows its own SIGTERM-then-SIGKILL sequence with a 1s timeout.
+  - signals.log lines are folded into the aggregate via MaxStreamVerdict.
+  - The registry entry is removed on success.
+  summary: |
+    Inside the lock, RemoveHolder strips the manual hold and Save persists
+    immediately. After release, syscall.Kill(-pgid, SIGTERM) initiates
+    graceful shutdown; if the pgid dies within graceful_timeout_ms, no
+    SIGKILL is sent (killed_forcefully=false). The watcher is drained
+    similarly. signals.log is parsed; the aggregate is built and emitted
+    with metadata.kind=aggregate. The registry entry is removed under a
+    fresh lock.
+description: |
+  Happy path for /stop-sensor on a blocking entry held only by kind=manual.
+  Under the registry file lock, the manual hold is removed. After release,
+  SIGTERM is sent to the process group; the kill is observed within
+  execution.graceful_timeout_ms; the watcher is then drained (SIGTERM →
+  short wait → SIGKILL). signals.log is read; the aggregate Signal is
+  computed from exit_code_map crossed with stream MaxStreamVerdict. The
+  registry entry is removed and the aggregate Signal is emitted.
+evidence:
+- file: skills/stop-sensor/scripts/stop.go
+  kind: implementation
+  line_end: 249
+  line_start: 46
+  rationale: runStop drives manual-hold removal, graceful kill, teardown, aggregate
+    computation, and registry cleanup.
+- file: skills/stop-sensor/scripts/stop.go
+  kind: implementation
+  line_end: 344
+  line_start: 327
+  rationale: terminateWithGrace implements the SIGTERM-then-SIGKILL sequence honoring
+    graceful_timeout_ms.
+- file: lib/registry/state.go
+  kind: contract
+  rationale: RunningSensorEntry / HeldByEntry shapes the trigger fixture mirrors.
+expected_outcome:
+  fixture:
+    ref: stop-sensor/stop-sensor-blocking-stopped-gracefully/outcome.json
+  invariants:
+  - The aggregate Signal is emitted on stdout as the last JSON line.
+  - The registry entry for this sensor's run_id is gone.
+  - metadata.killed_forcefully is false (graceful path).
+  shape: signal-jsonl
+  side_effects:
+  - <projectRoot>/.harness/runtime/running_sensors.json loses the entry.
+  - The subprocess PGID receives SIGTERM.
+  summary: Aggregate Signal with verdict from exit_code_map + stream, metadata.killed_forcefully=false.
+id: stop-sensor-blocking-stopped-gracefully
+journey_id: stop-sensor
+name: Stop a blocking sensor gracefully via SIGTERM
+regression_priority: critical
+tags:
+- happy-path
+- side-effects
+- framework-stop-sensor
+trigger:
+  fixture:
+    ref: stop-sensor/stop-sensor-blocking-stopped-gracefully/trigger.json
+  shape: cli-argv
+  summary: Invoke stop-sensor with a sensor id whose registry entry is held only by
+    the manual hold.
+version: 0.1.0

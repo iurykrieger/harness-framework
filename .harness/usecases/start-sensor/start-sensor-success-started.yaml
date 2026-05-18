@@ -1,0 +1,63 @@
+behavior:
+  business_rules:
+  - The subprocess is spawned in its own session (Setsid).
+  - The registry entry's held_by contains exactly one {kind:"manual"} entry on success.
+  - run_id format is "<pid>-<uuid8>" deriving deterministically from the spawned PID.
+  - log_dir is .harness/runtime/<sensor_id>/<run_id>.
+  - Watcher PID is recorded alongside subprocess PID.
+  summary: |
+    runStart resolves the sensor, validates schema, confirms blocking=true,
+    runs the dep DAG via orchestrator.RunDeps, runs target prepare[], spawns
+    detached + watcher under a file lock, writes the registry entry, and
+    emits the started Signal carrying pid + watcher_pid + log_dir.
+description: |
+  Happy path for /start-sensor: the sensor declares execution.blocking=true,
+  its deps resolve and pass, requires[env|tool|context] are satisfied, prepare[]
+  succeeds, and the runner spawns the subprocess in a detached session
+  (Setsid). The runner stages raw.log, derives a composite run_id (<pid>-<uuid8>),
+  renames raw.log into <run_id>/raw.log, spawns the watcher, writes the
+  registry entry with held_by=[{kind:manual}], and emits a Signal verdict=pass
+  metadata.kind=started.
+evidence:
+- file: skills/start-sensor/scripts/start.go
+  kind: implementation
+  line_end: 391
+  line_start: 50
+  rationale: runStart performs the full /start-sensor lifecycle including spawn, watcher,
+    registry, and started signal emission.
+- file: lib/registry/state.go
+  kind: contract
+  rationale: RunningSensorEntry shape that persists in the registry file.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares execution.blocking + execution.command + graceful_timeout_ms
+    consumed by /start-sensor.
+expected_outcome:
+  fixture:
+    ref: start-sensor/start-sensor-success-started/outcome.json
+  invariants:
+  - verdict == "pass" and metadata.kind == "started".
+  - metadata.pid > 0.
+  - metadata.watcher_pid > 0.
+  - run_id ends with the spawned subprocess PID prefix.
+  shape: signal-jsonl
+  side_effects:
+  - <projectRoot>/.harness/runtime/running_sensors.json gains one new entry.
+  - <projectRoot>/.harness/runtime/<id>/<run_id>/raw.log + signals.log + watcher.log
+    are created.
+  summary: Signal verdict=pass, metadata.kind=started, with pid/watcher_pid/log_dir/next_cursor
+    metadata.
+id: start-sensor-success-started
+journey_id: start-sensor
+name: Start a blocking sensor and register the run
+regression_priority: critical
+tags:
+- happy-path
+- side-effects
+- framework-start-sensor
+trigger:
+  fixture:
+    ref: start-sensor/start-sensor-success-started/trigger.json
+  shape: cli-argv
+  summary: Invoke start-sensor with the id of a valid blocking sensor.
+version: 0.1.0

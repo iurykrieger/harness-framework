@@ -22,6 +22,7 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/registry"
 	libsensor "github.com/iurykrieger/harness-framework/lib/sensor"
 	libsignal "github.com/iurykrieger/harness-framework/lib/signal"
+	"github.com/iurykrieger/harness-framework/lib/watcher"
 )
 
 func main() {
@@ -360,13 +361,29 @@ func stopWatcher(pid int) (killedForcefully bool, latencyMS int) {
 	_ = syscall.Kill(pid, syscall.SIGTERM)
 	deadline := start.Add(time.Second)
 	for time.Now().Before(deadline) {
-		if !registry.IsPIDAlive(pid) {
+		// IsSubprocessAlive combines kill(pid, 0) with Wait4(WNOHANG)
+		// so a zombie watcher (exited but not yet reaped by its parent)
+		// is correctly classified as dead AND reaped as a side effect.
+		// Without this, the poll loop runs the full second whenever the
+		// parent is slow to reap the child — a real hazard under load.
+		if !watcher.IsSubprocessAlive(pid) {
 			return false, int(time.Since(start) / time.Millisecond)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if registry.IsPIDAlive(pid) {
+	if watcher.IsSubprocessAlive(pid) {
 		_ = syscall.Kill(pid, syscall.SIGKILL)
+		// SIGKILL is asynchronous on Linux; the kernel marks the process
+		// as exited but the entry persists as a zombie until reaped.
+		// Drain that zombie with a short Wait4(WNOHANG) loop so callers
+		// observing the pid right after stopWatcher returns see it gone.
+		reapDeadline := time.Now().Add(500 * time.Millisecond)
+		for time.Now().Before(reapDeadline) {
+			if !watcher.IsSubprocessAlive(pid) {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 		return true, int(time.Since(start) / time.Millisecond)
 	}
 	return false, int(time.Since(start) / time.Millisecond)

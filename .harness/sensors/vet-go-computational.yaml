@@ -1,0 +1,49 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 512
+  latency:
+    p50_ms: 5000
+    p95_ms: 30000
+    timeout_ms: 120000
+description: |
+  On pull-request, runs `go vet -tags=run_computational ./...` against the
+  harness-framework module and surfaces each diagnostic line as an individual
+  Signal. Auto-detected from .github/workflows/test.yml step "Vet (computational
+  build tag)". Output is stream because the go-tool-compiler component emits one
+  `<file>:<line>:<col>: <message>` line per finding (log_shape
+  go-compiler-diagnostic). Regulates architecture-fitness.
+determinism: high
+execution:
+  command: go vet -tags=run_computational ./... 2>&1
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+  output_parsing:
+    patterns:
+    - captures:
+        excerpt: 4
+        file: 1
+        line_start: 2
+      regex: ^(\S+\.go):(\d+):(\d+):\s+(.+)$
+      severity: high
+      verdict: fail
+id: vet-go-computational
+kind: assertion
+name: go vet (run_computational build tag)
+output: stream
+phase: pre-merge
+regulation: architecture-fitness
+triggers:
+- "on": pull-request
+- "on": agent-request
+type: computational
+use_cases:
+- run-sensor-single-output-pass
+- run-sensor-stream-aggregate-pass
+version: 0.1.0
