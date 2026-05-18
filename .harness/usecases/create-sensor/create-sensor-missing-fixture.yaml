@@ -1,52 +1,47 @@
-behavior:
-  business_rules:
-  - Every entry in use_cases[] must resolve to a real .harness/usecases/**/<id>.yaml file before the sensor is persisted.
-  - The error names the absent usecase id.
-  - Exit code is 2.
-  summary: |
-    During validate-and-persist, the usecase existence check walks
-    <projectRoot>/.harness/usecases recursively and matches each
-    use_cases[] entry against a <id>.yaml basename. A missing usecase
-    generates MissingUseCaseError. The script's errors.As branch
-    produces the usecase_not_found Signal.
+id: create-sensor-missing-fixture
+version: 0.1.0
+name: create-sensor refuses when a referenced usecase id has no .harness/usecases/**/<id>.yaml file
+journey_id: create-sensor
 description: |
   ValidateAndPersist with RequireUseCaseFilesOnDisk=true checks that
   every entry in use_cases[] resolves to a real
   .harness/usecases/**/<id>.yaml file. A missing usecase triggers
   MissingUseCaseError; write-sensor emits verdict=error,
   metadata.kind=usecase_not_found and exits 2.
-evidence:
-- file: skills/create-sensor/scripts/write-sensor.go
-  line_start: 91
-  rationale: MissingUseCaseError handling branch.
-expected_outcome:
+trigger:
+  shape: CLI invocation
+  summary: write-sensor with a draft referencing a usecase id that has no matching .harness/usecases/**/<id>.yaml file.
   fixture:
-    exit_code: 2
-    stdout_lines:
-    - '{"sensor_id":"write-sensor","verdict":"error","severity":"high","evidence":[{"rationale":"usecase \"nonexistent-uc\" not found under /repo/.harness/usecases"}],"cost_actual":{"latency_ms":4},"metadata":{"kind":"usecase_not_found"}}'
+    ref: create-sensor/create-sensor-missing-fixture/trigger.json
+behavior:
+  summary: |
+    During validate-and-persist, the usecase existence check walks
+    <projectRoot>/.harness/usecases recursively and matches each
+    use_cases[] entry against a <id>.yaml basename. A missing usecase
+    generates MissingUseCaseError. The script's errors.As branch
+    produces the usecase_not_found Signal.
+  business_rules:
+  - Every entry in use_cases[] must resolve to a real .harness/usecases/**/<id>.yaml file before the sensor is persisted.
+  - The error names the absent usecase id.
+  - Exit code is 2.
+expected_outcome:
+  shape: One JSON line on stdout + exit code
+  summary: One error Signal verdict=error, kind=usecase_not_found, exit code 2.
+  fixture:
+    ref: create-sensor/create-sensor-missing-fixture/outcome.jsonl
   invariants:
   - metadata.kind is "usecase_not_found".
   - Exit code is 2.
   - The destination sensor file is NOT written.
-  shape: One JSON line on stdout + exit code
   side_effects: []
-  summary: One error Signal verdict=error, kind=usecase_not_found, exit code 2.
-id: create-sensor-missing-fixture
-journey_id: create-sensor
-name: create-sensor refuses when a referenced usecase id has no .harness/usecases/**/<id>.yaml file
+evidence:
+- file: skills/create-sensor/scripts/write-sensor.go
+  line_start: 91
+  rationale: MissingUseCaseError handling branch.
+- file: schemas/signal.yaml
+  kind: contract
+  rationale: Defines the Signal envelope emitted on stdout (verdict, severity, evidence, metadata).
 regression_priority: high
 tags:
 - validation
 - error-handling
-trigger:
-  fixture:
-    argv:
-    - write-sensor
-    - --out=/repo/.harness/sensors
-    - /tmp/draft.yaml
-    draft:
-      use_cases:
-      - nonexistent-uc
-  shape: CLI invocation
-  summary: write-sensor with a draft referencing a usecase id that has no matching .harness/usecases/**/<id>.yaml file.
-version: 0.1.0

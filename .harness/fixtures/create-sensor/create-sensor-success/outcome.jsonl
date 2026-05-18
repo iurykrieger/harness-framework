@@ -1,0 +1,2 @@
+{"sensor_id":"write-sensor","verdict":"pass","severity":"info","evidence":[],"cost_actual":{"latency_ms":12},"metadata":{"kind":"sensor_persisted","path":"/repo/.harness/sensors/my-new-sensor.yaml","id":"my-new-sensor","kind_attr":"assertion","type_attr":"computational"}}
+/repo/.harness/sensors/my-new-sensor.yaml

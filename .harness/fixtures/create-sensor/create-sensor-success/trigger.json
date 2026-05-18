@@ -1,0 +1,6 @@
+{
+  "argv": ["write-sensor", "--out=/repo/.harness/sensors", "/tmp/draft.yaml"],
+  "state": {
+    ".harness/sensors/my-new-sensor.yaml": "absent"
+  }
+}
