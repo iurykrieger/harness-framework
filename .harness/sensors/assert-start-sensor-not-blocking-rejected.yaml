@@ -1,0 +1,173 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 128
+  latency:
+    p50_ms: 3000
+    p95_ms: 12000
+    timeout_ms: 60000
+description: |
+  Builds a fixture sensor with execution.blocking=false in an isolated
+  temp registry, invokes /start-sensor against it, and asserts the
+  failure shape declared by the start-sensor-not-blocking-rejected
+  usecase: exit code 2, last JSONL line carries verdict=error,
+  metadata.kind=failed, metadata.cause=not_blocking. No subprocess
+  spawned, no registry entry written. Validates the blocking guard at
+  start.go:89-95 which symmetrically refuses non-blocking sensors that
+  /run-sensor would accept.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: setup-tmp-registry
+    outputs:
+      tmpdir:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir=$(mktemp -d -t harness-assert-not-blocking.XXXXXX)
+      mkdir -p "$tmpdir/.harness/sensors"
+      printf '%s' "$tmpdir"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: persist-fixture-nonblocking-sensor
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      draft="$tmpdir/fixture-draft.yaml"
+      cat >"$draft" <<'YAML'
+      id: fixture-nonblocking-echo
+      version: 0.1.0
+      name: Fixture non-blocking echo
+      description: |
+        Synthetic non-blocking sensor whose command exits immediately.
+        Used by assert-start-sensor-not-blocking-rejected to exercise
+        the /start-sensor blocking guard.
+      kind: assertion
+      type: computational
+      regulation: behaviour
+      phase: on-demand
+      determinism: high
+      output: single
+      cost:
+        class: cheap
+        compute:
+          cpu: low
+          memory_mb: 16
+        latency:
+          p50_ms: 5
+          p95_ms: 50
+          timeout_ms: 1000
+      triggers:
+      - "on": manual
+      use_cases:
+      - start-sensor-not-blocking-rejected
+      execution:
+        command: echo ok
+        exit_code_map:
+        - exit_code: 0
+          severity: info
+          verdict: pass
+        - exit_code: '*'
+          severity: high
+          verdict: fail
+      YAML
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=write_sensor \
+        ./skills/create-sensor/scripts \
+        --out "$tmpdir/.harness/sensors" \
+        --schemas-dir "$CLAUDE_PLUGIN_ROOT/schemas" \
+        "$draft" >/dev/null
+    type: shell
+  - exit_code_map:
+      '*': pass
+      "0": pass
+    id: start-nonblocking
+    outputs:
+      exit_code:
+        from: stdout
+        trim: true
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start.out"
+      err="$tmpdir/start.err"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=start_sensor \
+        ./skills/start-sensor/scripts fixture-nonblocking-echo \
+        >"$out" 2>"$err"
+      rc=$?
+      printf '%s' "$rc"
+    type: shell
+  - expect:
+      equals: "2"
+      value: ${{ steps.start-nonblocking.outputs.exit_code }}
+    id: assert-exit-code-is-2
+    type: assert
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: assert-not-blocking-shape
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start.out"
+      if [ ! -s "$out" ]; then
+        echo "expected non-empty stdout capture at $out" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      cause=$(printf '%s' "$last" | jq -r '.metadata.cause // ""')
+      sensor_id=$(printf '%s' "$last" | jq -r '.sensor_id // ""')
+      if [ "$verdict" != "error" ]; then
+        echo "expected verdict=error, got=$verdict last=$last" >&2; exit 1
+      fi
+      if [ "$kind" != "failed" ]; then
+        echo "expected metadata.kind=failed, got=$kind last=$last" >&2; exit 1
+      fi
+      if [ "$cause" != "not_blocking" ]; then
+        echo "expected metadata.cause=not_blocking, got=$cause last=$last" >&2; exit 1
+      fi
+      if [ "$sensor_id" != "fixture-nonblocking-echo" ]; then
+        echo "expected sensor_id=fixture-nonblocking-echo, got=$sensor_id last=$last" >&2; exit 1
+      fi
+      registry="$tmpdir/.harness/runtime/running_sensors.json"
+      if [ -f "$registry" ]; then
+        count=$(jq '[.entries[] | select(.sensor_id == "fixture-nonblocking-echo")] | length' "$registry" 2>/dev/null || echo 0)
+        if [ "$count" != "0" ]; then
+          echo "expected no registry entries for fixture, got=$count" >&2; cat "$registry" >&2; exit 1
+        fi
+      fi
+      echo "not-blocking shape OK verdict=$verdict kind=$kind cause=$cause"
+    type: shell
+  teardown:
+  - command: |
+      set -u
+      for d in /tmp/harness-assert-not-blocking.* "${TMPDIR:-/tmp}"/harness-assert-not-blocking.*; do
+        [ -d "$d" ] || continue
+        rm -rf "$d"
+      done
+      exit 0
+id: assert-start-sensor-not-blocking-rejected
+kind: assertion
+name: Assert start-sensor refuses to detach a non-blocking sensor
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- start-sensor-not-blocking-rejected
+version: 0.1.0

@@ -1,0 +1,59 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 256
+  latency:
+    p50_ms: 5000
+    p95_ms: 30000
+    timeout_ms: 120000
+description: |
+  Targeted regression for detect-sensors-stack-cross-check-fail: runs the
+  write-stack Go test TestRun_ProducedByOrphan, which exercises
+  stack.CheckProducedBy / CheckJourneyArchetypes against a draft whose
+  log_shapes[].produced_by references a component name that is not on
+  the stack. Asserts the test passes (exit 0) — meaning write-stack
+  returned exit 1 AND wrote "stack_produced_by_orphan" to stderr.
+  Fills the gap left by unit-test-write-stack / schema-validate-stack,
+  neither of which declares this usecase.
+determinism: high
+execution:
+  command: go test -race -count=1 -tags=write_stack -v -run '^TestRun_ProducedByOrphan$'
+    ./skills/detect-sensors/scripts/... 2>&1
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+  output_parsing:
+    patterns:
+    - captures:
+        excerpt: 1
+      regex: ^\s*--- FAIL:\s+(\S+)
+      severity: high
+      verdict: fail
+    - captures:
+        excerpt: 1
+      regex: ^\s*--- SKIP:\s+(\S+)
+      severity: low
+      verdict: warn
+    - captures:
+        excerpt: 1
+      regex: ^\s*--- PASS:\s+(\S+)
+      severity: info
+      verdict: pass
+id: assert-write-stack-cross-check-fail
+kind: assertion
+name: Assert write-stack rejects cross-check failures with stack_<kind> stderr prefix
+output: stream
+phase: pre-merge
+regulation: behaviour
+triggers:
+- "on": pull-request
+- "on": agent-request
+type: computational
+use_cases:
+- detect-sensors-stack-cross-check-fail
+version: 0.1.0

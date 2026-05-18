@@ -1,0 +1,120 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 128
+  latency:
+    p50_ms: 2000
+    p95_ms: 8000
+    timeout_ms: 30000
+description: |
+  Invokes /start-sensor with CLAUDE_PLUGIN_ROOT explicitly unset against an
+  isolated temp registry and asserts the failure shape declared by the
+  start-sensor-plugin-root-missing usecase: exit code 1, last JSONL line
+  carries verdict=error, metadata.kind=failed, metadata.cause=
+  plugin_root_missing. The check happens before sensor resolution; no
+  subprocess is spawned, no registry entry is written. Validates the
+  CLAUDE_PLUGIN_ROOT guard at start.go:59-64.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: setup-tmp-registry
+    outputs:
+      tmpdir:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir=$(mktemp -d -t harness-assert-plugin-root.XXXXXX)
+      mkdir -p "$tmpdir/.harness/sensors"
+      printf '%s' "$tmpdir"
+    type: shell
+  - exit_code_map:
+      '*': pass
+      "0": pass
+    id: start-with-empty-plugin-root
+    outputs:
+      exit_code:
+        from: stdout
+        trim: true
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start.out"
+      err="$tmpdir/start.err"
+      saved_plugin_root="$CLAUDE_PLUGIN_ROOT"
+      # We must let `go run -C` resolve the plugin source tree, but the
+      # subprocess under test must see CLAUDE_PLUGIN_ROOT="". Pass the
+      # path to -C explicitly and unset the env var for the subprocess.
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="" \
+        go run -C "$saved_plugin_root" -tags=start_sensor \
+        ./skills/start-sensor/scripts serve-app-blocking \
+        >"$out" 2>"$err"
+      rc=$?
+      printf '%s' "$rc"
+    type: shell
+  - expect:
+      equals: "1"
+      value: ${{ steps.start-with-empty-plugin-root.outputs.exit_code }}
+    id: assert-exit-code-is-1
+    type: assert
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: assert-plugin-root-missing-shape
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start.out"
+      if [ ! -s "$out" ]; then
+        echo "expected non-empty stdout capture at $out" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      cause=$(printf '%s' "$last" | jq -r '.metadata.cause // ""')
+      if [ "$verdict" != "error" ]; then
+        echo "expected verdict=error, got=$verdict last=$last" >&2; exit 1
+      fi
+      if [ "$kind" != "failed" ]; then
+        echo "expected metadata.kind=failed, got=$kind last=$last" >&2; exit 1
+      fi
+      if [ "$cause" != "plugin_root_missing" ]; then
+        echo "expected metadata.cause=plugin_root_missing, got=$cause last=$last" >&2; exit 1
+      fi
+      registry="$tmpdir/.harness/runtime/running_sensors.json"
+      if [ -f "$registry" ]; then
+        count=$(jq '[.entries[]] | length' "$registry" 2>/dev/null || echo 0)
+        if [ "$count" != "0" ]; then
+          echo "expected no registry entries, got=$count" >&2; cat "$registry" >&2; exit 1
+        fi
+      fi
+      echo "plugin-root-missing shape OK verdict=$verdict kind=$kind cause=$cause"
+    type: shell
+  teardown:
+  - command: |
+      set -u
+      for d in /tmp/harness-assert-plugin-root.* "${TMPDIR:-/tmp}"/harness-assert-plugin-root.*; do
+        [ -d "$d" ] || continue
+        rm -rf "$d"
+      done
+      exit 0
+id: assert-start-sensor-plugin-root-missing
+kind: assertion
+name: Assert start-sensor refuses to start when CLAUDE_PLUGIN_ROOT is unset
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- start-sensor-plugin-root-missing
+version: 0.1.0

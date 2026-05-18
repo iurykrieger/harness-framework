@@ -1,0 +1,164 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 64
+  latency:
+    p50_ms: 4000
+    p95_ms: 20000
+    timeout_ms: 90000
+description: |
+  Builds a synthetic running_sensors.json against an isolated temp registry
+  whose single entry uses the harness process's own PID, invokes
+  /list-sensors, and asserts that the emitted Signal carries verdict=pass,
+  metadata.kind=list, entries[0].state="running", pid_alive=true, and
+  (because the entry is blocking) watcher_pid plus watcher_alive populated.
+  Validates the live-pid annotation path in skills/list-sensors/scripts/list.go.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: setup-tmp-registry
+    outputs:
+      tmpdir:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir=$(mktemp -d -t harness-assert-list-all-running.XXXXXX)
+      mkdir -p "$tmpdir/.harness/runtime"
+      printf '%s' "$tmpdir"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: write-live-registry
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      registry="$tmpdir/.harness/runtime/running_sensors.json"
+      self_pid=$$
+      cat >"$registry" <<JSON
+      {
+        "version": 1,
+        "entries": [
+          {
+            "sensor_id": "fixture-live-blocker",
+            "run_id": "${self_pid}-aaaa1111",
+            "blocking": true,
+            "pid": ${self_pid},
+            "pgid": ${self_pid},
+            "watcher_pid": ${self_pid},
+            "started_at": "2026-05-18T00:00:00Z",
+            "command": "true",
+            "held_by": [{"kind": "manual", "attached_at": "2026-05-18T00:00:00Z"}]
+          }
+        ]
+      }
+      JSON
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: invoke-list-sensors
+    outputs:
+      stdout_path:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/list.out"
+      err="$tmpdir/list.err"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=list_sensors \
+        ./skills/list-sensors/scripts >"$out" 2>"$err"
+      printf '%s' "$out"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: assert-signal-shape
+    run: |
+      set -eu
+      out='${{ steps.invoke-list-sensors.outputs.stdout_path }}'
+      if [ ! -s "$out" ]; then
+        echo "list-sensors stdout is empty: $out" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      exists=$(printf '%s' "$last" | jq -r '.metadata.registry_exists // false')
+      state=$(printf '%s' "$last" | jq -r '.metadata.entries[0].state // ""')
+      pid_alive=$(printf '%s' "$last" | jq -r '.metadata.entries[0].pid_alive // false')
+      blocking=$(printf '%s' "$last" | jq -r '.metadata.entries[0].blocking // false')
+      watcher_pid=$(printf '%s' "$last" | jq -r '.metadata.entries[0].watcher_pid // 0')
+      watcher_alive_present=$(printf '%s' "$last" | jq -r '.metadata.entries[0] | has("watcher_alive")')
+      if [ "$verdict" != "pass" ]; then
+        echo "expected verdict=pass, got=$verdict" >&2
+        echo "last=$last" >&2
+        exit 1
+      fi
+      if [ "$kind" != "list" ]; then
+        echo "expected metadata.kind=list, got=$kind" >&2
+        exit 1
+      fi
+      if [ "$exists" != "true" ]; then
+        echo "expected metadata.registry_exists=true, got=$exists" >&2
+        exit 1
+      fi
+      if [ "$state" != "running" ]; then
+        echo "expected state=running, got=$state" >&2
+        exit 1
+      fi
+      if [ "$pid_alive" != "true" ]; then
+        echo "expected pid_alive=true, got=$pid_alive" >&2
+        exit 1
+      fi
+      if [ "$blocking" != "true" ]; then
+        echo "expected blocking=true, got=$blocking" >&2
+        exit 1
+      fi
+      if [ -z "$watcher_pid" ] || [ "$watcher_pid" = "0" ]; then
+        echo "expected watcher_pid > 0, got=$watcher_pid" >&2
+        exit 1
+      fi
+      if [ "$watcher_alive_present" != "true" ]; then
+        echo "expected watcher_alive field present on blocking entry" >&2
+        exit 1
+      fi
+      echo "list-all-running OK verdict=$verdict state=$state pid_alive=$pid_alive watcher_pid=$watcher_pid"
+    type: shell
+  teardown:
+  - command: |
+      set -u
+      for d in /tmp/harness-assert-list-all-running.* "${TMPDIR:-/tmp}"/harness-assert-list-all-running.*; do
+        [ -d "$d" ] || continue
+        rm -rf "$d"
+      done
+      exit 0
+id: assert-list-sensors-all-running
+kind: assertion
+name: Assert list-sensors annotates a live PID as state=running
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- list-sensors-all-running
+version: 0.1.0

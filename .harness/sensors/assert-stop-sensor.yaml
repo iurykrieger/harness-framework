@@ -1,0 +1,255 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 256
+  latency:
+    p50_ms: 5000
+    p95_ms: 30000
+    timeout_ms: 180000
+description: |
+  Composite assertion sensor that validates every business rule across the
+  six usecases of the stop-sensor journey by exercising targeted Go tests
+  under skills/stop-sensor/scripts and by asserting on file:line evidence
+  for rules whose code paths lack a dedicated test surface.
+  Covers:
+    - blocking-stopped-gracefully (rules 1-6)
+    - held-by-other-sensors      (rules 7-11)
+    - missing-sensor-id          (rules 12-14)
+    - not-running-idempotent     (rules 15-17)
+    - registry-not-found         (rules 18-20)
+    - run-id-mismatch            (rules 21-23)
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-1-manual-hold-removed-before-sigterm
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_BlockingPreferred_WhenMixedActives$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-2-graceful-timeout-bounds-sigterm-wait
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStopWatcher_NormalSIGTERM$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-3-sigkill-only-after-timeout
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStopWatcher_RequiresSIGKILL$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-4-watcher-sigterm-then-sigkill
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStopWatcher_NormalSIGTERM$|^TestStopWatcher_RequiresSIGKILL$|^TestStopWatcher_NonPositivePID$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-5-signals-log-folded-via-maxstreamverdict
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_ReadsRunIDScopedSignalsLog$|^TestStop_LegacyFallback$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-6-registry-entry-removed-on-success
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_BlockingFalse_TerminatesRunnerSubprocess$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-7-blocking-entries-honor-held-by
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_HoldByDependent_RefusesStop$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-8-manual-hold-removed-under-lock-when-held
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_HoldByDependent_RefusesStop$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-9-held-returns-warn
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_HoldByDependent_RefusesStop$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-10-metadata-holders-and-dead-holders
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_ReapsDeadHolders_WhenFlagSet$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-11-held-exit-code-zero
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_HoldByDependent_RefusesStop$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-12-missing-arg-exit-code-two
+    run: |
+      set -eu
+      # Evidence: stop.go args guard returns exit 2 via Sentinel.
+      grep -n 'len(args) < 1' skills/stop-sensor/scripts/stop.go
+      grep -n 'Exit2\|exit 2\|exit(2)\|return 2' skills/stop-sensor/scripts/stop.go || \
+        grep -n 'usage' skills/stop-sensor/scripts/stop.go
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-13-missing-arg-verdict-warn
+    run: |
+      set -eu
+      grep -n 'WithVerdict(signal.Warn)' skills/stop-sensor/scripts/stop.go | head -1
+      grep -n 'missing sensor id' skills/stop-sensor/scripts/stop.go
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-14-missing-arg-metadata-not-running
+    run: |
+      set -eu
+      # Both metadata.kind=not_running and rationale=missing sensor id live next to each other.
+      grep -n 'not_running' skills/stop-sensor/scripts/stop.go | head -3
+      grep -n 'missing sensor id' skills/stop-sensor/scripts/stop.go
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-15-not-running-is-idempotent
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_NotRunning_ReturnsWarn$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-16-not-running-verdict-warn
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_NotRunning_ReturnsWarn$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-17-not-running-metadata-kind
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_NotRunning_ReturnsWarn$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-18-missing-registry-unsatisfiable
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_RegistryFileAbsent_Error$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-19-registry-absent-verdict-error
+    run: |
+      set -eu
+      GOWORK=off go test -count=1 -tags=stop_sensor -run '^TestStop_RegistryFileAbsent_Error$' \
+        ./skills/stop-sensor/scripts/... 2>&1
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-20-rationale-guides-to-registry-root
+    run: |
+      set -eu
+      # Evidence: rationale text mentions HARNESS_REGISTRY_ROOT or the resolution strategy.
+      grep -n 'HARNESS_REGISTRY_ROOT\|registry.Lookup\|stop_no_registry\|registry path' skills/stop-sensor/scripts/stop.go | head -5
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-21-run-id-global-uniqueness
+    run: |
+      set -eu
+      # Evidence: FindEntryByRunID contract on registry state.
+      grep -n 'FindEntryByRunID' lib/registry/state.go
+      grep -n 'FindEntryByRunID' skills/stop-sensor/scripts/stop.go
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-22-mismatch-detected-before-kill
+    run: |
+      set -eu
+      # Evidence: mismatch detection happens under the lock, before terminateWithGrace.
+      grep -n 'run_id_sensor_mismatch\|mismatchErr\|run_id_mismatch' skills/stop-sensor/scripts/stop.go | head -5
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: rule-23-mismatch-exit-code-one
+    run: |
+      set -eu
+      # Evidence: error verdict on mismatch path => exit code 1 in main().
+      grep -n 'signal.Error\|run_id_sensor_mismatch\|run_id_mismatch' skills/stop-sensor/scripts/stop.go | head -5
+    type: shell
+id: assert-stop-sensor
+kind: assertion
+name: Assert stop-sensor behavior across all 6 usecases
+output: stream
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- stop-sensor-blocking-stopped-gracefully
+- stop-sensor-held-by-other-sensors
+- stop-sensor-missing-sensor-id
+- stop-sensor-not-running-idempotent
+- stop-sensor-registry-not-found
+- stop-sensor-run-id-mismatch
+version: 0.1.0

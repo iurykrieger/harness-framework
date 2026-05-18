@@ -1,0 +1,246 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 128
+  latency:
+    p50_ms: 4000
+    p95_ms: 20000
+    timeout_ms: 90000
+description: |
+  Builds a failing non-blocking dep sensor plus a blocking main sensor
+  that names the dep via requires[kind=sensor] in an isolated temp
+  registry, invokes /start-sensor against the main, and asserts the
+  failure shape declared by the start-sensor-dep-cascade usecase:
+  exit code 1, last JSONL line carries verdict=error, metadata.kind=
+  failed, metadata.cause=dep_cascade, metadata.failed_dep_id naming
+  the failing dep, metadata.failed_dep_verdict=="fail". No subprocess
+  for the requested sensor is spawned. Validates the dep-cascade branch
+  in runStart at start.go:115-129.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: setup-tmp-registry
+    outputs:
+      tmpdir:
+        from: stdout
+        trim: true
+    run: |
+      set -eu
+      tmpdir=$(mktemp -d -t harness-assert-dep-cascade.XXXXXX)
+      mkdir -p "$tmpdir/.harness/sensors"
+      printf '%s' "$tmpdir"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: persist-fixture-failing-dep
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      draft="$tmpdir/dep-draft.yaml"
+      cat >"$draft" <<'YAML'
+      id: fixture-failing-dep
+      version: 0.1.0
+      name: Fixture non-blocking dep that always fails
+      description: |
+        Synthetic non-blocking dep sensor whose command exits 1, so when
+        the main sensor lists it under requires[kind=sensor] the start
+        runner's RunDeps emits a CascadeSig with failed_dep_id pointing
+        at this sensor. Used by assert-start-sensor-dep-cascade.
+      kind: assertion
+      type: computational
+      regulation: behaviour
+      phase: on-demand
+      determinism: high
+      output: single
+      cost:
+        class: cheap
+        compute:
+          cpu: low
+          memory_mb: 16
+        latency:
+          p50_ms: 5
+          p95_ms: 50
+          timeout_ms: 5000
+      triggers:
+      - "on": manual
+      use_cases:
+      - start-sensor-dep-cascade
+      execution:
+        command: exit 1
+        exit_code_map:
+        - exit_code: 0
+          severity: info
+          verdict: pass
+        - exit_code: '*'
+          severity: high
+          verdict: fail
+      YAML
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=write_sensor \
+        ./skills/create-sensor/scripts \
+        --out "$tmpdir/.harness/sensors" \
+        --schemas-dir "$CLAUDE_PLUGIN_ROOT/schemas" \
+        "$draft" >/dev/null
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: persist-fixture-main-with-dep
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      draft="$tmpdir/main-draft.yaml"
+      cat >"$draft" <<'YAML'
+      id: fixture-blocking-main-with-failing-dep
+      version: 0.1.0
+      name: Fixture blocking main sensor with a failing dep
+      description: |
+        Synthetic blocking sensor that requires fixture-failing-dep via
+        requires[kind=sensor]. When /start-sensor resolves the dep DAG,
+        the failing dep produces verdict=fail and the runner cancels
+        the start with cause=dep_cascade. Used by assert-start-sensor-
+        dep-cascade.
+      kind: assertion
+      type: computational
+      regulation: behaviour
+      phase: on-demand
+      determinism: high
+      output: stream
+      cost:
+        class: cheap
+        compute:
+          cpu: low
+          memory_mb: 16
+        latency:
+          p50_ms: 5
+          p95_ms: 50
+      triggers:
+      - "on": manual
+      use_cases:
+      - start-sensor-dep-cascade
+      requires:
+      - kind: sensor
+        id: fixture-failing-dep
+      execution:
+        blocking: true
+        graceful_timeout_ms: 2000
+        command: printf 'ready\n' && sleep 60
+        exit_code_map:
+        - exit_code: 0
+          severity: info
+          verdict: pass
+        - exit_code: '*'
+          severity: high
+          verdict: fail
+        output_parsing:
+          patterns:
+          - regex: '.*'
+            verdict: pass
+            severity: info
+      YAML
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=write_sensor \
+        ./skills/create-sensor/scripts \
+        --out "$tmpdir/.harness/sensors" \
+        --schemas-dir "$CLAUDE_PLUGIN_ROOT/schemas" \
+        "$draft" >/dev/null
+    type: shell
+  - exit_code_map:
+      '*': pass
+      "0": pass
+    id: start-with-failing-dep
+    outputs:
+      exit_code:
+        from: stdout
+        trim: true
+    run: |
+      set -u
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start.out"
+      err="$tmpdir/start.err"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=start_sensor \
+        ./skills/start-sensor/scripts fixture-blocking-main-with-failing-dep \
+        >"$out" 2>"$err"
+      rc=$?
+      printf '%s' "$rc"
+    type: shell
+  - expect:
+      equals: "1"
+      value: ${{ steps.start-with-failing-dep.outputs.exit_code }}
+    id: assert-exit-code-is-1
+    type: assert
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: assert-dep-cascade-shape
+    run: |
+      set -eu
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start.out"
+      if [ ! -s "$out" ]; then
+        echo "expected non-empty stdout capture at $out" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      cause=$(printf '%s' "$last" | jq -r '.metadata.cause // ""')
+      failed_dep_id=$(printf '%s' "$last" | jq -r '.metadata.failed_dep_id // ""')
+      failed_dep_verdict=$(printf '%s' "$last" | jq -r '.metadata.failed_dep_verdict // ""')
+      sensor_id=$(printf '%s' "$last" | jq -r '.sensor_id // ""')
+      if [ "$verdict" != "error" ]; then
+        echo "expected verdict=error, got=$verdict last=$last" >&2; exit 1
+      fi
+      if [ "$kind" != "failed" ]; then
+        echo "expected metadata.kind=failed, got=$kind last=$last" >&2; exit 1
+      fi
+      if [ "$cause" != "dep_cascade" ]; then
+        echo "expected metadata.cause=dep_cascade, got=$cause last=$last" >&2; exit 1
+      fi
+      if [ "$failed_dep_id" != "fixture-failing-dep" ]; then
+        echo "expected metadata.failed_dep_id=fixture-failing-dep, got=$failed_dep_id last=$last" >&2; exit 1
+      fi
+      if [ "$failed_dep_verdict" != "fail" ] && [ "$failed_dep_verdict" != "error" ]; then
+        echo "expected metadata.failed_dep_verdict in {fail,error}, got=$failed_dep_verdict last=$last" >&2; exit 1
+      fi
+      if [ "$sensor_id" != "fixture-blocking-main-with-failing-dep" ]; then
+        echo "expected sensor_id=fixture-blocking-main-with-failing-dep, got=$sensor_id last=$last" >&2; exit 1
+      fi
+      registry="$tmpdir/.harness/runtime/running_sensors.json"
+      if [ -f "$registry" ]; then
+        count=$(jq '[.entries[] | select(.sensor_id == "fixture-blocking-main-with-failing-dep")] | length' "$registry" 2>/dev/null || echo 0)
+        if [ "$count" != "0" ]; then
+          echo "expected no registry entries for main, got=$count" >&2; cat "$registry" >&2; exit 1
+        fi
+      fi
+      echo "dep-cascade shape OK verdict=$verdict cause=$cause failed_dep_id=$failed_dep_id failed_dep_verdict=$failed_dep_verdict"
+    type: shell
+  teardown:
+  - command: |
+      set -u
+      for d in /tmp/harness-assert-dep-cascade.* "${TMPDIR:-/tmp}"/harness-assert-dep-cascade.*; do
+        [ -d "$d" ] || continue
+        rm -rf "$d"
+      done
+      exit 0
+id: assert-start-sensor-dep-cascade
+kind: assertion
+name: Assert start-sensor refuses to start when a dep aggregate failed
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- start-sensor-dep-cascade
+version: 0.1.0
