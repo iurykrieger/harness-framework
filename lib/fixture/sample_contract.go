@@ -119,8 +119,113 @@ func deriveFromOpenAPI(declPath string) (*Sample, error) {
 		},
 	}, nil
 }
+type avroField struct {
+	Name string          `json:"name"`
+	Type json.RawMessage `json:"type"`
+}
+
+type avroRecord struct {
+	Type   string      `json:"type"`
+	Name   string      `json:"name"`
+	Fields []avroField `json:"fields"`
+}
+
 func deriveFromAvro(path string) (*Sample, error) {
-	return nil, errors.New("avro: not implemented yet")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read avsc: %w", err)
+	}
+	var rec avroRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return nil, fmt.Errorf("parse avsc: %w", err)
+	}
+	if rec.Type != "record" {
+		return nil, fmt.Errorf("avro: only top-level record types are supported (got %q)", rec.Type)
+	}
+	out := map[string]any{}
+	for _, f := range rec.Fields {
+		out[f.Name] = avroZeroValue(f.Type)
+	}
+	body, _ := json.Marshal(out)
+	return &Sample{
+		Payload: body,
+		Ext:     "json",
+		Source:  "contract",
+		BlindSpots: []string{
+			fmt.Sprintf("Derived from avro contract at %s; no real sample on disk near the entry point.", path),
+		},
+	}, nil
+}
+
+// avroZeroValue returns the zero value for an Avro type expression.
+// Type expressions are one of:
+//   - a string ("string", "int", "long", "float", "double", "boolean", "bytes", "null")
+//   - an object: {"type":"array", "items": ...} / {"type":"enum", "symbols":[...]}
+//   - a union: ["null", "string"] — picks the first non-null branch
+func avroZeroValue(raw json.RawMessage) any {
+	// Try string form first.
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return avroPrimitiveZero(s)
+	}
+	// Try array (union).
+	var union []json.RawMessage
+	if err := json.Unmarshal(raw, &union); err == nil {
+		for _, branch := range union {
+			var bs string
+			if json.Unmarshal(branch, &bs) == nil && bs == "null" && len(union) > 1 {
+				continue
+			}
+			return avroZeroValue(branch)
+		}
+		return nil
+	}
+	// Try object form.
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil
+	}
+	var typ string
+	_ = json.Unmarshal(obj["type"], &typ)
+	switch typ {
+	case "array":
+		return []any{}
+	case "enum":
+		var symbols []string
+		_ = json.Unmarshal(obj["symbols"], &symbols)
+		if len(symbols) > 0 {
+			return symbols[0]
+		}
+		return ""
+	case "record":
+		var fields []avroField
+		_ = json.Unmarshal(obj["fields"], &fields)
+		inner := map[string]any{}
+		for _, f := range fields {
+			inner[f.Name] = avroZeroValue(f.Type)
+		}
+		return inner
+	case "map":
+		return map[string]any{}
+	default:
+		return nil
+	}
+}
+
+func avroPrimitiveZero(t string) any {
+	switch t {
+	case "string", "bytes":
+		return ""
+	case "int", "long":
+		return 0
+	case "float", "double":
+		return 0.0
+	case "boolean":
+		return false
+	case "null":
+		return nil
+	}
+	return nil
 }
 func deriveFromProtobuf(declPath string) (*Sample, error) {
 	return nil, errors.New("protobuf: not implemented yet")

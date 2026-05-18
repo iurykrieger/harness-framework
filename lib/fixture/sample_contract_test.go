@@ -75,3 +75,24 @@ func TestDeriveFromContract_UnsupportedSource(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUnsupportedContractSource", err)
 	}
 }
+
+func TestDeriveFromContract_Avro(t *testing.T) {
+	abs, _ := filepath.Abs("testdata/contract/avro/order.avsc")
+	s, err := fixture.DeriveFromContract(fixture.Hint{Role: "event"}, fixture.SourceAvro, abs)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(s.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := payload["sku"].(string); !ok || got != "" {
+		t.Errorf("sku = %v want \"\"", payload["sku"])
+	}
+	if got, ok := payload["qty"].(float64); !ok || got != 0 {
+		t.Errorf("qty = %v want 0", payload["qty"])
+	}
+	if got, ok := payload["channel"].(string); !ok || got != "WEB" {
+		t.Errorf("channel = %v want WEB (first declared symbol)", payload["channel"])
+	}
+}
