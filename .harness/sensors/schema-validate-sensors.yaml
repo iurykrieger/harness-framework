@@ -22,8 +22,11 @@ execution:
     fail=0
     for f in .harness/sensors/*.yaml; do
       id=$(basename "$f" .yaml)
-      if go run -tags=write_sensor ./skills/detect-sensors/scripts \
-           --out="$tmp" --schemas-dir="$(pwd)/schemas" "$f" >/dev/null 2>&1; then
+      if HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+           go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=write_sensor \
+           ./skills/detect-sensors/scripts \
+           --out="$tmp" --schemas-dir="${CLAUDE_PLUGIN_ROOT}/schemas" \
+           "$f" >/dev/null 2>&1; then
         echo "schema-validate sensor=$id verdict=pass"
       else
         echo "schema-validate sensor=$id verdict=fail"
