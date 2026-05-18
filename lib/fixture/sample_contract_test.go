@@ -47,6 +47,28 @@ func TestDeriveFromContract_JSONSchema(t *testing.T) {
 	}
 }
 
+func TestDeriveFromContract_OpenAPI(t *testing.T) {
+	abs, err := filepath.Abs("testdata/contract/openapi/api.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl := abs + "#/components/schemas/Order"
+	s, err := fixture.DeriveFromContract(fixture.Hint{Role: "trigger"}, fixture.SourceOpenAPI, decl)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(s.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["sku"].(string); !ok {
+		t.Errorf("sku missing/wrong type: %v", payload["sku"])
+	}
+	if _, has := payload["tags"]; has {
+		t.Error("optional field tags should be omitted")
+	}
+}
+
 func TestDeriveFromContract_UnsupportedSource(t *testing.T) {
 	_, err := fixture.DeriveFromContract(fixture.Hint{Role: "trigger"}, fixture.SourceKind("go-struct"), "/dev/null")
 	if !errors.Is(err, fixture.ErrUnsupportedContractSource) {

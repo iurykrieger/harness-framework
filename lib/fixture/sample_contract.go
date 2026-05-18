@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
+
+	"sigs.k8s.io/yaml"
 )
 
 // SourceKind identifies a tier-2 contract source. The set is closed by
@@ -72,9 +75,49 @@ func deriveFromJSONSchema(path string) (*Sample, error) {
 	}, nil
 }
 
-// Stubs for the next three tasks.
 func deriveFromOpenAPI(declPath string) (*Sample, error) {
-	return nil, errors.New("openapi: not implemented yet")
+	file, frag, ok := strings.Cut(declPath, "#")
+	if !ok || !strings.HasPrefix(frag, "/components/schemas/") {
+		return nil, fmt.Errorf("openapi declPath must be '<file>#/components/schemas/<Name>', got %q", declPath)
+	}
+	name := strings.TrimPrefix(frag, "/components/schemas/")
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("read openapi file: %w", err)
+	}
+	asJSON, err := yaml.YAMLToJSON(raw)
+	if err != nil {
+		return nil, fmt.Errorf("convert openapi yaml: %w", err)
+	}
+	var doc struct {
+		Components struct {
+			Schemas map[string]json.RawMessage `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(asJSON, &doc); err != nil {
+		return nil, fmt.Errorf("parse openapi: %w", err)
+	}
+	schemaBody, ok := doc.Components.Schemas[name]
+	if !ok {
+		return nil, fmt.Errorf("openapi component %q not found in %s", name, file)
+	}
+	var schema jsonSchemaNode
+	if err := json.Unmarshal(schemaBody, &schema); err != nil {
+		return nil, fmt.Errorf("parse openapi component %q: %w", name, err)
+	}
+	payload := emitFromJSONSchema(&schema)
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return &Sample{
+		Payload: out,
+		Ext:     "json",
+		Source:  "contract",
+		BlindSpots: []string{
+			fmt.Sprintf("Derived from openapi-component contract at %s; no real sample on disk near the entry point.", declPath),
+		},
+	}, nil
 }
 func deriveFromAvro(path string) (*Sample, error) {
 	return nil, errors.New("avro: not implemented yet")
