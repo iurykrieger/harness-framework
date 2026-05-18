@@ -1,62 +1,74 @@
 behavior:
   business_rules:
-  - prepare[] is fail-fast.
-  - The subprocess command is NOT spawned on prepare failure.
-  - metadata.lifecycle.prepare carries the per-step outcomes.
+  - prepare[] is fail-fast — subsequent steps are not run.
+  - execution.command MUST NOT be spawned if any prepare step failed.
+  - metadata.lifecycle.prepare records per-step verdict / exit_code / command.
+  - Already-attached blocking deps are detached on prepare failure.
+  - Exit code is 1.
   summary: |
-    runStart invokes orchestrator.RunPreparePhase. When prepFailed is
-    true, it detaches any live deps and emits cause=prepare_failed with
-    the per-step results under metadata.lifecycle.prepare.
+    RunPreparePhase iterates prepare[]; the first non-pass step sets
+    prepFailed=true. runStart then emits a failed Signal with cause=
+    prepare_failed and metadata.lifecycle.prepare carrying per-step
+    verdicts.
 description: |
-  /start-sensor runs orchestrator.RunPreparePhase after the requires[]
-  gate passes. When any prepare step exits non-zero, the spawn is
-  aborted with cause=prepare_failed and the failing step is recorded
-  in metadata.lifecycle.prepare.
+  After preflight gate passes, runStart runs the target sensor's
+  execution.prepare[] steps via orchestrator.RunPreparePhase. The phase is
+  fail-fast: the first non-pass step aborts and the runner returns 1 with
+  cause=prepare_failed, carrying the per-step lifecycle results in
+  metadata.lifecycle.prepare. Already-attached blocking deps are detached.
 evidence:
 - file: skills/start-sensor/scripts/start.go
-  line_start: 155
-  rationale: RunPreparePhase invocation and prepare_failed branch.
+  kind: implementation
+  line_end: 164
+  line_start: 154
+  rationale: RunPreparePhase call and prepare_failed emission path.
+- file: lib/orchestrator/run.go
+  kind: implementation
+  rationale: RunPreparePhase implementation that drives prepare[] fail-fast semantics.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares execution.prepare[] step shape.
 expected_outcome:
   fixture:
-    exit_code: 1
-    stdout_lines:
-    - '{"sensor_id":"integration-server","verdict":"error","severity":"high","evidence":[],"cost_actual":{"latency_ms":18},"metadata":{"kind":"failed","cause":"prepare_failed","lifecycle":{"prepare":[{"command":"false","verdict":"fail","exit_code":1}]}}}'
+    metadata:
+      cause: prepare_failed
+      kind: failed
+      lifecycle:
+        prepare:
+        - command: cp .env.example .env
+          exit_code: 1
+          verdict: fail
+    sensor_id: serve-app-blocking
+    severity: high
+    verdict: error
   invariants:
-  - metadata.cause is "prepare_failed".
-  - The target's command is NOT spawned.
-  - metadata.lifecycle.prepare lists per-step results.
-  shape: One JSON line on stdout + exit code
+  - metadata.cause == "prepare_failed".
+  - metadata.lifecycle.prepare reflects the executed steps (fail-fast cut-off).
+  - Sensor's main command did NOT execute.
+  - Exit code is 1.
+  shape: signal-jsonl
   side_effects: []
-  summary: |
-    One Signal on stdout, verdict=error, metadata.cause=prepare_failed,
-    metadata.lifecycle.prepare containing the failing step, exit code 1.
+  summary: Signal verdict=error, metadata.kind=failed, cause=prepare_failed, with
+    metadata.lifecycle.prepare; exit 1.
 id: start-sensor-prepare-failed
 journey_id: start-sensor
-name: Target's prepare[] step fails — command not spawned
-regression_priority: medium
+name: Refuse to start when target prepare[] fails fail-fast
+regression_priority: high
 tags:
 - error-handling
-- lifecycle
-- prepare
+- framework-start-sensor
 trigger:
   fixture:
     argv:
     - start-sensor
-    - integration-server
+    - serve-app-blocking
+    prepare_step_0_exit: 1
     sensor:
       execution:
-        blocking: true
-        command: ./bin/server
-        output_parsing:
-          patterns:
-          - regex: ready (.+)
-            verdict: pass
+        command: ./serve.sh
         prepare:
-        - command: "false"
-          description: intentional fail
-      id: integration-server
-      output: stream
-      type: computational
-  shape: CLI invocation
-  summary: /start-sensor on a sensor whose first execution.prepare[] step exits non-zero.
+        - command: cp .env.example .env
+        - command: docker compose up -d postgres
+  shape: cli-argv
+  summary: Invoke start-sensor on a sensor whose first prepare[] step exits non-zero.
 version: 0.1.0

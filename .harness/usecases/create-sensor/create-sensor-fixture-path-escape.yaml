@@ -1,47 +1,68 @@
 behavior:
   business_rules:
-  - The target path must stay inside <projectRoot>/.harness/sensors/fixtures.
-  - No write occurs on escape.
+  - Targets are interpreted relative to <projectRoot>/.harness/fixtures/.
+  - Traversal that escapes the fixtures root is rejected.
+  - No partial files are left on disk after a rejection.
   - Exit code is 2.
   summary: |
-    runWithStdin sanitizes the --path argument by joining it with the
-    fixtures base and then asserting the joined path is still inside.
-    Escapes via .. or absolute paths trip the FixturePathEscapeError.
+    write-fixture rejects targets prefixed with ".harness/sensors/fixtures/"
+    or ".harness/fixtures/" up front. For other inputs lib/fixture.Write
+    resolves the absolute path, compares prefixes, and produces
+    *PathEscapeError when the target falls outside the fixtures root.
 description: |
-  write-fixture computes the target as filepath.Join(<fixturesBase>,
-  relPath) and verifies the result stays under fixturesBase. Any
-  ".." escape produces FixturePathEscapeError; the script emits
-  verdict=error, metadata.kind=fixture_path_escape, exit code 2.
+  /create-sensor's write-fixture writes fixture payloads under
+  <projectRoot>/.harness/fixtures/. lib/fixture.Write validates that the
+  target relative path does not escape the fixtures root (no traversal,
+  no leading "../"). On escape, it returns *PathEscapeError, which the
+  script forwards as Signal verdict=error, metadata.kind=fixture_path_escape
+  and returns exit 2.
 evidence:
 - file: skills/create-sensor/scripts/write-fixture.go
-  line_start: 68
-  rationale: FixturePathEscapeError handling branch.
+  kind: implementation
+  line_end: 84
+  line_start: 75
+  rationale: errors.As branch catching *fixture.PathEscapeError and emitting the canonical
+    Signal.
+- file: lib/fixture/write.go
+  kind: implementation
+  rationale: Write implementation that detects path escape and produces the typed
+    error.
+- file: skills/create-sensor/scripts/write-fixture.go
+  kind: contract
+  line_end: 56
+  line_start: 37
+  rationale: flag.NewFlagSet declaration that defines the --from-file flag + positional
+    target argv contract used by the trigger fixture.
 expected_outcome:
   fixture:
-    exit_code: 2
-    stdout_lines:
-    - '{"sensor_id":"write-fixture","verdict":"error","severity":"high","evidence":[{"rationale":"path
-      escapes fixtures base"}],"cost_actual":{"latency_ms":1},"metadata":{"kind":"fixture_path_escape"}}'
+    last_jsonl_signal:
+      metadata:
+        kind: fixture_path_escape
+      sensor_id: write-fixture
+      severity: high
+      verdict: error
   invariants:
-  - metadata.kind is "fixture_path_escape".
-  - No file is written.
-  shape: One JSON line on stdout + exit code
+  - metadata.kind == "fixture_path_escape".
+  - Exit code is 2.
+  - No file is created outside <projectRoot>/.harness/fixtures/.
+  shape: signal-jsonl
   side_effects: []
-  summary: One error Signal verdict=error, kind=fixture_path_escape, exit code 2.
+  summary: Signal verdict=error, metadata.kind=fixture_path_escape; exit 2.
 id: create-sensor-fixture-path-escape
 journey_id: create-sensor
-name: create-sensor write-fixture refuses paths that escape the fixtures base
+name: write-fixture rejects a target path that escapes the fixtures root
 regression_priority: high
 tags:
-- security
 - error-handling
+- validation
+- authz
+- framework-create-sensor
 trigger:
   fixture:
     argv:
     - write-fixture
-    - --path=../../etc/passwd
-    stdin: PWNED
-  shape: CLI invocation
-  summary: write-fixture --path ../../etc/passwd (or any path that escapes the fixtures
-    base).
+    - ../../etc/passwd
+    stdin_payload: '{}'
+  shape: cli-argv
+  summary: Run write-fixture with a target path that includes traversal segments.
 version: 0.1.0

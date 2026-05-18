@@ -1,53 +1,77 @@
 behavior:
   business_rules:
-  - One stdout line per sensor file.
-  - Valid sensors emit a digest line.
-  - Invalid sensors emit a warn Signal that names the file.
-  - Exit code 0 even when some sensors are malformed.
+  - Schema-invalid sensors are skipped (not fatal).
+  - The digest path uses forward slashes regardless of platform.
+  - Order is the order returned by lib/sensor.Catalog (deterministic, by id).
+  - Exit code is 0 on normal completion.
   summary: |
-    catalog-sensors enumerates the directory, parses each YAML, and
-    emits a one-line digest carrying id, type, output, kind, and
-    requires hints. Files that fail schema validation produce a warn
-    Signal instead so the operator can fix them later.
+    cli.Bootstrap resolves the project root. lib/sensor.Catalog returns
+    valid sensors + a CatalogWarn slice for skipped files. The script
+    emits warn Signals for the skipped entries first, then one digest
+    line per valid sensor.
 description: |
-  catalog-sensors walks .harness/sensors/ and emits a JSONL digest of
-  every sensor it finds — kept minimal so /create-sensor's interactive
-  dialogue can pick candidate dependencies without paying the full
-  sensor schema cost. Invalid sensors emit warn Signals; valid ones
-  emit the digest.
+  /create-sensor's catalog-sensors enumerates every sensor JSON/YAML under
+  <projectRoot>/.harness/sensors/ via lib/sensor.Catalog and emits one
+  JSONL digest line per sensor (id, kind, type, output, blocking,
+  description, path). Schema-invalid or malformed sensor files are
+  skipped with a Signal verdict=warn, metadata.kind=catalog_entry_skipped
+  carrying the reason in evidence[]. The script supports the dependency-
+  selection dialogue in the /create-sensor SKILL.
 evidence:
 - file: skills/create-sensor/scripts/catalog-sensors.go
+  kind: implementation
+  line_end: 64
+  line_start: 30
+  rationale: Entry point that walks lib/sensor.Catalog and emits the JSONL digest
+    stream.
+- file: lib/sensor/catalog.go
+  kind: implementation
+  rationale: Catalog implementation that enumerates .harness/sensors/, validates,
+    and returns (sensors, warns) tuples.
+- file: skills/create-sensor/scripts/catalog-sensors.go
+  kind: contract
+  line_end: 50
   line_start: 34
-  rationale: Enumeration entry — produces the JSONL digest of existing sensors.
+  rationale: flag.NewFlagSet declaration that confirms catalog-sensors takes no positional
+    args (the trigger fixture's argv shape).
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_lines:
-    - '{"id":"lint-go-vet","type":"computational","output":"single","kind":"observation","requires":[]}'
-    - '{"id":"build-go","type":"computational","output":"single","kind":"observation","requires":[]}'
-    - '{"id":"e2e-tests","type":"computational","output":"stream","kind":"assertion","requires":[{"kind":"sensor","id":"build-go"}]}'
-    - '{"sensor_id":"catalog-sensors","verdict":"warn","severity":"low","evidence":[{"rationale":"sensor
-      file fails schema: bad.yaml"}],"cost_actual":{"latency_ms":1},"metadata":{"kind":"invalid_sensor","path":".harness/sensors/bad.yaml"}}'
+    digests:
+    - id: lint-go-vet-computational
+      kind: observation
+      path: .harness/sensors/lint-go-vet-computational.yaml
+    - id: smoke-tests
+      kind: observation
+      path: .harness/sensors/smoke-tests.yaml
+    warn_signal:
+      metadata:
+        kind: catalog_entry_skipped
+      sensor_id: catalog-sensors
+      verdict: warn
   invariants:
-  - Exit code is 0 even with malformed files in the dir.
-  - One line per sensor file (valid digests or warn Signals).
-  shape: JSONL on stdout + exit code
-  side_effects:
-  - None — read-only enumeration.
-  summary: JSONL on stdout (one line per sensor), exit code 0.
+  - One JSONL line per valid sensor.
+  - Warn lines precede digest lines.
+  - Exit code is 0.
+  shape: signal-jsonl
+  side_effects: []
+  summary: One warn Signal for the broken file, then 2 digest JSONL lines; exit 0.
 id: create-sensor-catalog-list
 journey_id: create-sensor
-name: create-sensor catalog-sensors emits one digest line per valid sensor
-regression_priority: medium
+name: List existing sensors as candidate dependencies via catalog-sensors
+regression_priority: high
 tags:
 - happy-path
-- read-only
+- framework-create-sensor
 trigger:
   fixture:
     argv:
     - catalog-sensors
-    state:
-      .harness/sensors/: 3 valid sensor files, 1 malformed
-  shape: CLI invocation
-  summary: catalog-sensors run from a project that already has multiple sensors persisted.
+    project_state:
+      sensors_dir_entries:
+      - lint-go-vet-computational.yaml
+      - smoke-tests.yaml
+      - broken-schema.yaml
+  shape: cli-argv
+  summary: Run catalog-sensors with no arguments against a project whose .harness/sensors/
+    has 2 sensors and 1 malformed file.
 version: 0.1.0

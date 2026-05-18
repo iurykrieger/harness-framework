@@ -1,54 +1,59 @@
 behavior:
   business_rules:
-  - Lines 1..cursor are skipped.
-  - Lines cursor+1..end are emitted.
-  - The envelope's next_cursor is the new line count.
+  - cursor is 1-based — cursor=N skips lines 1..N inclusive.
+  - The envelope's next_cursor equals the total line count after this read.
+  - Lines are emitted as raw JSON text — they are NOT reparsed by the tail.
   summary: |
-    runTail opens signals.log, advances past the first 2 lines, emits
-    lines 3..5 as Signals on stdout, then emits the envelope carrying
-    metadata.next_cursor=5.
+    bufio.Scanner increments `current` for each line; the conditional
+    `if current <= cursor { continue }` skips the first cursor lines and
+    emits the rest. After the loop, the envelope Signal stamps
+    next_cursor=current (the total line count, here 5).
 description: |
-  /tail-sensor with cursor=N where 0 < N < total-line-count emits lines
-  N+1..end as individual Signals plus the envelope Signal with
-  next_cursor=total-line-count. The agent can chain successive calls
-  using next_cursor.
+  When cursor=N (positive, <= total line count), runTail walks signals.log
+  line by line, ignores the first N lines, then emits each subsequent line
+  on stdout. The envelope Signal carries metadata.next_cursor=<new-total>
+  so the agent can chain reads. This is the canonical incremental-tail
+  pattern used by long-running blocking sensors.
 evidence:
 - file: skills/tail-sensor/scripts/tail.go
-  line_start: 153
-  rationale: Line-by-line skip/emit pipeline using the cursor argument.
+  kind: implementation
+  line_end: 198
+  line_start: 175
+  rationale: Line-skip loop and envelope emission with cursor accounting.
+- file: schemas/signal.yaml
+  kind: contract
+  rationale: Declares the Signal schema the envelope conforms to.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_lines:
-    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[{"excerpt":"line
-      3"}],"cost_actual":{"latency_ms":1}}'
-    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[{"excerpt":"line
-      4"}],"cost_actual":{"latency_ms":1}}'
-    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[{"excerpt":"line
-      5"}],"cost_actual":{"latency_ms":1}}'
-    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","evidence":[{"rationale":"tail
-      envelope"}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"envelope","next_cursor":5}}'
+    individuals_emitted: 2
+    last_jsonl_signal:
+      metadata:
+        kind: envelope
+        next_cursor: 5
+      sensor_id: serve-app-blocking
+      severity: info
+      verdict: pass
   invariants:
-  - The first 2 lines are NOT emitted.
-  - The envelope's next_cursor equals the current line count.
-  shape: JSONL on stdout + exit code
+  - Number of raw lines emitted equals total_lines - cursor.
+  - The envelope Signal is the LAST JSONL line on stdout.
+  - Exit code is 0.
+  shape: signal-jsonl
   side_effects: []
-  summary: 3 individual Signals + 1 envelope, exit code 0.
+  summary: Lines 4..5 emitted, then envelope with next_cursor=5; exit 0.
 id: tail-sensor-cursor-mid-stream
 journey_id: tail-sensor
-name: /tail-sensor with non-zero cursor reads only new lines
+name: Tail with cursor=N skips first N lines and emits only new ones
 regression_priority: critical
 tags:
 - happy-path
-- cursor
+- framework-tail-sensor
 trigger:
   fixture:
     argv:
     - tail-sensor
-    - dev-server
-    - "2"
-    state:
-      .harness/runtime/dev-server/42-abc/signals.log: 5 JSONL lines total
-  shape: CLI invocation
-  summary: /tail-sensor with a cursor pointing past some previously-read lines.
+    - serve-app-blocking
+    - "3"
+    signals_log_lines: 5
+  shape: cli-argv
+  summary: Invoke tail-sensor with cursor 3 against a 5-line signals.log.
 version: 0.1.0

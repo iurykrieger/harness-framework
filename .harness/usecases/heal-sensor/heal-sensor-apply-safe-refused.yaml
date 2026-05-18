@@ -1,56 +1,74 @@
 behavior:
   business_rules:
-  - The allowlist is hardcoded — no plugin can extend it.
-  - Non-allow-listed actions are refused, NOT skipped silently.
-  - The script's exit code stays 0; the refusal is conveyed in the JSON output.
+  - /heal-sensor never auto-applies an arbitrary shell command.
+  - Refused actions surface needs_input=true so the agent escalates.
+  - Refused actions do NOT change exit code.
+  - Exit code is 0.
   summary: |
-    heal.Apply's switch on action.kind falls into the default branch
-    when the kind is not on the allowlist. The default branch records
-    a refusal with applied=false and a reason naming the offending kind.
+    heal.Apply consults the action allowlist; "run_shell" is not present
+    so the function returns applied=false, needs_input=true with a reason
+    explaining the gate. The script emits the result and exits 0.
 description: |
-  /heal-sensor never executes arbitrary shell commands or removes
-  files. Any action.kind outside {copy-template, mkdir, touch,
-  set-env-in-file} produces applied=false with a reason explaining
-  the refusal. The script's exit code remains 0 because the refusal
-  is a successful outcome of the allowlist check.
+  Step 2 of /heal-sensor is intentionally narrow: lib/heal.Apply has a
+  fixed allowlist (cp .env.example .env, mkdir, touch, set-env-in-file
+  with chmod 600). Any action outside that set returns
+  ApplyResult{applied: false, needs_input: true, reason: "..."} so the
+  calling agent can decide whether to prompt the user / open a ticket /
+  abort. The script still exits 0 because applying nothing is not a
+  failure of apply-safe.
 evidence:
 - file: lib/heal/apply.go
-  line_start: 55
-  rationale: default branch of the kind switch — produces the not-in-allowlist refusal.
+  kind: implementation
+  rationale: Apply implementation that gates actions against the allowlist and returns
+    needs_input on mismatch.
+- file: skills/heal-sensor/scripts/apply-safe.go
+  kind: implementation
+  line_end: 71
+  line_start: 65
+  rationale: Result serialization in the script that flows applied/needs_input/reason
+    through.
+- file: lib/heal/plan.go
+  kind: contract
+  rationale: Plan / Action shape that defines the action discriminator consulted by
+    the allowlist gate.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_lines:
-    - '{"results":[{"action":{"kind":"rm","path":"/repo/.env"},"applied":false,"reason":"kind
-      \"rm\" not in allowlist"}]}'
+    stdout_object:
+      results:
+      - action:
+          action: run_shell
+          command: docker compose up -d postgres
+        applied: false
+        needs_input: true
+        reason: action not in allowlist
   invariants:
   - applied is false.
-  - reason names the disallowed kind.
-  - No filesystem changes happen.
+  - needs_input is true.
+  - reason is non-empty (explains why).
   - Exit code is 0.
-  shape: One JSON document on stdout + exit code
+  shape: stdout-json
   side_effects: []
-  summary: results JSON with applied=false and a refusal reason, exit code 0.
+  summary: results[0].applied=false, needs_input=true with a reason; exit 0.
 id: heal-sensor-apply-safe-refused
 journey_id: heal-sensor
-name: apply-safe refuses any action kind outside the hardcoded allowlist
-regression_priority: high
+name: apply-safe refuses an action outside the allowlist
+regression_priority: critical
 tags:
-- security
-- allowlist
 - error-handling
+- authz
+- framework-heal-sensor
 trigger:
   fixture:
     argv:
     - apply-safe
     - --plan=/tmp/plan.json
-    - --sensor=/repo/.harness/sensors/integration-test.yaml
-    - --root=/repo
-    plan:
+    - --sensor=/tmp/failing-sensor.yaml
+    - --root=/tmp/projectH
+    plan_payload:
       auto_apply:
-      - kind: rm
-        path: /repo/.env
-  shape: CLI invocation
-  summary: apply-safe with a plan whose first action has kind="rm" (or any kind not
-    on the allowlist).
+      - action: run_shell
+        command: docker compose up -d postgres
+  shape: cli-argv
+  summary: Run apply-safe with a Plan containing an action like "run_shell" that is
+    not on the safe allowlist.
 version: 0.1.0

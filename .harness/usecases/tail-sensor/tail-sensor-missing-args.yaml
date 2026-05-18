@@ -1,44 +1,53 @@
 behavior:
   business_rules:
-  - Both sensor.id (with optional /run.id) and cursor are required.
-  - sensor_id in the Signal is "tail" when the user did not supply enough args.
-  - Exit code is 2 (usage error).
+  - Exactly two positional arguments are required.
+  - The error message shows the expected usage to guide the agent.
+  - Exit code is 2.
   summary: |
-    runTail's first check is len(args) < 2. The Signal builder uses
-    "tail" as sensor_id (no real id available yet) and exits with code 2.
+    runTail checks len(args) < 2 first; on miss it builds the tail_invalid_args
+    Signal with sensor_id "tail" and rationale describing the expected shape
+    "<sensor.id>[/<run.id>] <cursor>" then returns exit 2.
 description: |
-  /tail-sensor with fewer than two arguments returns verdict=error,
-  metadata.kind=tail_invalid_args, exit code 2.
+  /tail-sensor requires exactly two positional arguments: the sensor id
+  (optionally with /<run_id>) and a non-negative cursor. With fewer than
+  two args, runTail emits a Signal verdict=error, metadata.kind=tail_invalid_args
+  with rationale showing the expected usage, and returns exit 2.
 evidence:
 - file: skills/tail-sensor/scripts/tail.go
+  kind: implementation
+  line_end: 47
   line_start: 36
-  rationale: Argv length check that produces tail_invalid_args.
+  rationale: Missing-args guard inside runTail.
+- file: skills/tail-sensor/scripts/tail.go
+  kind: contract
+  line_end: 33
+  line_start: 27
+  rationale: main() declaring the positional-argv contract consumed by the trigger
+    fixture.
 expected_outcome:
   fixture:
-    exit_code: 2
-    stdout_lines:
-    - '{"sensor_id":"tail","verdict":"error","severity":"high","evidence":[{"rationale":"expected
-      <sensor.id>[/<run.id>] <cursor>"}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"tail_invalid_args"}}'
+    metadata:
+      kind: tail_invalid_args
+    sensor_id: tail
+    severity: high
+    verdict: error
   invariants:
+  - metadata.kind == "tail_invalid_args".
   - Exit code is 2.
-  - sensor_id is "tail".
-  - metadata.kind is "tail_invalid_args".
-  shape: One JSON line on stdout + exit code
+  shape: signal-jsonl
   side_effects: []
-  summary: One Signal sensor_id=tail, verdict=error, kind=tail_invalid_args, exit
-    code 2.
+  summary: Signal verdict=error, metadata.kind=tail_invalid_args; exit 2.
 id: tail-sensor-missing-args
 journey_id: tail-sensor
-name: /tail-sensor requires both sensor id and cursor
+name: Reject /tail-sensor without sensor id and cursor
 regression_priority: medium
 tags:
 - error-handling
-- usage
+- framework-tail-sensor
 trigger:
   fixture:
     argv:
     - tail-sensor
-    - dev-server
-  shape: CLI invocation
-  summary: /tail-sensor with zero or one positional argument.
+  shape: cli-argv
+  summary: Invoke tail-sensor with no arguments.
 version: 0.1.0

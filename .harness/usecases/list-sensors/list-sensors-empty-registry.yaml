@@ -1,49 +1,56 @@
 behavior:
   business_rules:
-  - sensor_id in the Signal is "list-sensors".
-  - verdict is warn (advisory) — the user might just be in the wrong cwd.
-  - metadata.entries is an empty array.
-  - rationale names the resolved registry path.
+  - 'Verdict mapping per CLAUDE.md: /list-sensors is warn when registry is absent.'
+  - metadata.entries is always present, even when empty.
+  - Exit code is 0 because absent-registry is not an error.
   summary: |
-    b.Res.Exists is false. runList short-circuits with verdict=warn,
-    kind=list, entries=[], and a rationale string mentioning the
-    resolved registry path so the user can diagnose cwd / env-var
-    mismatches.
+    cli.Bootstrap detects b.Res.Exists=false. runList builds a warn/list
+    Signal with empty entries and rationale referencing the resolved
+    registry path. Exit 0.
 description: |
-  /list-sensors with no running_sensors.json on disk emits a single
-  Signal verdict=warn, metadata.kind=list, metadata.entries=[]. The
-  rationale hints at the two most common causes (wrong cwd, no live
-  sensors yet).
+  When .harness/runtime/running_sensors.json is absent on disk, /list-sensors
+  emits a Signal verdict=warn, metadata.kind=list, metadata.entries=[]
+  with a rationale pointing the user at HARNESS_REGISTRY_ROOT or a wrong-cwd
+  diagnosis. Exit code 0 because listing nothing is a valid project state.
 evidence:
 - file: skills/list-sensors/scripts/list.go
+  kind: implementation
+  line_end: 49
   line_start: 35
-  rationale: Empty-registry warn branch with empty entries metadata.
+  rationale: warn/list emission path when b.Res.Exists is false.
+- file: lib/registry/state.go
+  kind: contract
+  rationale: RunningSensorState shape; Entries=[] is the canonical empty state surfaced
+    when the file is absent.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_lines:
-    - '{"sensor_id":"list-sensors","verdict":"warn","severity":"info","evidence":[],"cost_actual":{"latency_ms":2},"metadata":{"kind":"list","entries":[]}}'
+    metadata:
+      entries: []
+      kind: list
+    sensor_id: list-sensors
+    severity: info
+    verdict: warn
   invariants:
-  - verdict is "warn".
-  - metadata.entries is [].
-  - metadata.kind is "list".
-  shape: One JSON line on stdout + exit code
+  - verdict == "warn".
+  - metadata.entries is an empty array.
+  - Exit code is 0.
+  shape: signal-jsonl
   side_effects: []
-  summary: One Signal verdict=warn, kind=list, entries=[], exit code 0.
+  summary: Signal verdict=warn, metadata.kind=list, metadata.entries=[]; exit 0.
 id: list-sensors-empty-registry
 journey_id: list-sensors
-name: /list-sensors warns when the registry file does not exist
-regression_priority: high
+name: List sensors when no registry file exists
+regression_priority: medium
 tags:
 - happy-path
-- empty
-- registry-discovery
+- framework-list-sensors
 trigger:
   fixture:
     argv:
     - list-sensors
-    state:
-      .harness/runtime/running_sensors.json: absent
-  shape: CLI invocation
-  summary: /list-sensors when .harness/runtime/running_sensors.json is absent.
+    registry_state:
+      file_exists: false
+  shape: cli-argv
+  summary: Invoke list-sensors when no .harness/runtime/running_sensors.json file
+    exists.
 version: 0.1.0

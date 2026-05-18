@@ -1,0 +1,241 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 256
+  latency:
+    p50_ms: 3000
+    p95_ms: 15000
+    timeout_ms: 60000
+description: |
+  Spawns the computational runner against a target sensor whose dependency
+  produces verdict=fail, in an isolated temp registry. Asserts the last
+  JSONL line on stdout is a cascade Signal (metadata.kind="cascade")
+  naming the failing dep, and that the runner exits with code 1.
+  Validates the orchestrator's FirstFailedDep + BuildCascadeSignal path
+  end-to-end without depending on the lib unit tests.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: setup-tmp-registry
+    outputs:
+      tmpdir:
+        from: stdout
+        trim: true
+    run: |
+      set -euo pipefail
+      tmpdir=$(mktemp -d -t harness-assert-cascade.XXXXXX)
+      mkdir -p "$tmpdir/.harness/sensors"
+      mkdir -p "$tmpdir/.harness/usecases"
+      cp .harness/stack.yaml "$tmpdir/.harness/stack.yaml"
+      cp -R .harness/usecases/. "$tmpdir/.harness/usecases/"
+      printf '%s' "$tmpdir"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: persist-failing-dep
+    run: |
+      set -euo pipefail
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      draft="$tmpdir/dep-draft.yaml"
+      cat >"$draft" <<'YAML'
+      id: cascade-failing-dep-test
+      version: 0.1.0
+      name: Cascade test failing dep
+      description: |
+        Synthetic dep that always exits with code 1 so the orchestrator's
+        FirstFailedDep marks it as a blocker. Generated at runtime by
+        assert-run-sensor-dep-cascade.
+      kind: assertion
+      type: computational
+      regulation: behaviour
+      phase: on-demand
+      determinism: high
+      output: single
+      cost:
+        class: cheap
+        compute:
+          cpu: low
+          memory_mb: 16
+        latency:
+          p50_ms: 5
+          p95_ms: 50
+          timeout_ms: 2000
+      triggers:
+      - "on": manual
+      use_cases:
+      - run-sensor-dep-cascade
+      execution:
+        command: exit 1
+        exit_code_map:
+        - exit_code: 0
+          severity: info
+          verdict: pass
+        - exit_code: '*'
+          severity: high
+          verdict: fail
+      YAML
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=write_sensor \
+        ./skills/create-sensor/scripts \
+        --out "$tmpdir/.harness/sensors" \
+        --schemas-dir "$CLAUDE_PLUGIN_ROOT/schemas" \
+        "$draft" >/dev/null
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: persist-cascade-target
+    run: |
+      set -euo pipefail
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      draft="$tmpdir/target-draft.yaml"
+      cat >"$draft" <<'YAML'
+      id: cascade-target-test
+      version: 0.1.0
+      name: Cascade test target
+      description: |
+        Synthetic target that depends_on cascade-failing-dep-test. Its
+        command must never be invoked under cascade — the orchestrator
+        emits a cascade Signal instead. Generated at runtime by
+        assert-run-sensor-dep-cascade.
+      kind: assertion
+      type: computational
+      regulation: behaviour
+      phase: on-demand
+      determinism: high
+      output: single
+      cost:
+        class: cheap
+        compute:
+          cpu: low
+          memory_mb: 16
+        latency:
+          p50_ms: 5
+          p95_ms: 50
+          timeout_ms: 2000
+      triggers:
+      - "on": manual
+      use_cases:
+      - run-sensor-dep-cascade
+      requires:
+      - kind: sensor
+        id: cascade-failing-dep-test
+      execution:
+        command: echo "MUST NOT RUN" && exit 0
+        exit_code_map:
+        - exit_code: 0
+          severity: info
+          verdict: pass
+        - exit_code: '*'
+          severity: high
+          verdict: fail
+      YAML
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=write_sensor \
+        ./skills/create-sensor/scripts \
+        --out "$tmpdir/.harness/sensors" \
+        --schemas-dir "$CLAUDE_PLUGIN_ROOT/schemas" \
+        "$draft" >/dev/null
+    type: shell
+  - exit_code_map:
+      '*': pass
+      "0": pass
+    id: invoke-runner
+    outputs:
+      exit_code:
+        from: stdout
+        trim: true
+    run: |
+      set -uo pipefail
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/run.out"
+      err="$tmpdir/run.err"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=run_computational \
+        ./skills/run-sensor/scripts cascade-target-test \
+        >"$out" 2>"$err"
+      rc=$?
+      printf '%s' "$rc"
+    type: shell
+  - expect:
+      equals: "1"
+      value: ${{ steps.invoke-runner.outputs.exit_code }}
+    id: assert-exit-code-is-1
+    type: assert
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: assert-cascade-shape
+    run: |
+      set -euo pipefail
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/run.out"
+      if [ ! -s "$out" ]; then
+        echo "stdout capture is empty" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      failed_dep=$(printf '%s' "$last" | jq -r '.metadata.failed_dep_id // ""')
+      sensor_id=$(printf '%s' "$last" | jq -r '.sensor_id // ""')
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      if [ "$kind" != "cascade" ]; then
+        echo "expected metadata.kind=cascade, got=$kind" >&2
+        echo "last line: $last" >&2
+        exit 1
+      fi
+      if [ "$failed_dep" != "cascade-failing-dep-test" ]; then
+        echo "expected metadata.failed_dep_id=cascade-failing-dep-test, got=$failed_dep" >&2
+        echo "last line: $last" >&2
+        exit 1
+      fi
+      if [ "$sensor_id" != "cascade-target-test" ]; then
+        echo "expected sensor_id=cascade-target-test, got=$sensor_id" >&2
+        echo "last line: $last" >&2
+        exit 1
+      fi
+      if [ "$verdict" != "error" ]; then
+        echo "expected verdict=error on cascade aggregate (canonical BuildCascadeSignal output), got=$verdict" >&2
+        echo "last line: $last" >&2
+        exit 1
+      fi
+      failed_dep_verdict=$(printf '%s' "$last" | jq -r '.metadata.failed_dep_verdict // ""')
+      if [ "$failed_dep_verdict" != "fail" ]; then
+        echo "expected metadata.failed_dep_verdict=fail, got=$failed_dep_verdict" >&2
+        echo "last line: $last" >&2
+        exit 1
+      fi
+      target_aggregate_kinds=$(jq -r 'select(.sensor_id == "cascade-target-test") | .metadata.kind' "$out" | sort -u)
+      if [ "$target_aggregate_kinds" != "cascade" ]; then
+        echo "expected target sensor to emit only kind=cascade Signal, got kinds=$target_aggregate_kinds" >&2
+        exit 1
+      fi
+      echo "cascade-shape OK kind=$kind failed_dep=$failed_dep sensor_id=$sensor_id"
+    type: shell
+  teardown:
+  - command: |
+      set -u
+      for d in /tmp/harness-assert-cascade.* "${TMPDIR:-/tmp}"/harness-assert-cascade.*; do
+        [ -d "$d" ] && rm -rf "$d"
+      done
+      exit 0
+id: assert-run-sensor-dep-cascade
+kind: assertion
+name: Assert run-sensor cascade on failed dep
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- run-sensor-dep-cascade
+version: 0.1.0

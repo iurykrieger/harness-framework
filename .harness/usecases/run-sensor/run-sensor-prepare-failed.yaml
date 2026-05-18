@@ -1,75 +1,73 @@
 behavior:
   business_rules:
-  - prepare[] runs fail-fast.
-  - The main command does NOT run when any prepare step fails.
-  - teardown[] runs unconditionally (finally semantics).
-  - Aggregate verdict=error when prepare fails (sensor could not run).
-  - cause=prepare_failed in the aggregate's metadata.
+  - prepare[] is silent and fail-fast — first non-pass step aborts.
+  - execution.command MUST NOT run if any prepare step failed.
+  - teardown[] still runs in finally fashion.
+  - metadata.lifecycle.prepare records per-step results on the aggregate.
   summary: |
-    The orchestrator iterates execution.prepare[] in order. The first
-    step exiting non-zero halts the lifecycle: the main command is not
-    spawned, teardown[] runs unconditionally, and the aggregate Signal
-    carries metadata.lifecycle.prepare with the failing step's evidence.
+    RunPreparePhase iterates the steps fail-fast. The first non-pass step
+    aborts the loop and signals prepFailed=true. The orchestrator then
+    skips execution.command but still runs teardown[]. The aggregate
+    Signal records metadata.lifecycle.prepare per-step results.
 description: |
-  /run-sensor on a sensor whose first execution.prepare[] step exits
-  non-zero. Prepare is silent and fail-fast: the command is skipped, the
-  teardown still runs, and the aggregate Signal carries verdict=error
-  with metadata.cause=prepare_failed.
+  When a sensor declares execution.prepare[] steps and the first prepare step
+  produces a non-pass verdict, the orchestrator's RunPreparePhase aborts the
+  remaining prepare steps AND skips execution.command entirely. Teardown
+  still runs (finally semantics). The aggregate Signal carries
+  metadata.lifecycle.prepare with the per-step results.
 evidence:
-- file: lib/orchestrator/lifecycle.go
-  rationale: Executes prepare → command → teardown with fail-fast prepare and finally-semantics
-    teardown.
-- file: skills/run-sensor/scripts/run-computational.go
-  line_start: 72
-  rationale: Entry point that delegates lifecycle execution to the orchestrator.
+- file: lib/orchestrator/run.go
+  kind: implementation
+  rationale: Orchestrator that drives the prepare → command → teardown lifecycle with
+    fail-fast semantics.
+- file: lib/subprocess/step.go
+  kind: implementation
+  rationale: Step execution primitive used by prepare/teardown phases.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares execution.prepare[] / execution.teardown[] step shape consumed
+    by the lifecycle.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_lines:
-    - '{"sensor_id":"integration-test-with-broken-prepare","verdict":"error","severity":"high","evidence":[],"cost_actual":{"latency_ms":7},"metadata":{"kind":"aggregate","cause":"prepare_failed","lifecycle":{"prepare":[{"command":"false","verdict":"fail","exit_code":1}],"teardown":[{"command":"rm
-      -f /tmp/marker","verdict":"pass","exit_code":0}]}}}'
+    final_aggregate:
+      metadata:
+        cause: prepare_failed
+        kind: aggregate
+        lifecycle:
+          prepare:
+          - command: docker compose up -d postgres
+            exit_code: 1
+            verdict: fail
+      severity: high
+      verdict: fail
   invariants:
-  - Aggregate verdict is "error" (the sensor could not run).
-  - metadata.cause is "prepare_failed".
-  - metadata.lifecycle.prepare records the failing step.
-  - metadata.lifecycle.teardown is present (teardown ran despite prepare failure).
-  shape: One JSON line on stdout + exit code
-  side_effects:
-  - teardown[] side-effects fire even though command never ran.
-  summary: |
-    One aggregate Signal verdict=error, metadata.kind=aggregate,
-    metadata.cause=prepare_failed, and metadata.lifecycle.prepare[0]
-    showing the failing step. Exit code 0 (the runner ran).
+  - aggregate.verdict == "fail".
+  - metadata.lifecycle.prepare contains exactly the executed prepare entries (fail-fast
+    cut-off).
+  - The sensor's main command did NOT execute.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Aggregate Signal with verdict=fail and metadata.lifecycle.prepare carrying
+    the failing step.
 id: run-sensor-prepare-failed
 journey_id: run-sensor
-name: Prepare step fails — command skipped, aggregate verdict=error
+name: Prepare step fails fail-fast and the command never runs
 regression_priority: high
 tags:
 - error-handling
-- lifecycle
-- prepare
+- framework-run-sensor
 trigger:
   fixture:
     argv:
     - run-computational
-    - integration-test-with-broken-prepare
+    - integration-test-with-fixture-load
+    prepare_step_0_exit: 1
     sensor:
       execution:
-        command: go test ./...
-        exit_code_map:
-        - exit_code: 0
-          verdict: pass
+        command: go test ./tests/...
         prepare:
-        - command: "false"
-          description: intentional broken prepare step
-        teardown:
-        - command: rm -f /tmp/marker
-          description: best-effort cleanup
-      id: integration-test-with-broken-prepare
-      output: single
-      type: computational
-  shape: CLI invocation
-  summary: |
-    /run-sensor invoked on a sensor whose execution.prepare[0].command
-    exits 1 before the main command can run.
+        - command: docker compose up -d postgres
+        - command: ./scripts/load-fixtures.sh
+  shape: cli-argv
+  summary: Run a sensor whose first prepare[] step exits non-zero.
 version: 0.1.0

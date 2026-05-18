@@ -1,50 +1,61 @@
 behavior:
   business_rules:
-  - Sensor cannot be running without a registry file.
-  - Verdict is error (a sensor cannot logically be running without registry).
-  - Exit code is 1.
-  - rationale mentions the resolved registry path.
+  - A missing registry file makes the request unsatisfiable.
+  - 'Verdict mapping per CLAUDE.md: /stop-sensor is error when registry is absent.'
+  - The rationale guides the agent toward HARNESS_REGISTRY_ROOT remediation.
   summary: |
-    Before acquiring any lock, runStop checks b.Res.Exists from the
-    bootstrap. A false value means the registry discovery resolved a
-    root but no registry file is on disk. The rationale string names
-    the resolved registry path to aid the user.
+    cli.Bootstrap detects b.Res.Exists=false. runStop inspects this flag and
+    emits an error/stop_no_registry Signal with a rationale explaining
+    likely causes (wrong cwd, HARNESS_REGISTRY_ROOT misconfigured), then
+    returns exit code 1.
 description: |
-  When the registry file is absent (no .harness/runtime/running_sensors.json),
-  /stop-sensor returns verdict=error, metadata.kind=stop_no_registry,
-  exit code 1. Rationale spells out the likely causes (wrong cwd,
-  misconfigured HARNESS_REGISTRY_ROOT).
+  When .harness/runtime/running_sensors.json does not exist on disk, no
+  sensor can be running and /stop-sensor cannot satisfy the request.
+  runStop emits a Signal verdict=error, metadata.kind=stop_no_registry with
+  rationale pointing the user at HARNESS_REGISTRY_ROOT or the original cwd.
+  Exit code is 1. (Per CLAUDE.md the four registry-touching skills assign
+  different verdicts when registry is absent — /stop-sensor's is "error".)
 evidence:
 - file: skills/stop-sensor/scripts/stop.go
+  kind: implementation
+  line_end: 76
   line_start: 67
-  rationale: registry_exists=false branch emitting stop_no_registry.
+  rationale: stop_no_registry emission path when b.Res.Exists is false.
+- file: lib/registry/root.go
+  kind: contract
+  rationale: registry.Lookup walk-up and HARNESS_REGISTRY_ROOT resolution contract
+    that defines b.Res.Exists.
 expected_outcome:
   fixture:
-    exit_code: 1
-    stdout_lines:
-    - '{"sensor_id":"dev-server","verdict":"error","severity":"high","evidence":[{"rationale":"registry
-      not found at /repo/.harness/runtime/running_sensors.json"}],"cost_actual":{"latency_ms":2},"metadata":{"kind":"stop_no_registry"}}'
+    metadata:
+      kind: stop_no_registry
+    sensor_id: serve-app-blocking
+    severity: high
+    verdict: error
   invariants:
+  - metadata.kind == "stop_no_registry".
   - Exit code is 1.
-  - metadata.kind is "stop_no_registry".
-  - The rationale names the missing registry path.
-  shape: One JSON line on stdout + exit code
+  - metadata.registry_exists is false (diagnose block).
+  shape: signal-jsonl
   side_effects: []
-  summary: One Signal verdict=error, metadata.kind=stop_no_registry, exit code 1.
+  summary: Signal verdict=error, metadata.kind=stop_no_registry; exit 1.
 id: stop-sensor-registry-not-found
 journey_id: stop-sensor
-name: /stop-sensor errors when running_sensors.json does not exist
+name: Stop with no registry file surfaces an error
 regression_priority: high
 tags:
 - error-handling
-- registry-discovery
+- framework-stop-sensor
 trigger:
   fixture:
     argv:
     - stop-sensor
-    - dev-server
-    state:
-      .harness/runtime/running_sensors.json: absent
-  shape: CLI invocation
-  summary: /stop-sensor invoked when registry file is missing or unreachable.
+    - serve-app-blocking
+    env:
+      HARNESS_REGISTRY_ROOT: /tmp/projectD
+    registry_state:
+      file_exists: false
+  shape: cli-argv
+  summary: Invoke stop-sensor when .harness/runtime/running_sensors.json does not
+    exist.
 version: 0.1.0

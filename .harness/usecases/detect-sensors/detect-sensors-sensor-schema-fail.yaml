@@ -1,63 +1,68 @@
 behavior:
   business_rules:
-  - Schema violations exit with code 1.
-  - The destination file is NOT written.
-  - The violation message comes from PrintValidationOrPlain.
+  - Exit code 1 is reserved for schema validation failures.
+  - The validation tree is rendered in full on stderr.
+  - No sensor file is written when validation fails.
   summary: |
-    The schemas/sensor.yaml allOf branches forbid cost.tokens for
-    computational sensors. ValidateAndPersist surfaces the
-    jsonschema.ValidationError; write-sensor's branch on errors.As
-    matches and prints the violation.
+    schema.Validate returns a ValidationError naming the missing
+    execution.exit_code_map. write-sensor passes the error to
+    schema.PrintValidationOrPlain (printing the validation tree on stderr)
+    and returns exit 1.
 description: |
-  When the draft sensor violates schemas/sensor.yaml — most commonly
-  because the type/output discriminator rules forbid a field, or a
-  required field is missing — sensor.ValidateAndPersist returns a
-  jsonschema.ValidationError. write-sensor prints the violation to
-  stderr and exits 1.
+  When a sensor draft violates schemas/sensor.yaml (e.g. computational
+  sensor missing execution.exit_code_map, or stream sensor missing
+  execution.output_parsing.patterns), sensor.ValidateAndPersist returns a
+  jsonschema.ValidationError. write-sensor catches it via errors.As, prints
+  the validation tree on stderr, and returns exit 1. No file is written.
 evidence:
 - file: skills/detect-sensors/scripts/write-sensor.go
-  line_start: 63
-  rationale: jsonschema.ValidationError handling that exits with code 1.
+  kind: implementation
+  line_end: 71
+  line_start: 62
+  rationale: errors.As branch that converts a jsonschema.ValidationError to exit 1.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares the sensor schema (allOf discriminators) whose violation produces
+    the rejection.
 expected_outcome:
   fixture:
     exit_code: 1
-    filesystem:
-      /repo/.harness/sensors/badly-shaped-sensor.yaml: NOT written
-    stderr_includes: cost
-    stdout_lines: []
+    file_written: false
+    stderr_substring: INVALID
   invariants:
   - Exit code is 1.
-  - The destination file is NOT touched.
-  shape: stderr lines + exit code
+  - No file is created in <out>/.
+  - stderr contains validation diagnostics.
+  shape: cli-exit
   side_effects: []
-  summary: Schema violation on stderr, exit code 1.
+  summary: stderr contains the validation tree; exit 1; no sensor file written.
 id: detect-sensors-sensor-schema-fail
 journey_id: detect-sensors
-name: write-sensor rejects a draft sensor that fails schema validation
+name: write-sensor rejects a draft that fails schema validation
 regression_priority: high
 tags:
-- validation
 - error-handling
+- validation
+- framework-detect-sensors
 trigger:
   fixture:
     argv:
     - write-sensor
-    - --out=/repo/.harness/sensors
-    - /tmp/draft-bad.yaml
-    draft:
+    - --out=/tmp/projectE/.harness/sensors
+    - /tmp/bad-draft.yaml
+    draft_payload:
       cost:
-        tokens:
-          budget: 1000
+        compute: low
+        latency:
+          timeout_ms: 5000
       execution:
-        command: "true"
-        exit_code_map:
-        - exit_code: 0
-          verdict: pass
-      id: badly-shaped-sensor
+        command: false
+      id: bad-sensor
+      kind: observation
       output: single
       type: computational
       version: 0.1.0
-  shape: CLI invocation
-  summary: write-sensor with a draft that declares type=computational but provides
-    cost.tokens (forbidden).
+  shape: cli-argv
+  summary: Run write-sensor against a draft that omits the required execution.exit_code_map
+    for a computational sensor.
 version: 0.1.0

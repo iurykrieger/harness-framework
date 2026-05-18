@@ -1,46 +1,56 @@
 behavior:
   business_rules:
-  - cursor must be a non-negative integer (strconv.Atoi success + cursor >= 0).
-  - Negative integers also fail.
-  - Non-numeric strings (e.g. abc) or decimals (e.g. 1.5) also fail.
+  - Cursor must satisfy cursor >= 0.
+  - Cursor 0 means "read all lines from the start"; positive N means "skip first N".
   - Exit code is 1.
   summary: |
-    runTail uses strconv.Atoi on the cursor argument. Any parse error
-    or a negative result triggers the tail_invalid_cursor branch.
+    strconv.Atoi(args[1]) either errors or yields cursor<0. runTail emits
+    the tail_invalid_cursor Signal carrying the bad value in the rationale.
+    Exit code is 1.
 description: |
-  /tail-sensor's second argument MUST parse as a non-negative integer.
-  Any other value (negative integer, decimal, non-numeric) emits
-  verdict=error, metadata.kind=tail_invalid_cursor, exit code 1.
+  The cursor argument must be a non-negative integer (0 = read all, N > 0 =
+  skip first N lines). When strconv.Atoi fails or returns a negative value,
+  runTail emits a Signal verdict=error, metadata.kind=tail_invalid_cursor
+  with rationale naming the offending value, and returns exit 1.
 evidence:
 - file: skills/tail-sensor/scripts/tail.go
+  kind: implementation
+  line_end: 70
   line_start: 58
-  rationale: strconv.Atoi + non-negative validation; emits tail_invalid_cursor.
+  rationale: Cursor parse and validation site that emits tail_invalid_cursor.
+- file: skills/tail-sensor/scripts/tail.go
+  kind: contract
+  line_end: 33
+  line_start: 27
+  rationale: main() declaring the positional-argv contract consumed by the trigger
+    fixture.
 expected_outcome:
   fixture:
-    exit_code: 1
-    stdout_lines:
-    - '{"sensor_id":"dev-server","verdict":"error","severity":"high","evidence":[{"rationale":"cursor
-      must be a non-negative integer, got \"-1\""}],"cost_actual":{"latency_ms":0},"metadata":{"kind":"tail_invalid_cursor"}}'
+    metadata:
+      kind: tail_invalid_cursor
+    sensor_id: serve-app-blocking
+    severity: high
+    verdict: error
   invariants:
+  - metadata.kind == "tail_invalid_cursor".
   - Exit code is 1.
-  - metadata.kind is "tail_invalid_cursor".
-  shape: One JSON line on stdout + exit code
+  - The signals.log file is not opened.
+  shape: signal-jsonl
   side_effects: []
-  summary: One Signal verdict=error, metadata.kind=tail_invalid_cursor, exit code
-    1.
+  summary: Signal verdict=error, metadata.kind=tail_invalid_cursor; exit 1.
 id: tail-sensor-invalid-cursor
 journey_id: tail-sensor
-name: /tail-sensor rejects non-integer or negative cursor
+name: Reject /tail-sensor with negative or non-integer cursor
 regression_priority: medium
 tags:
-- error-handling
 - validation
+- framework-tail-sensor
 trigger:
   fixture:
     argv:
     - tail-sensor
-    - dev-server
-    - "-1"
-  shape: CLI invocation
-  summary: /tail-sensor <id> <cursor> where cursor is not a non-negative integer.
+    - serve-app-blocking
+    - "-3"
+  shape: cli-argv
+  summary: Invoke tail-sensor with a cursor that is not a non-negative integer.
 version: 0.1.0

@@ -1,69 +1,63 @@
 behavior:
   business_rules:
-  - One individual Signal per matched output line.
-  - The aggregate verdict is the worst verdict observed.
-  - The verdict fail outranks the verdict pass.
+  - The aggregate verdict is the worst of exit_code_map[code] and MaxStreamVerdict(individuals).
+  - One fail-ranked individual is sufficient to make the aggregate fail.
+  - evidence[] on the aggregate is bounded by SelectTopEvidence (top-N worst).
   summary: |
-    The runner streams individual Signals for each matched line and
-    composes the aggregate by taking the worst verdict across the stream
-    and the exit_code_map.
+    The runner emits individual Signals as it matches each line; once the
+    subprocess exits, signal.MaxStreamVerdict picks the worst-rank verdict
+    observed across individuals and signal.Aggregate crosses it with the
+    exit-code-mapped verdict to compute the final aggregate.
 description: |
-  /run-sensor on a stream sensor whose output_parsing.patterns include a
-  fail-producing match. Even with exit code 0, the aggregate verdict is
-  fail because aggregate = worst-of(exit_code_map[exit], stream verdicts).
+  When the streaming subprocess emits one or more pattern-matched lines with
+  verdict=fail (e.g. a `--- FAIL: TestFoo` line for a sensor watching `go test
+  -v`), the aggregate verdict resolves to fail regardless of exit code mapping
+  via signal.MaxStreamVerdict. The aggregate's metadata.counts records per-
+  verdict totals; SelectTopEvidence picks the worst-ranked individuals for
+  the evidence[] field.
 evidence:
-- file: lib/signal/aggregate.go
-  rationale: MaxStreamVerdict + worst-of(exit_code_map) composition.
 - file: skills/run-sensor/scripts/run-computational.go
-  line_start: 72
-  rationale: run() delegates to orchestrator which drives the streaming pipeline.
+  kind: implementation
+  line_end: 120
+  line_start: 56
+  rationale: Delegates to orchestrator.RunWithDepsRoot which performs the streaming
+    + aggregation.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares the output_parsing.patterns array with verdict/severity per
+    pattern.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_lines:
-    - '{"sensor_id":"lint-fail-stream","verdict":"pass","severity":"info","evidence":[{"excerpt":"PASS
-      a.go"}],"cost_actual":{"latency_ms":1}}'
-    - '{"sensor_id":"lint-fail-stream","verdict":"fail","severity":"high","evidence":[{"excerpt":"FAIL
-      b.go missing import"}],"cost_actual":{"latency_ms":1}}'
-    - '{"sensor_id":"lint-fail-stream","verdict":"fail","severity":"high","evidence":[],"cost_actual":{"latency_ms":5},"metadata":{"kind":"aggregate"}}'
+    final_aggregate:
+      metadata:
+        counts:
+          error: 0
+          fail: 1
+          pass: 2
+          warn: 0
+        kind: aggregate
+        output_mode: stream
+      severity: medium
+      verdict: fail
   invariants:
-  - The aggregate is the LAST JSONL line on stdout.
-  - The aggregate verdict equals the worst per-line verdict.
-  - Exit code 0 — the sensor's command ran and emitted its aggregate.
-  shape: JSONL on stdout + exit code
+  - aggregate.verdict == "fail" whenever any individual has verdict=fail.
+  - aggregate is still the LAST JSONL line on stdout.
+  shape: signal-jsonl
   side_effects: []
-  summary: Two individual Signals (one pass, one fail) followed by aggregate verdict=fail.
+  summary: A stream of individual Signals (some fail) followed by an aggregate verdict=fail.
 id: run-sensor-stream-fail-verdict
 journey_id: run-sensor
-name: Stream sensor with a failing match produces aggregate verdict=fail
+name: Run a streaming computational sensor whose aggregate is fail
 regression_priority: critical
 tags:
 - error-handling
-- computational
-- stream
+- framework-run-sensor
 trigger:
   fixture:
     argv:
     - run-computational
-    - lint-fail-stream
-    sensor:
-      execution:
-        command: printf 'PASS a.go\nFAIL b.go missing import\n'
-        exit_code_map:
-        - exit_code: 0
-          verdict: pass
-        output_parsing:
-          patterns:
-          - regex: ^PASS (.+)$
-            verdict: pass
-          - regex: ^FAIL (.+)$
-            severity: high
-            verdict: fail
-      id: lint-fail-stream
-      output: stream
-      type: computational
-  shape: CLI invocation
-  summary: |
-    /run-sensor invoked on a stream sensor whose stdout includes a
-    line matching a pattern that maps to verdict=fail.
+    - go-test-verbose-computational
+  shape: cli-argv
+  summary: Invoke run-computational with a streaming sensor whose subprocess produces
+    at least one fail-ranked line.
 version: 0.1.0

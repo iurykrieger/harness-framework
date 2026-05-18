@@ -1,46 +1,54 @@
 behavior:
   business_rules:
-  - Sensor cannot be tailed without a registry entry.
-  - rationale names the resolved registry path.
-  - Verdict is error and exit code is 1.
+  - 'Verdict mapping per CLAUDE.md: /tail-sensor is error when registry is absent.'
+  - The rationale references the registry path and remediation hint.
   summary: |
-    After parsing argv and cursor, runTail checks b.Res.Exists. A false
-    value means no registry was found at the resolved path. /tail-sensor
-    cannot tail something that is not running.
+    cli.Bootstrap reports b.Res.Exists=false. runTail emits an
+    error/tail_no_registry Signal then returns exit 1.
 description: |
-  /tail-sensor with no running_sensors.json on disk emits verdict=error,
-  metadata.kind=tail_no_registry, exit code 1.
+  When .harness/runtime/running_sensors.json is absent, no sensor can be
+  running and /tail-sensor cannot resolve the entry. runTail emits a Signal
+  verdict=error, metadata.kind=tail_no_registry with rationale pointing the
+  agent at HARNESS_REGISTRY_ROOT or the original cwd. Exit code 1.
 evidence:
 - file: skills/tail-sensor/scripts/tail.go
+  kind: implementation
+  line_end: 83
   line_start: 72
-  rationale: registry_exists=false branch emitting tail_no_registry.
+  rationale: tail_no_registry emission path when b.Res.Exists is false.
+- file: lib/registry/root.go
+  kind: contract
+  rationale: registry.Lookup walk-up and HARNESS_REGISTRY_ROOT resolution contract
+    that defines b.Res.Exists.
 expected_outcome:
   fixture:
-    exit_code: 1
-    stdout_lines:
-    - '{"sensor_id":"dev-server","verdict":"error","severity":"high","evidence":[{"rationale":"registry
-      not found at /repo/.harness/runtime/running_sensors.json"}],"cost_actual":{"latency_ms":1},"metadata":{"kind":"tail_no_registry"}}'
+    metadata:
+      kind: tail_no_registry
+    sensor_id: serve-app-blocking
+    severity: high
+    verdict: error
   invariants:
+  - metadata.kind == "tail_no_registry".
   - Exit code is 1.
-  - metadata.kind is "tail_no_registry".
-  shape: One JSON line on stdout + exit code
+  - metadata.registry_exists is false (diagnose block).
+  shape: signal-jsonl
   side_effects: []
-  summary: One Signal verdict=error, metadata.kind=tail_no_registry, exit code 1.
+  summary: Signal verdict=error, metadata.kind=tail_no_registry; exit 1.
 id: tail-sensor-no-registry
 journey_id: tail-sensor
-name: /tail-sensor errors when the registry file is absent
+name: Tail with no registry file surfaces an error
 regression_priority: high
 tags:
 - error-handling
-- registry-discovery
+- framework-tail-sensor
 trigger:
   fixture:
     argv:
     - tail-sensor
-    - dev-server
+    - serve-app-blocking
     - "0"
-    state:
-      .harness/runtime/running_sensors.json: absent
-  shape: CLI invocation
-  summary: /tail-sensor invoked when registry file is missing.
+    registry_state:
+      file_exists: false
+  shape: cli-argv
+  summary: Invoke tail-sensor when the registry file is absent.
 version: 0.1.0

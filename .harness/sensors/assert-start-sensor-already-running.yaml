@@ -1,0 +1,242 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 256
+  latency:
+    p50_ms: 4000
+    p95_ms: 20000
+    timeout_ms: 90000
+description: |
+  Spawns a synthetic blocking sensor against an isolated temp registry,
+  invokes /start-sensor twice for the same id, and asserts the second
+  invocation is rejected by the registry singleton guard. Last JSONL
+  line of the second run must carry verdict=error, metadata.kind=rejected,
+  and metadata.existing_pid matching the PID of the first start. Exit
+  code of the second start must be 1, and the registry file must still
+  contain exactly one entry for the fixture sensor (no double-append).
+  Validates the file-lock-protected critical section in
+  skills/start-sensor/scripts/start.go (runStart) end-to-end without
+  depending on the lib unit tests.
+determinism: high
+execution:
+  env:
+    HARNESS_AUTOFILE_ISSUES: "0"
+  steps:
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: setup-tmp-registry
+    outputs:
+      tmpdir:
+        from: stdout
+        trim: true
+    run: |
+      set -euo pipefail
+      tmpdir=$(mktemp -d -t harness-assert-already-running.XXXXXX)
+      mkdir -p "$tmpdir/.harness/sensors"
+      mkdir -p "$tmpdir/.harness/usecases"
+      cp .harness/stack.yaml "$tmpdir/.harness/stack.yaml"
+      cp -R .harness/usecases/. "$tmpdir/.harness/usecases/"
+      printf '%s' "$tmpdir"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: persist-fixture-blocking-sensor
+    run: |
+      set -euo pipefail
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      draft="$tmpdir/fixture-draft.yaml"
+      cat >"$draft" <<'YAML'
+      id: fixture-blocking-sleeper
+      version: 0.1.0
+      name: Fixture blocking sleeper
+      description: |
+        Synthetic blocking sensor that prints `ready` and sleeps so the
+        singleton-guard assertion can race a second /start-sensor against
+        it. Generated at runtime by assert-start-sensor-already-running.
+      kind: assertion
+      type: computational
+      regulation: behaviour
+      phase: on-demand
+      determinism: high
+      output: stream
+      cost:
+        class: cheap
+        compute:
+          cpu: low
+          memory_mb: 16
+        latency:
+          p50_ms: 5
+          p95_ms: 50
+      triggers:
+      - "on": manual
+      use_cases:
+      - start-sensor-success-started
+      execution:
+        blocking: true
+        graceful_timeout_ms: 2000
+        command: printf 'ready\n' && sleep 60
+        exit_code_map:
+        - exit_code: 0
+          severity: info
+          verdict: pass
+        - exit_code: '*'
+          severity: high
+          verdict: fail
+        output_parsing:
+          patterns:
+          - regex: '.*'
+            verdict: pass
+            severity: info
+      YAML
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=write_sensor \
+        ./skills/create-sensor/scripts \
+        --out "$tmpdir/.harness/sensors" \
+        --schemas-dir "$CLAUDE_PLUGIN_ROOT/schemas" \
+        "$draft" >/dev/null
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: start-first
+    outputs:
+      first_pid:
+        from: stdout
+        trim: true
+    run: |
+      set -euo pipefail
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start1.out"
+      err="$tmpdir/start1.err"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=start_sensor \
+        ./skills/start-sensor/scripts fixture-blocking-sleeper \
+        >"$out" 2>"$err"
+      last=$(tail -n 1 "$out")
+      pid=$(printf '%s' "$last" | jq -r '.metadata.pid // 0')
+      if [ -z "$pid" ] || [ "$pid" = "0" ] || [ "$pid" = "null" ]; then
+        echo "first start did not return a pid; last=$last" >&2
+        cat "$err" >&2
+        exit 1
+      fi
+      printf '%s' "$pid"
+    type: shell
+  - exit_code_map:
+      '*': pass
+      "0": pass
+    id: start-second-expect-rejected
+    outputs:
+      exit_code:
+        from: stdout
+        trim: true
+    run: |
+      set -uo pipefail
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      out="$tmpdir/start2.out"
+      err="$tmpdir/start2.err"
+      HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+        go run -C "$CLAUDE_PLUGIN_ROOT" -tags=start_sensor \
+        ./skills/start-sensor/scripts fixture-blocking-sleeper \
+        >"$out" 2>"$err"
+      rc=$?
+      printf '%s' "$rc"
+    type: shell
+  - expect:
+      equals: "1"
+      value: ${{ steps.start-second-expect-rejected.outputs.exit_code }}
+    id: assert-exit-code-is-1
+    type: assert
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: assert-rejected-shape
+    run: |
+      set -euo pipefail
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      first_pid='${{ steps.start-first.outputs.first_pid }}'
+      out="$tmpdir/start2.out"
+      if [ ! -s "$out" ]; then
+        echo "second start stdout capture is empty" >&2
+        exit 1
+      fi
+      last=$(tail -n 1 "$out")
+      verdict=$(printf '%s' "$last" | jq -r '.verdict // ""')
+      kind=$(printf '%s' "$last" | jq -r '.metadata.kind // ""')
+      existing_pid=$(printf '%s' "$last" | jq -r '.metadata.existing_pid // 0')
+      sensor_id=$(printf '%s' "$last" | jq -r '.sensor_id // ""')
+      if [ "$verdict" != "error" ]; then
+        echo "expected verdict=error, got=$verdict" >&2
+        echo "last line: $last" >&2
+        exit 1
+      fi
+      if [ "$kind" != "rejected" ]; then
+        echo "expected metadata.kind=rejected, got=$kind" >&2
+        echo "last line: $last" >&2
+        exit 1
+      fi
+      if [ "$sensor_id" != "fixture-blocking-sleeper" ]; then
+        echo "expected sensor_id=fixture-blocking-sleeper, got=$sensor_id" >&2
+        echo "last line: $last" >&2
+        exit 1
+      fi
+      if [ -z "$existing_pid" ] || [ "$existing_pid" = "0" ] || [ "$existing_pid" = "null" ]; then
+        echo "expected metadata.existing_pid > 0, got=$existing_pid" >&2
+        echo "last line: $last" >&2
+        exit 1
+      fi
+      if [ "$existing_pid" != "$first_pid" ]; then
+        echo "expected metadata.existing_pid=$first_pid (first start pid), got=$existing_pid" >&2
+        echo "last line: $last" >&2
+        exit 1
+      fi
+      echo "rejected-shape OK verdict=$verdict kind=$kind existing_pid=$existing_pid"
+    type: shell
+  - exit_code_map:
+      '*': fail
+      "0": pass
+    id: assert-registry-singleton
+    run: |
+      set -euo pipefail
+      tmpdir='${{ steps.setup-tmp-registry.outputs.tmpdir }}'
+      registry="$tmpdir/.harness/runtime/running_sensors.json"
+      if [ ! -f "$registry" ]; then
+        echo "expected running_sensors.json at $registry" >&2
+        exit 1
+      fi
+      count=$(jq '[.entries[] | select(.sensor_id == "fixture-blocking-sleeper")] | length' "$registry")
+      if [ "$count" != "1" ]; then
+        echo "expected exactly 1 registry entry for fixture-blocking-sleeper, got=$count" >&2
+        cat "$registry" >&2
+        exit 1
+      fi
+      echo "registry-singleton OK count=$count"
+    type: shell
+  teardown:
+  - command: |
+      set -u
+      for d in /tmp/harness-assert-already-running.* "${TMPDIR:-/tmp}"/harness-assert-already-running.*; do
+        [ -d "$d" ] || continue
+        if [ -f "$d/.harness/runtime/running_sensors.json" ]; then
+          HARNESS_REGISTRY_ROOT="$d" GOWORK=off CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT" \
+            go run -C "$CLAUDE_PLUGIN_ROOT" -tags=stop_sensor \
+            ./skills/stop-sensor/scripts fixture-blocking-sleeper >/dev/null 2>&1 || true
+        fi
+        rm -rf "$d"
+      done
+      exit 0
+id: assert-start-sensor-already-running
+kind: assertion
+name: Assert start-sensor singleton guard rejects double start
+output: single
+phase: on-demand
+regulation: behaviour
+triggers:
+- "on": manual
+- "on": agent-request
+type: computational
+use_cases:
+- start-sensor-already-running
+version: 0.1.0

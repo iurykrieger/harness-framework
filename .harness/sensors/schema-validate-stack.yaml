@@ -1,0 +1,43 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 256
+  latency:
+    p50_ms: 2000
+    p95_ms: 10000
+    timeout_ms: 60000
+description: On pull-request, validates `.harness/stack.yaml` against `schemas/stack.yaml`
+  by re-running the persister into a throwaway directory. Auto-detected from .github/workflows/test.yml
+  job "sensors" step "Validate .harness/stack.yaml against schemas/stack.yaml". Output
+  is single because the persister is silent on success; verdict comes from exit code.
+  Regulates architecture-fitness.
+determinism: high
+execution:
+  command: |
+    set -euo pipefail
+    tmp=$(mktemp -d)
+    go run -tags=write_stack ./skills/detect-sensors/scripts \
+      --out="$tmp" --schemas-dir="$(pwd)/schemas" .harness/stack.yaml >/dev/null
+    rm -rf "$tmp"
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+id: schema-validate-stack
+kind: assertion
+name: Schema-validate .harness/stack.yaml
+output: single
+phase: pre-merge
+regulation: architecture-fitness
+triggers:
+- "on": pull-request
+- "on": agent-request
+type: computational
+use_cases:
+- detect-sensors-stack-schema-fail
+- detect-sensors-stack-success
+version: 0.1.0

@@ -1,52 +1,81 @@
 behavior:
   business_rules:
-  - RejectIfExists=true — pre-existing files cause refusal.
-  - RequireUseCaseFilesOnDisk=true — every use_cases[] entry must resolve to .harness/usecases/**/<id>.yaml.
-  - Stdout carries TWO lines on success — the JSON Signal then the absolute path.
+  - /create-sensor's write-sensor sets RejectIfExists=true (no silent overwrite).
+  - /create-sensor's write-sensor sets RequireUseCaseFilesOnDisk=true (every use_cases[]
+    id must resolve to a file).
+  - The success Signal carries metadata.{path, id, kind_attr, type_attr}.
+  - Exit code is 0.
   summary: |
-    run() parses argv, reads the draft, resolves projectRoot via
-    registry.Lookup, then calls sensor.ValidateAndPersist with
-    RejectIfExists=true + RequireUseCaseFilesOnDisk=true. On success it
-    emits the pass Signal plus a trailing line containing the absolute path.
+    The script reads the draft, calls registry.Lookup to resolve
+    projectRoot, and invokes sensor.ValidateAndPersist with
+    RejectIfExists=true and RequireUseCaseFilesOnDisk=true. On success it
+    emits the sensor_persisted Signal and prints the absolute path.
 description: |
-  Happy-path of /create-sensor's write-sensor. The draft passes schema
-  validation, all fixtures exist on disk, and no sensor by that id
-  already exists. ValidateAndPersist writes the canonical YAML and the
-  script emits a verdict=pass, metadata.kind=sensor_persisted Signal.
+  Happy path for /create-sensor's persistence script: a fully composed
+  sensor draft (assertion kind, sourced from a previously persisted
+  usecase) passes schema validation, has no on-disk conflict, and refers
+  only to usecases whose files exist. sensor.ValidateAndPersist writes
+  the canonical YAML to <projectRoot>/.harness/sensors/<id>.yaml. The
+  script emits a verdict=pass / metadata.kind=sensor_persisted Signal and
+  prints the absolute path on the next line.
 evidence:
 - file: skills/create-sensor/scripts/write-sensor.go
-  line_start: 105
-  rationale: Success branch — emits passSignal and the path line.
+  kind: implementation
+  line_end: 109
+  line_start: 37
+  rationale: Entry point that runs registry.Lookup + sensor.ValidateAndPersist with
+    the strict options.
+- file: lib/sensor/persist.go
+  kind: implementation
+  rationale: ValidateAndPersist with PersistOpts.RejectIfExists + RequireUseCaseFilesOnDisk
+    wiring.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares the sensor schema and use_cases[] field consumed by the validator.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_lines:
-    - '{"sensor_id":"write-sensor","verdict":"pass","severity":"info","evidence":[],"cost_actual":{"latency_ms":12},"metadata":{"kind":"sensor_persisted","path":"/repo/.harness/sensors/my-new-sensor.yaml","id":"my-new-sensor","kind_attr":"assertion","type_attr":"computational"}}'
-    - /repo/.harness/sensors/my-new-sensor.yaml
+    last_jsonl_signal:
+      metadata:
+        id: assert-charge-201
+        kind: sensor_persisted
+        kind_attr: assertion
+        type_attr: computational
+      sensor_id: write-sensor
+      severity: info
+      verdict: pass
   invariants:
-  - verdict is "pass".
-  - metadata.kind is "sensor_persisted".
-  - The destination file exists.
-  shape: JSONL + path on stdout, exit code, filesystem
+  - The Signal metadata.kind == "sensor_persisted".
+  - Exit code is 0.
+  - <projectRoot>/.harness/sensors/<id>.yaml exists after the run.
+  shape: signal-jsonl
   side_effects:
-  - Creates the destination file.
-  summary: One pass Signal + path on stdout, exit code 0, file written.
+  - <projectRoot>/.harness/sensors/<id>.yaml is created (RejectIfExists guarantees
+    no overwrite).
+  summary: Signal verdict=pass, metadata.kind=sensor_persisted with path metadata;
+    absolute path on next line; exit 0.
 id: create-sensor-success
 journey_id: create-sensor
-name: create-sensor write-sensor persists a new sensor and emits sensor_persisted
-  Signal
+name: Persist a targeted assertion sensor via write-sensor
 regression_priority: critical
 tags:
 - happy-path
-- persistence
+- side-effects
+- framework-create-sensor
 trigger:
   fixture:
     argv:
     - write-sensor
-    - --out=/repo/.harness/sensors
+    - --out=/tmp/projectG/.harness/sensors
     - /tmp/draft.yaml
-    state:
-      .harness/sensors/my-new-sensor.yaml: absent
-  shape: CLI invocation
-  summary: write-sensor with a valid draft of a brand-new sensor.
+    draft_payload:
+      id: assert-charge-201
+      kind: assertion
+      output: single
+      type: computational
+      use_cases:
+      - issue-charge-happy
+      version: 0.1.0
+  shape: cli-argv
+  summary: Run create-sensor's write-sensor against a schema-valid assertion draft
+    whose use_cases[] all resolve.
 version: 0.1.0

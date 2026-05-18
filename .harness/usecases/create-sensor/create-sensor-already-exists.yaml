@@ -1,54 +1,72 @@
 behavior:
   business_rules:
-  - /create-sensor never overwrites an existing sensor file.
-  - metadata.path points at the existing file so the user can inspect.
-  - Exit code is 2 (refusal, not a validation failure).
+  - /create-sensor never silently overwrites — every authoring decision is explicit.
+  - Exit code is 2.
+  - The Signal's metadata.path names the target that would have been overwritten.
   summary: |
-    ValidateAndPersist os.Stats the target path before writing.
-    With RejectIfExists=true, an existing file produces
-    SensorAlreadyExistsError. The script's errors.As branch catches
-    it and emits the sensor_already_exists Signal.
+    sensor.ValidateAndPersist with RejectIfExists=true detects the existing
+    file via os.Stat before writing and returns *SensorAlreadyExistsError.
+    The script's errors.As branch builds a sensor_already_exists Signal and
+    returns exit 2.
 description: |
-  /create-sensor's write-sensor uses RejectIfExists=true. When a file
-  already exists at <out>/<id>.yaml, ValidateAndPersist returns a
-  SensorAlreadyExistsError; the script emits verdict=error,
-  metadata.kind=sensor_already_exists with metadata.path pointing at
-  the existing file. Exit code 2.
+  /create-sensor's write-sensor sets PersistOpts.RejectIfExists=true so a
+  re-run with the same id is a hard error instead of a silent overwrite —
+  authoring should be deliberate. sensor.ValidateAndPersist returns
+  *SensorAlreadyExistsError, which the script translates into a Signal
+  verdict=error, metadata.kind=sensor_already_exists with metadata.path,
+  and returns exit 2.
 evidence:
 - file: skills/create-sensor/scripts/write-sensor.go
-  line_start: 86
-  rationale: SensorAlreadyExistsError handling branch.
+  kind: implementation
+  line_end: 92
+  line_start: 84
+  rationale: errors.As branch that catches *SensorAlreadyExistsError and emits the
+    canonical Signal.
+- file: lib/sensor/persist.go
+  kind: implementation
+  rationale: ValidateAndPersist with PersistOpts.RejectIfExists check before writing.
+- file: skills/create-sensor/scripts/write-sensor.go
+  kind: contract
+  line_end: 55
+  line_start: 37
+  rationale: flag.NewFlagSet declaration that defines the --out / positional draft
+    argv contract used by the trigger fixture.
 expected_outcome:
   fixture:
-    exit_code: 2
-    stdout_lines:
-    - '{"sensor_id":"write-sensor","verdict":"error","severity":"high","evidence":[{"rationale":"sensor
-      file already exists; refusing to overwrite"}],"cost_actual":{"latency_ms":3},"metadata":{"kind":"sensor_already_exists","path":"/repo/.harness/sensors/lint-go-vet.yaml"}}'
+    last_jsonl_signal:
+      metadata:
+        kind: sensor_already_exists
+        path: /tmp/projectG/.harness/sensors/assert-charge-201.yaml
+      sensor_id: write-sensor
+      severity: high
+      verdict: error
   invariants:
-  - metadata.kind is "sensor_already_exists".
-  - The pre-existing file is NOT modified.
+  - metadata.kind == "sensor_already_exists".
   - Exit code is 2.
-  shape: One JSON line on stdout + exit code
+  - The existing file's bytes are unchanged after the run.
+  shape: signal-jsonl
   side_effects: []
-  summary: One error Signal verdict=error, metadata.kind=sensor_already_exists, exit
-    code 2.
+  summary: Signal verdict=error, metadata.kind=sensor_already_exists; exit 2.
 id: create-sensor-already-exists
 journey_id: create-sensor
-name: create-sensor refuses to overwrite an existing sensor file
+name: Refuse to overwrite an existing sensor file
 regression_priority: high
 tags:
 - error-handling
 - idempotent
+- framework-create-sensor
 trigger:
   fixture:
     argv:
     - write-sensor
-    - --out=/repo/.harness/sensors
+    - --out=/tmp/projectG/.harness/sensors
     - /tmp/draft.yaml
-    draft:
-      id: lint-go-vet
-    state:
-      .harness/sensors/lint-go-vet.yaml: already exists
-  shape: CLI invocation
-  summary: write-sensor with a draft whose id matches an existing .harness/sensors/<id>.yaml.
+    draft_payload:
+      id: assert-charge-201
+      version: 0.1.0
+    project_state:
+      existing_file: .harness/sensors/assert-charge-201.yaml
+  shape: cli-argv
+  summary: Run create-sensor's write-sensor with an id whose YAML already exists in
+    <outDir>.
 version: 0.1.0

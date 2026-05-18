@@ -1,62 +1,64 @@
 behavior:
   business_rules:
-  - Per-line stdout/stderr is not parsed in single-output mode.
-  - The aggregate verdict comes from exit_code_map[exitCode].
-  - Exactly one Signal is emitted on stdout (the aggregate).
+  - Subprocess stdout lines MUST NOT be parsed in single-output mode.
+  - Verdict is derived solely from execution.exit_code_map[exit_code].
+  - Aggregate Signal is the LAST (and only) JSONL line on stdout.
   summary: |
-    In single-output mode the runner spawns sh -c <execution.command>,
-    waits for completion, ignores per-line output, and computes the
-    aggregate verdict purely from exit_code_map.
+    The runner resolves the sensor file, validates it against schemas/sensor.yaml,
+    spawns sh -c "go vet ./...", waits for exit, looks up exit_code_map[0],
+    and emits the aggregate Signal.
 description: |
-  /run-sensor on a sensor with output=single. The runner ignores subprocess
-  stdout/stderr lines and emits exactly one aggregate Signal whose verdict
-  comes from execution.exit_code_map[exitCode]. Exit 0 maps to verdict=pass.
+  When /run-sensor receives a computational sensor whose execution.output=single,
+  the runner spawns sh -c <command>, ignores subprocess stdout lines, and emits
+  exactly one aggregate Signal whose verdict comes from exit_code_map[0]. This
+  is the canonical happy path for "verdict from exit status only" checks
+  (go vet, make build, structural tests with no per-test streaming).
 evidence:
 - file: skills/run-sensor/scripts/run-computational.go
-  line_start: 72
-  rationale: Entry point; delegates to orchestrator regardless of single vs stream
-    output mode.
-- file: lib/signal/aggregate.go
-  rationale: Aggregate verdict computation that resolves exit_code_map for single-output
-    sensors.
+  kind: implementation
+  line_end: 120
+  line_start: 56
+  rationale: Entry point that resolves the sensor, validates, and delegates to orchestrator.RunWithDepsRoot
+    which emits the aggregate Signal.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Defines execution.exit_code_map and output=single/stream discriminator
+    that drive the verdict mapping.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_lines:
-    - '{"sensor_id":"go-vet-single","verdict":"pass","severity":"info","evidence":[],"cost_actual":{"latency_ms":42},"metadata":{"kind":"aggregate"}}'
+    confidence: 1
+    metadata:
+      exit_code: 0
+      kind: aggregate
+      output_mode: single
+      timed_out: false
+    sensor_id: lint-go-vet-computational
+    severity: info
+    verdict: pass
   invariants:
-  - Exactly one Signal on stdout.
-  - That Signal's verdict matches exit_code_map[0].verdict.
-  - The Signal validates against schemas/signal.yaml.
-  shape: One JSON line on stdout + exit code
+  - Exactly one JSONL line is emitted on stdout.
+  - metadata.kind == "aggregate".
+  - metadata.output_mode == "single".
+  - The runner exits 0.
+  shape: signal-jsonl
   side_effects: []
-  summary: One aggregate Signal on stdout, verdict=pass, exit code 0.
+  summary: One aggregate Signal with verdict=pass and exit_code=0 in metadata.
 id: run-sensor-single-output-pass
 journey_id: run-sensor
-name: Computational single sensor exits 0 and emits one aggregate Signal
+name: Run a computational single-output sensor that passes
 regression_priority: critical
 tags:
 - happy-path
-- computational
-- single
+- framework-run-sensor
 trigger:
   fixture:
     argv:
     - run-computational
-    - go-vet-single
-    sensor:
-      execution:
-        command: go vet ./...
-        exit_code_map:
-        - exit_code: 0
-          verdict: pass
-        - exit_code: 1
-          verdict: fail
-      id: go-vet-single
-      output: single
-      type: computational
-  shape: CLI invocation
+    - lint-go-vet-computational
+    env:
+      HARNESS_REGISTRY_ROOT: /tmp/projectA
+  shape: cli-argv
   summary: |
-    /run-sensor invoked on a computational + single-output sensor whose
-    command exits with status 0 and which maps exit 0 to verdict=pass.
+    Invoke run-computational with the id of a computational, single-output sensor
+    whose command exits 0.
 version: 0.1.0

@@ -1,72 +1,73 @@
 behavior:
   business_rules:
-  - PreflightGate runs once per spawn site, before sh -c <command>.
-  - A missing env/tool/context produces verdict=error.
-  - metadata.kind is "failed".
-  - metadata.cause is "preflight_failed".
-  - The sensor's command is NOT spawned.
+  - Preflight gate runs BEFORE any subprocess spawn for the sensor's command.
+  - The gate's canonical Signal MUST carry metadata.cause="preflight_failed".
+  - metadata.missing_envs / missing_tools / missing_contexts list the specific blockers.
+  - Dependents of a gate-failed sensor cascade.
   summary: |
-    The orchestrator invokes orchestrator.PreflightGate before any
-    subprocess spawn. The gate evaluates requires[kind ∈ {tool,context,env}]
-    against the live process environment, filesystem, and $PATH. On
-    failure it returns the canonical Signal and the runner emits it
-    instead of spawning the command.
+    orchestrator.PreflightGate inspects requires[] entries and emits a
+    canonical "failed/preflight_failed" Signal listing every unmet env/tool/
+    context. The runner forwards this Signal as the aggregate and aborts.
 description: |
-  /run-sensor on a sensor that declares requires[kind=env].name=DATABASE_URL,
-  but the env var is not set. The orchestrator's PreflightGate runs
-  BEFORE spawning execution.command and emits a canonical
-  verdict=error, metadata.cause=preflight_failed Signal instead.
+  Before spawning a sensor's command, the orchestrator runs
+  orchestrator.PreflightGate against requires[kind ∈ {env, tool, context}].
+  Any unmet requirement produces a canonical Signal carrying
+  metadata.kind="failed", metadata.cause="preflight_failed", and the
+  machine-readable missing_envs / missing_tools / missing_contexts lists.
+  The runner emits this aggregate and aborts the spawn. Dependents cascade
+  via FirstFailedDep.
 evidence:
-- file: lib/orchestrator/lifecycle.go
-  rationale: orchestrator.PreflightGate is invoked here before each command spawn.
-- file: lib/sensor/requires.go
-  rationale: CheckRequiresGate / BuildRequiresGateSignal — the underlying gate evaluation.
+- file: skills/run-sensor/scripts/run-inferential.go
+  kind: implementation
+  line_end: 250
+  line_start: 240
+  rationale: PreflightGate invocation that emits the canonical signal and aborts spawn
+    on failure.
+- file: lib/orchestrator/gate.go
+  kind: implementation
+  rationale: PreflightGate implementation that aggregates missing env/tool/context
+    lists into the canonical Signal.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares requires[] entries with kind ∈ {env, tool, context, sensor}
+    consumed by the gate.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_lines:
-    - '{"sensor_id":"integration-test","verdict":"error","severity":"high","evidence":[{"rationale":"requires[kind=env].name=DATABASE_URL
-      absent"}],"cost_actual":{"latency_ms":1},"metadata":{"kind":"failed","cause":"preflight_failed"}}'
+    last_jsonl_signal:
+      metadata:
+        cause: preflight_failed
+        kind: failed
+        missing_envs:
+        - ANTHROPIC_API_KEY
+      severity: high
+      verdict: error
   invariants:
-  - The execution.command is NOT spawned.
-  - metadata.cause equals "preflight_failed".
-  - evidence names the unsatisfied requirement.
-  shape: One JSON line on stdout + exit code
+  - metadata.cause == "preflight_failed".
+  - No subprocess of the sensor's command is spawned.
+  - The runner exits 0 because the canonical Signal was emitted (gate failure is an
+    observation, not a runner crash).
+  shape: signal-jsonl
   side_effects: []
-  summary: |
-    One Signal on stdout, verdict=error, metadata.kind=failed,
-    metadata.cause=preflight_failed, evidence naming the missing
-    requirement(s). Exit code 0.
+  summary: One aggregate Signal with verdict=error, metadata.kind=failed, metadata.cause=preflight_failed.
 id: run-sensor-preflight-gate-failed
 journey_id: run-sensor
-name: Required env var missing — preflight gate aborts the spawn
+name: Preflight gate fails on missing requires[env|tool|context]
 regression_priority: high
 tags:
 - error-handling
-- preflight
-- gate
+- framework-run-sensor
 trigger:
   fixture:
     argv:
-    - run-computational
-    - integration-test
+    - run-inferential
+    - ai-review-inferential
     env:
-      HARNESS_REGISTRY_ROOT: /repo
+      ANTHROPIC_API_KEY: ""
     sensor:
-      execution:
-        command: go test -tags=integration ./...
-        exit_code_map:
-        - exit_code: 0
-          verdict: pass
-      id: integration-test
-      output: single
       requires:
       - kind: env
-        name: DATABASE_URL
-      type: computational
-  shape: CLI invocation
-  summary: |
-    /run-sensor on a sensor whose requires[] gate cannot be satisfied at
-    invocation time (env var, tool on PATH, or required filesystem
-    context absent).
+        name: ANTHROPIC_API_KEY
+  shape: cli-argv
+  summary: Invoke run-inferential with a sensor whose requires[].env names an unset
+    variable.
 version: 0.1.0

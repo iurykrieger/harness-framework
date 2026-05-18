@@ -1,51 +1,58 @@
 behavior:
   business_rules:
-  - execution.blocking MUST be true for /start-sensor.
-  - The Signal hints to use /run-sensor instead.
+  - Non-blocking sensors MUST be invoked via /run-sensor, not /start-sensor.
+  - The rejection happens before deps run.
+  - Exit code is 2 (usage / pre-check failure class).
   summary: |
-    After schema validation, runStart checks execution.blocking. If the
-    flag is false (or absent), it rejects the call with
-    cause=not_blocking and exits 2.
+    After validating the sensor against schemas/sensor.yaml, runStart inspects
+    execution.blocking. If it is not true, the script emits a failed Signal
+    with cause=not_blocking and exits 2 before any preflight/spawn.
 description: |
-  /start-sensor is exclusively for blocking sensors. When the targeted
-  sensor declares execution.blocking=false (or omits it), runStart
-  emits verdict=error, metadata.cause=not_blocking and points the user
-  to /run-sensor instead.
+  Symmetric to /run-sensor refusing blocking sensors: /start-sensor refuses
+  to detach a sensor whose execution.blocking=false or is absent. Such a
+  sensor's command will exit on its own and does not need a watcher; the
+  agent should use /run-sensor instead. Exit 2 with cause=not_blocking.
 evidence:
 - file: skills/start-sensor/scripts/start.go
-  line_start: 91
-  rationale: blocking flag inspection that produces not_blocking rejection.
+  kind: implementation
+  line_end: 95
+  line_start: 89
+  rationale: blocking guard inside runStart that returns cause=not_blocking when execution.blocking
+    is missing/false.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares execution.blocking boolean that discriminates /start-sensor
+    vs /run-sensor.
 expected_outcome:
   fixture:
-    exit_code: 2
-    stdout_lines:
-    - '{"sensor_id":"lint-go-vet","verdict":"error","severity":"high","evidence":[],"cost_actual":{"latency_ms":0},"metadata":{"kind":"failed","cause":"not_blocking"}}'
+    metadata:
+      cause: not_blocking
+      kind: failed
+    sensor_id: lint-go-vet-computational
+    severity: high
+    verdict: error
   invariants:
+  - metadata.cause == "not_blocking".
   - Exit code is 2.
-  - metadata.cause is "not_blocking".
-  - The subprocess is NOT spawned.
-  shape: One JSON line on stdout + exit code
+  - No subprocess spawned, no registry entry written.
+  shape: signal-jsonl
   side_effects: []
-  summary: One error Signal on stdout, exit code 2.
+  summary: Signal verdict=error, metadata.kind=failed, cause=not_blocking; exit 2.
 id: start-sensor-not-blocking-rejected
 journey_id: start-sensor
-name: /start-sensor refuses a sensor with execution.blocking=false
+name: Reject /start-sensor for a non-blocking sensor
 regression_priority: medium
 tags:
 - error-handling
-- validation
+- framework-start-sensor
 trigger:
   fixture:
     argv:
     - start-sensor
-    - lint-go-vet
-    sensor:
-      execution:
-        blocking: false
-        command: go vet ./...
-      id: lint-go-vet
-      output: single
-      type: computational
-  shape: CLI invocation
-  summary: /start-sensor on a sensor whose execution.blocking is false or absent.
+    - lint-go-vet-computational
+    env:
+      CLAUDE_PLUGIN_ROOT: /path/to/harness-framework
+  shape: cli-argv
+  summary: Invoke start-sensor with the id of a sensor whose execution.blocking is
+    false.
 version: 0.1.0

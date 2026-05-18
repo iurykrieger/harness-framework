@@ -1,60 +1,59 @@
 behavior:
   business_rules:
-  - execution.blocking=true ⇒ /run-sensor refuses.
-  - The runner emits no Signal in this rejection path.
-  - Exit code 2 (usage error class).
+  - Blocking sensors MUST be brought up via /start-sensor, not /run-sensor.
+  - The rejection MUST happen before subprocess spawn — no side effects.
+  - Exit code is 2 (usage / pre-check failure).
   summary: |
-    Before delegating to the orchestrator, run() inspects
-    execution.blocking. When true, it refuses with a guidance line on
-    stderr and returns exit code 2. Use /start-sensor for blocking
-    sensors instead.
+    After reading and parsing the sensor JSON, run-computational inspects
+    execution.blocking; if true it writes "sensor is blocking; use /start-sensor
+    instead" to stderr and exits 2 before any subprocess is spawned.
 description: |
-  /run-sensor invoked on a sensor whose execution.blocking field is true.
-  These sensors are meant for /start-sensor. The runner exits 2 with a
-  "use /start-sensor instead" hint and does NOT spawn the command.
+  /run-sensor refuses to spawn a sensor whose execution.blocking=true.
+  Blocking sensors do not terminate on their own (e.g. a long-running web
+  server, a queue consumer) and must be brought up via /start-sensor so the
+  registry tracks them and a watcher tails signals.log. The runner aborts
+  with exit code 2 and an explicit "use /start-sensor instead" diagnostic
+  on stderr.
 evidence:
 - file: skills/run-sensor/scripts/run-computational.go
+  kind: implementation
+  line_end: 111
   line_start: 106
-  rationale: Inspects sensor execution.blocking flag and refuses with exit 2 before
-    delegating.
+  rationale: Inspects execution.blocking after parsing the sensor JSON and refuses
+    with exit 2.
+- file: skills/run-sensor/scripts/run-inferential.go
+  kind: implementation
+  line_end: 142
+  line_start: 136
+  rationale: Same guard on the inferential path.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares execution.blocking boolean discriminator that distinguishes
+    /run-sensor from /start-sensor.
 expected_outcome:
   fixture:
     exit_code: 2
-    stderr_match: sensor is blocking; use /start-sensor instead
-    stdout_lines: []
+    stderr_substring: use /start-sensor instead
+    stdout: ""
   invariants:
   - Exit code is 2.
-  - No JSON Signal on stdout.
-  - Subprocess is NOT spawned.
-  shape: stderr line + exit code
+  - Stderr contains the "use /start-sensor instead" hint.
+  - No subprocess of the sensor's command is spawned.
+  shape: cli-exit
   side_effects: []
-  summary: |
-    Empty stdout, "error: sensor is blocking; use /start-sensor instead"
-    on stderr, exit code 2.
+  summary: Process exits 2 with a clear stderr diagnostic; nothing on stdout.
 id: run-sensor-blocking-rejected
 journey_id: run-sensor
-name: /run-sensor refuses a sensor with execution.blocking=true
-regression_priority: medium
+name: Reject a blocking sensor with use-/start-sensor advice
+regression_priority: high
 tags:
 - error-handling
-- validation
+- framework-run-sensor
 trigger:
   fixture:
     argv:
     - run-computational
-    - dev-server
-    sensor:
-      execution:
-        blocking: true
-        command: npm run dev
-        output_parsing:
-          patterns:
-          - regex: ready on (.+)
-            verdict: pass
-      id: dev-server
-      output: stream
-      type: computational
-  shape: CLI invocation
-  summary: |
-    /run-sensor invoked on a sensor with execution.blocking=true.
+    - serve-app-blocking
+  shape: cli-argv
+  summary: Invoke run-computational with the id of a sensor declaring execution.blocking=true.
 version: 0.1.0

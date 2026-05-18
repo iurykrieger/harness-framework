@@ -1,48 +1,77 @@
 behavior:
   business_rules:
-  - All three flags are required.
-  - The output is one JSON document on stdout.
-  - The function is read-only.
+  - Documents are capped at 16KB to keep the output bounded.
+  - Template previews are capped at 4KB.
+  - The .git, node_modules, and .cache directories are skipped during walk.
+  - 'Failing-step localization is opportunistic: when metadata.steps[] is present,
+    the last fail/error step is surfaced as failing_step.'
   summary: |
-    run() reads the three inputs, scans the project for setup-relevant
-    templates (.env.example, docker-compose, ...), and assembles them
-    into a single JSON document on stdout. No side-effects.
+    The script reads the failing signal and sensor JSON, walks the project
+    root once to find docs and *.example files (skipping .git / node_modules /
+    .cache), truncates them, and emits a single pretty-printed JSON
+    document on stdout.
 description: |
-  Step 1 of /heal-sensor. The diagnose script reads the failing Signal,
-  the failing sensor, and project state, then emits a single JSON
-  document grouping signal + sensor + docs + templates so the next
-  step (LLM-driven plan synthesis) has a deterministic input.
+  Step 1 of /heal-sensor. diagnose reads (failing Signal JSON, failing
+  sensor JSON, project root) and emits a JSON document containing the
+  signal, the sensor, every recognised root-level doc (README/CLAUDE/
+  AGENTS/GEMINI/CONTRIBUTING, truncated to 16KB), and every "*.example"
+  template (preview truncated to 4KB). This becomes the prompt context
+  the agent uses to fill in the Setup Plan slots.
 evidence:
 - file: skills/heal-sensor/scripts/diagnose.go
-  line_start: 34
-  rationale: diagnose run() — collects signal/sensor/docs/templates into the diagnosis
-    JSON.
+  kind: implementation
+  line_end: 82
+  line_start: 32
+  rationale: Entry point that collects signal/sensor/documents/templates and emits
+    the JSON bundle.
+- file: skills/heal-sensor/scripts/diagnose.go
+  kind: implementation
+  line_end: 119
+  line_start: 84
+  rationale: readDocuments / listTemplates / truncate helpers that bound the output.
+- file: schemas/signal.yaml
+  kind: contract
+  rationale: Declares the Signal schema the input file conforms to.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_lines:
-    - '{"signal":{"verdict":"error","metadata":{"cause":"missing_env"}},"sensor":{"id":"integration-test","requires":[{"kind":"env","name":"DATABASE_URL"}]},"docs":[],"templates":[".env.example"]}'
+    stdout_object:
+      documents:
+        README.md: '# Project'
+      failed_sensor:
+        id: my-sensor
+      signal:
+        verdict: fail
+      templates:
+      - path: /tmp/projectH/.env.example
+        preview: DB_URL=postgres://...
   invariants:
   - Exit code is 0.
-  - The output is a single JSON object.
-  - The function performs no writes.
-  shape: One JSON document on stdout + exit code
+  - documents.<filename> is present for every recognised doc file.
+  - templates is an array (possibly empty when no .example files exist).
+  shape: stdout-json
   side_effects: []
-  summary: One JSON document on stdout, exit code 0.
+  summary: Pretty-printed JSON with signal/failed_sensor/documents/templates fields;
+    exit 0.
 id: heal-sensor-diagnose-context
 journey_id: heal-sensor
-name: heal-sensor diagnose emits the input context for the Setup Plan
-regression_priority: medium
+name: Diagnose emits the deterministic input bundle for setup planning
+regression_priority: critical
 tags:
-- read-only
 - happy-path
+- framework-heal-sensor
 trigger:
   fixture:
     argv:
     - diagnose
     - --signal=/tmp/failing-signal.json
-    - --sensor=/repo/.harness/sensors/integration-test.yaml
-    - --root=/repo
-  shape: CLI invocation
-  summary: diagnose --signal=…/signal.json --sensor=…/sensor.yaml --root=/repo
+    - --sensor=/tmp/failing-sensor.yaml
+    - --root=/tmp/projectH
+    project_state:
+      docs:
+      - README.md
+      templates:
+      - .env.example
+  shape: cli-argv
+  summary: Run diagnose with --signal, --sensor, and --root pointing at a project
+    containing a README and a .env.example.
 version: 0.1.0

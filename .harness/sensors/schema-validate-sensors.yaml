@@ -1,0 +1,67 @@
+cost:
+  class: cheap
+  compute:
+    cpu: low
+    memory_mb: 512
+  latency:
+    p50_ms: 5000
+    p95_ms: 30000
+    timeout_ms: 180000
+description: On pull-request, validates every sensor YAML under `.harness/sensors/`
+  against `schemas/sensor.yaml` by re-running the persister into a throwaway directory.
+  Auto-detected from .github/workflows/test.yml job "sensors" step "Validate every
+  sensor YAML against schemas/sensor.yaml". Output is stream because the persister
+  prints one error tree per invalid sensor on stderr (captured via 2>&1) while staying
+  silent on success; the loop produces one line per sensor name as an audit trail.
+  Regulates architecture-fitness.
+determinism: high
+execution:
+  command: |
+    set -uo pipefail
+    tmp=$(mktemp -d)
+    fail=0
+    for f in .harness/sensors/*.yaml; do
+      id=$(basename "$f" .yaml)
+      if go run -tags=write_sensor ./skills/detect-sensors/scripts \
+           --out="$tmp" --schemas-dir="$(pwd)/schemas" "$f" >/dev/null 2>&1; then
+        echo "schema-validate sensor=$id verdict=pass"
+      else
+        echo "schema-validate sensor=$id verdict=fail"
+        fail=1
+      fi
+    done
+    rm -rf "$tmp"
+    exit $fail
+  exit_code_map:
+  - exit_code: 0
+    severity: info
+    verdict: pass
+  - exit_code: '*'
+    severity: high
+    verdict: fail
+  output_parsing:
+    patterns:
+    - captures:
+        excerpt: 1
+      regex: ^schema-validate sensor=(\S+) verdict=fail
+      severity: high
+      verdict: fail
+    - captures:
+        excerpt: 1
+      regex: ^schema-validate sensor=(\S+) verdict=pass
+      severity: info
+      verdict: pass
+id: schema-validate-sensors
+kind: assertion
+name: Schema-validate every .harness/sensors/*.yaml
+output: stream
+phase: pre-merge
+regulation: architecture-fitness
+triggers:
+- "on": pull-request
+- "on": agent-request
+type: computational
+use_cases:
+- detect-sensors-sensor-success
+- detect-sensors-sensor-schema-fail
+version: 0.1.0

@@ -1,82 +1,90 @@
 behavior:
   business_rules:
-  - --out is required.
-  - Exactly one positional payload path is required.
-  - The payload is read with sigs.k8s.io/yaml (YAML and JSON both work).
-  - Atomic write — partial files are never observable.
+  - The draft is converted to canonical YAML (via sigs.k8s.io/yaml) on write.
+  - The canonical path is <out>/.harness/stack.yaml.
+  - Comments in the draft are NOT preserved (yaml round-trip strips them).
+  - Exit code is 0.
   summary: |
-    run() parses --out and the positional payload, reads it as JSON
-    (via YAML round-trip), and delegates to stack.ValidateAndPersist
-    which performs schema validation, runs both cross-check functions,
-    and writes the file atomically with os.Rename.
+    write-stack reads the draft, calls stack.ValidateAndPersist (schema +
+    cross-checks), which writes canonical YAML to .harness/stack.yaml.
+    The absolute path is printed on stdout; exit code is 0.
 description: |
-  Happy-path of /detect-sensors Phase A. The draft stack payload
-  validates against schemas/stack.yaml and passes both cross-checks
-  (produced_by and journey_archetypes). The file is written atomically
-  to <project-root>/.harness/stack.yaml.
+  Phase A of /detect-sensors writes a draft stack payload (JSON/YAML) to
+  <project>/.harness/stack.yaml. write-stack delegates validation +
+  cross-checks (CheckProducedBy, CheckJourneyArchetypes) to
+  stack.ValidateAndPersist; on success it prints the absolute path and
+  returns exit 0.
 evidence:
 - file: skills/detect-sensors/scripts/write-stack.go
-  line_start: 33
-  rationale: run() entry point that delegates to stack.ValidateAndPersist.
-- file: skills/detect-sensors/scripts/write-stack.go
-  line_start: 73
-  rationale: Stdout path emission on success.
+  kind: implementation
+  line_end: 76
+  line_start: 29
+  rationale: Entry point that reads the draft and delegates to stack.ValidateAndPersist.
+- file: lib/stack/persist.go
+  kind: implementation
+  rationale: ValidateAndPersist implementation that validates + cross-checks + writes
+    canonical YAML.
+- file: schemas/stack.yaml
+  kind: contract
+  rationale: Declares the stack schema the draft must satisfy.
 expected_outcome:
   fixture:
     exit_code: 0
-    filesystem:
-      /repo/.harness/stack.yaml: validated stack payload
-    stdout_line: /repo/.harness/stack.yaml
+    stdout_substring: /.harness/stack.yaml
   invariants:
   - Exit code is 0.
-  - Stdout contains the absolute file path.
-  - The destination file matches the validated payload.
-  shape: stdout line + exit code + filesystem change
+  - <out>/.harness/stack.yaml exists after the run.
+  shape: cli-exit
   side_effects:
-  - Creates or overwrites .harness/stack.yaml atomically.
-  summary: Absolute path of the written file on stdout, exit code 0.
+  - <out>/.harness/stack.yaml is created or overwritten.
+  summary: stdout contains the absolute path; exit 0; .harness/stack.yaml exists.
 id: detect-sensors-stack-success
 journey_id: detect-sensors
-name: write-stack persists a valid stack payload atomically
+name: Persist a valid stack draft via write-stack
 regression_priority: critical
 tags:
 - happy-path
-- persistence
+- side-effects
+- framework-detect-sensors
 trigger:
   fixture:
     argv:
     - write-stack
-    - --out=/repo
+    - --out=/tmp/projectE
+    - --schemas-dir=/abs/path/to/schemas
     - /tmp/draft-stack.yaml
-    draft:
+    draft_payload:
       archetypes:
-      - cli-tool
+      - http-api
       components:
       - evidence:
-        - file: go.mod
-          rationale: module file
-        name: gomod
-        role: package-manager
+        - file: .github/workflows/test.yml
+          rationale: CI runs the tests.
+        name: testing
+        role: test-runner
+        version: 1.25.3
       journeys:
-      - archetype: cli-tool
+      - archetype: http-api
         entry_points:
-        - command: my-cmd
+        - command: POST /charges
           evidence:
-            file: cmd/main.go
-            rationale: entry
-          kind: cli-command
-        id: my-cmd
-        name: My CLI
-        summary: A CLI command.
+            file: src/charges/charges.controller.ts
+            rationale: handler
+          kind: http
+        id: charges
+        name: Issue charge
+        summary: Issue a charge.
       languages:
       - name: go
         version: 1.25.3
       log_shapes:
       - format: plain
-        id: app-log
+        id: go-test-verbose
         produced_by:
-        - gomod
-      purpose: A demo project.
-  shape: CLI invocation
-  summary: write-stack invoked with a valid draft payload and a writable --out directory.
+        - testing
+      purpose: Example service.
+      version: 0.2.0
+  shape: cli-argv
+  summary: Run write-stack with --out=<project> against a schema-valid draft whose
+    journeys and producers cross-reference resolved components.
 version: 0.1.0

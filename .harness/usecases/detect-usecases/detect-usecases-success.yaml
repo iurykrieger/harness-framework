@@ -1,54 +1,84 @@
 behavior:
   business_rules:
-  - The destination layout is <out>/<journey_id>/<id>.yaml.
-  - Both --out and --project-root are required.
-  - The output is canonical YAML written atomically.
+  - The canonical write path is <out>/<journey_id>/<id>.yaml.
+  - Stack must be present; otherwise the script returns exit 2 stack_missing.
+  - Comments in the draft are NOT preserved through canonical YAML write.
   summary: |
-    run() reads the draft, loads stack.yaml, and delegates to
-    usecase.ValidateAndPersist which performs schema validation,
-    journey_reference cross-check, and CheckEvidenceFiles before
-    writing the file. On success it prints the absolute path to stdout.
+    run() reads the draft, loads stack.yaml from <project-root>/.harness/,
+    and calls usecase.ValidateAndPersist (schema + journey cross-check +
+    evidence existence). On success it prints the absolute path and
+    returns exit 0.
 description: |
-  Happy-path of write-usecase. The draft validates against
-  schemas/usecase.yaml, journey_id is found in stack.journeys[], every
-  evidence[].file exists on disk under projectRoot, and the YAML is
-  written to the per-journey subdirectory.
+  Happy path for write-usecase: a schema-valid draft whose journey_id
+  matches some stack.journeys[].id and every evidence[].file exists on
+  disk under projectRoot. usecase.ValidateAndPersist writes canonical
+  YAML to <out>/<journey_id>/<id>.yaml; the script prints the absolute
+  path and returns exit 0.
 evidence:
 - file: skills/detect-usecases/scripts/write-usecase.go
+  kind: implementation
+  line_end: 88
   line_start: 36
-  rationale: run() entry — argument parsing, stack load, usecase.ValidateAndPersist
-    delegation, stdout output.
+  rationale: Entry point that reads the draft, loads stack, and delegates to usecase.ValidateAndPersist.
+- file: lib/usecase/persist.go
+  kind: implementation
+  rationale: ValidateAndPersist implementation that validates + cross-checks + writes
+    canonical YAML.
+- file: schemas/usecase.yaml
+  kind: contract
+  rationale: Declares the UseCase schema the draft must satisfy.
 expected_outcome:
   fixture:
     exit_code: 0
-    filesystem:
-      /repo/.harness/usecases/my-journey/create-foo.yaml: canonical YAML of the validated
-        UseCase
-    stdout_line: /repo/.harness/usecases/my-journey/create-foo.yaml
+    stdout_substring: /user-registration/create-user-with-email.yaml
   invariants:
   - Exit code is 0.
-  - The per-journey subdirectory is created on first write.
-  shape: stdout line + exit code + filesystem
+  - <out>/<journey_id>/<id>.yaml exists.
+  shape: cli-exit
   side_effects:
-  - Creates or overwrites <out>/<journey_id>/<id>.yaml.
-  summary: Absolute output path on stdout, exit code 0.
+  - <out>/<journey_id>/<id>.yaml is created or overwritten with canonical YAML.
+  summary: stdout contains the absolute path under <journey_id>/; exit 0.
 id: detect-usecases-success
 journey_id: detect-usecases
-name: write-usecase persists a valid UseCase under <out>/<journey_id>/<id>.yaml
+name: Persist a valid usecase draft via write-usecase
 regression_priority: critical
 tags:
 - happy-path
-- persistence
+- side-effects
+- framework-detect-usecases
 trigger:
   fixture:
     argv:
     - write-usecase
-    - --out=/repo/.harness/usecases
-    - --project-root=/repo
-    - --schemas-dir=/plugin/schemas
-    - /tmp/draft-usecase.yaml
-    state:
-      .harness/stack.yaml: contains journey id=my-journey
-  shape: CLI invocation
-  summary: write-usecase with a valid draft.
+    - --out=/tmp/projectF/.harness/usecases
+    - --project-root=/tmp/projectF
+    - --schemas-dir=/abs/path/to/schemas
+    - /tmp/draft.yaml
+    draft_payload:
+      behavior:
+        summary: Validate, persist, emit.
+      description: POST /users with a valid email creates an account.
+      evidence:
+      - file: src/users/users.controller.ts
+        rationale: handler
+      expected_outcome:
+        fixture:
+          body:
+            id: uuid
+          status: 201
+        shape: HTTP response
+        summary: 201 with user object.
+      id: create-user-with-email
+      journey_id: user-registration
+      name: Create user with valid email
+      trigger:
+        fixture:
+          body:
+            email: alice@example.com
+        shape: HTTP request
+        summary: POST /users with body.email.
+      version: 0.1.0
+  shape: cli-argv
+  summary: Run write-usecase with --out=<dir>, --project-root=<dir>, a schema-valid
+    draft, and a stack.yaml that declares the journey_id.
 version: 0.1.0

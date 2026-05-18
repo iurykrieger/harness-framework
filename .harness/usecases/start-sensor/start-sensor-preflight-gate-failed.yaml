@@ -1,69 +1,74 @@
 behavior:
   business_rules:
-  - PreflightGate is invoked on the target before each subprocess spawn.
-  - cause is "preflight_failed".
-  - Subprocess is NOT spawned, no registry write.
-  - Live deps spawned earlier are detached cleanly.
+  - The gate runs BEFORE any spawn for the requested sensor's command.
+  - metadata.cause == "preflight_failed".
+  - metadata.missing_tools / missing_envs / missing_contexts list the blockers.
+  - Already-attached blocking deps are detached on failure.
+  - Exit code is 1.
   summary: |
-    orchestrator.PreflightGate evaluates requires[kind ∈ {tool,env,context}]
-    against PATH, the process env, and the filesystem. On failure, it
-    returns the canonical Signal (kind=failed, cause=preflight_failed)
-    plus a "failed" flag. runStart detaches live deps, optionally merges
-    its own diagnose block into metadata, and relays the Signal.
+    orchestrator.PreflightGate evaluates requires[] against the live env and
+    PATH. Missing entries produce the canonical signal (metadata.kind=failed,
+    cause=preflight_failed). runStart merges Diagnose, detaches deps, and
+    returns 1 with that Signal.
 description: |
-  Before spawning the subprocess, /start-sensor invokes
-  orchestrator.PreflightGate on the target. When a tool, env var, or
-  context is missing, the gate returns the canonical
-  metadata.cause=preflight_failed Signal; runStart relays it (merging
-  bootstrap diagnostics) and aborts the spawn.
+  After deps pass, runStart invokes orchestrator.PreflightGate(target, env,
+  output) on the requested sensor. If any requires[kind ∈ {env,tool,context}]
+  entry is unmet, PreflightGate returns the canonical "preflight_failed"
+  signal which runStart merges with the Diagnose block and emits as the
+  final Signal. Any already-attached blocking deps are detached. Exit 1.
 evidence:
 - file: skills/start-sensor/scripts/start.go
-  line_start: 145
-  rationale: orchestrator.PreflightGate invocation that produces the canonical preflight_failed
-    Signal.
+  kind: implementation
+  line_end: 152
+  line_start: 137
+  rationale: Preflight gate invocation in runStart and Diagnose merge on failure.
+- file: lib/orchestrator/gate.go
+  kind: implementation
+  rationale: PreflightGate canonical implementation that builds the missing-env/tool/context
+    lists.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares requires[] entries with kind ∈ {env, tool, context, sensor}
+    consumed by the gate.
 expected_outcome:
   fixture:
-    exit_code: 1
-    stdout_lines:
-    - '{"sensor_id":"dev-server-needs-node","verdict":"error","severity":"high","evidence":[{"rationale":"requires[kind=tool].name=node
-      not on PATH"}],"cost_actual":{"latency_ms":4},"metadata":{"kind":"failed","cause":"preflight_failed","missing_tools":["node"]}}'
+    metadata:
+      cause: preflight_failed
+      kind: failed
+      missing_tools:
+      - docker
+    sensor_id: serve-app-blocking
+    severity: high
+    verdict: error
   invariants:
-  - metadata.cause is "preflight_failed".
-  - No subprocess is spawned.
-  - Any live deps were detached before returning.
-  shape: One JSON line on stdout + exit code
+  - metadata.cause == "preflight_failed".
+  - missing_tools / missing_envs / missing_contexts in metadata reflect the actual
+    unmet requires entries.
+  - No subprocess spawned, no registry entry written.
+  - Exit code is 1.
+  shape: signal-jsonl
   side_effects: []
-  summary: One Signal on stdout, verdict=error, metadata.cause=preflight_failed, exit
-    code 1.
+  summary: Signal verdict=error, metadata.kind=failed, cause=preflight_failed, with
+    missing_tools=["docker"]; exit 1.
 id: start-sensor-preflight-gate-failed
 journey_id: start-sensor
-name: /start-sensor aborts when requires[kind ∈ {tool,context,env}] is unsatisfied
+name: Refuse to start when requires[env|tool|context] gate fails
 regression_priority: high
 tags:
 - error-handling
-- preflight
-- gate
+- framework-start-sensor
 trigger:
   fixture:
     argv:
     - start-sensor
-    - dev-server-needs-node
+    - serve-app-blocking
     env:
-      PATH: /usr/bin:/bin
+      PATH: /usr/bin
     sensor:
-      execution:
-        blocking: true
-        command: node server.js
-        output_parsing:
-          patterns:
-          - regex: listening on (.+)
-            verdict: pass
-      id: dev-server-needs-node
-      output: stream
       requires:
       - kind: tool
-        name: node
-      type: computational
-  shape: CLI invocation
-  summary: /start-sensor on a sensor whose requires[] gate is not satisfied.
+        name: docker
+  shape: cli-argv
+  summary: Invoke start-sensor on a sensor whose requires[].tool names a binary not
+    on PATH.
 version: 0.1.0

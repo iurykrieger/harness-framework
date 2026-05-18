@@ -1,62 +1,59 @@
 behavior:
   business_rules:
-  - exit_code_map drives the verdict for the exit code observed.
-  - Unmapped exit codes default to verdict=error (a sensor execution failure).
-  - The runner's exit code reflects whether the sensor ran, not the verdict.
+  - exit_code_map keys are matched as strings against the actual exit code.
+  - A wildcard "*" entry can serve as the default fall-through verdict.
+  - Aggregate verdict is the max-rank of stream verdict and exit-code-mapped verdict.
   summary: |
-    The runner spawns the subprocess, waits for it to exit, and looks up
-    the exit code in exit_code_map to derive the aggregate verdict and
-    severity. The runner's own exit code stays 0 because the sensor ran
-    successfully and emitted its aggregate.
+    The runner runs the command, observes exit_code=1, looks up "1" in the
+    exit_code_map, and uses that verdict/severity in signal.Aggregate.
 description: |
-  /run-sensor on a sensor whose execution.command exits non-zero, where
-  exit_code_map declares that this code is a non-fatal warning. The
-  aggregate verdict is warn, exit code 0 (the runner ran successfully).
+  When a computational sensor's execution.exit_code_map maps a non-zero exit
+  code to verdict=warn (e.g. a linter that exits 1 on style warnings), the
+  aggregate Signal carries verdict=warn even though the subprocess exit was
+  non-zero. signal.Aggregate combines this with stream verdict (here all
+  pass) and warn wins because warn > pass on the verdict rank.
 evidence:
-- file: lib/signal/aggregate.go
-  rationale: exit_code_map resolution that produces verdict/severity for the aggregate.
 - file: skills/run-sensor/scripts/run-computational.go
-  line_start: 72
-  rationale: Entry point that drives the orchestrator pipeline.
+  kind: implementation
+  line_end: 120
+  line_start: 56
+  rationale: Delegates to orchestrator.RunWithDepsRoot which applies the exit_code_map
+    via signal.MapExitCode.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares the ExitCodeMapEntry shape (exit_code, verdict, severity) the
+    runner consumes.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_lines:
-    - '{"sensor_id":"go-vet-with-warnings","verdict":"warn","severity":"low","evidence":[],"cost_actual":{"latency_ms":15},"metadata":{"kind":"aggregate","exit_code":2}}'
+    final_aggregate:
+      metadata:
+        exit_code: 1
+        kind: aggregate
+        output_mode: stream
+        timed_out: false
+      severity: low
+      verdict: warn
   invariants:
-  - Aggregate verdict equals exit_code_map[2].verdict.
-  - Aggregate severity equals exit_code_map[2].severity.
-  - Runner exit code is 0 because the sensor ran to completion.
-  shape: One JSON line on stdout + exit code
+  - aggregate.verdict comes from the user-declared exit_code_map entry for that exit
+    code.
+  - The runner exits 0 because the aggregate Signal was emitted successfully (a warn
+    aggregate is not a runner error).
+  shape: signal-jsonl
   side_effects: []
-  summary: One aggregate Signal verdict=warn severity=low on stdout, exit code 0.
+  summary: Aggregate Signal with verdict=warn and metadata.exit_code=1.
 id: run-sensor-exit-code-map-warn
 journey_id: run-sensor
-name: Sensor exit code maps to verdict=warn via exit_code_map
+name: Aggregate verdict downgraded to warn via exit_code_map
 regression_priority: high
 tags:
-- happy-path
-- exit-code-map
-- computational
+- validation
+- framework-run-sensor
 trigger:
   fixture:
     argv:
     - run-computational
-    - go-vet-with-warnings
-    sensor:
-      execution:
-        command: sh -c 'echo warning; exit 2'
-        exit_code_map:
-        - exit_code: 0
-          verdict: pass
-        - exit_code: 2
-          severity: low
-          verdict: warn
-      id: go-vet-with-warnings
-      output: single
-      type: computational
-  shape: CLI invocation
-  summary: |
-    /run-sensor invoked on a sensor whose command exits 2, with
-    exit_code_map mapping exit 2 to verdict=warn, severity=low.
+    - lint-style-computational
+  shape: cli-argv
+  summary: Invoke run-computational with a sensor whose exit_code_map declares "1
+    → warn".
 version: 0.1.0

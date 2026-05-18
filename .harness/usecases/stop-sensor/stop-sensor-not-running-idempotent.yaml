@@ -1,49 +1,58 @@
 behavior:
   business_rules:
-  - Stopping an absent sensor is not an error.
-  - Verdict is warn (advisory) not error.
-  - Exit code is 0 (idempotent success).
+  - Stopping a sensor that is not running MUST be idempotent (exit 0).
+  - verdict is warn (not error) because state is consistent.
+  - metadata.kind == "not_running".
   summary: |
-    Inside the registry file lock, FindEntries returns an empty list.
-    runStop bails out cleanly, emitting kind=not_running with verdict=warn
-    and exit code 0 — the operation succeeded in its idempotent contract.
+    Inside the file lock, FindEntries(sensorID) returns empty. runStop
+    releases the lock and emits a warn/not_running Signal with rationale
+    "no live entry for ..." then returns exit 0.
 description: |
-  /stop-sensor on an id that has no entry in the registry returns
-  verdict=warn, metadata.kind=not_running, exit code 0. The skill is
-  idempotent — stopping a non-running sensor is not an error.
+  When the registry file exists but contains no entry for the requested
+  sensor id (no live run), /stop-sensor returns exit code 0 and a Signal
+  verdict=warn, metadata.kind=not_running. This is the idempotency
+  contract: stopping something that is not running succeeds with an
+  advisory warn, so the agent can safely retry /stop-sensor in cleanup.
 evidence:
 - file: skills/stop-sensor/scripts/stop.go
+  kind: implementation
+  line_end: 172
   line_start: 159
-  rationale: Idempotent not_running branch after the locked search returns no entry.
+  rationale: not_running emission path when FindEntries returns nothing for the requested
+    sensor id.
+- file: lib/registry/state.go
+  kind: contract
+  rationale: RunningSensorState.FindEntries / FindEntryByRunID contract used by the
+    entry resolution.
 expected_outcome:
   fixture:
-    exit_code: 0
-    stdout_lines:
-    - '{"sensor_id":"dev-server","verdict":"warn","severity":"low","evidence":[],"cost_actual":{"latency_ms":3},"metadata":{"kind":"not_running"}}'
+    metadata:
+      kind: not_running
+    sensor_id: serve-app-blocking
+    severity: low
+    verdict: warn
   invariants:
   - Exit code is 0.
-  - verdict is "warn".
-  - metadata.kind is "not_running".
-  shape: One JSON line on stdout + exit code
-  side_effects:
-  - None — registry is unchanged.
-  summary: One Signal on stdout, verdict=warn, metadata.kind=not_running, exit code
-    0.
+  - metadata.kind == "not_running".
+  - The registry file is untouched.
+  shape: signal-jsonl
+  side_effects: []
+  summary: Signal verdict=warn, metadata.kind=not_running; exit 0.
 id: stop-sensor-not-running-idempotent
 journey_id: stop-sensor
-name: /stop-sensor on a sensor with no live entry returns warn (idempotent success)
+name: Stop a sensor with no live registry entry returns warn idempotently
 regression_priority: high
 tags:
 - idempotent
-- happy-path
+- framework-stop-sensor
 trigger:
   fixture:
     argv:
     - stop-sensor
-    - dev-server
-    state:
-      .harness/runtime/running_sensors.json: valid file, contains entries for other
-        sensors only
-  shape: CLI invocation
-  summary: /stop-sensor with an id present in .harness/sensors/ but absent from running_sensors.json.
+    - serve-app-blocking
+    registry_state:
+      entries: []
+      file_exists: true
+  shape: cli-argv
+  summary: Invoke stop-sensor for a sensor id that has no entry in running_sensors.json.
 version: 0.1.0

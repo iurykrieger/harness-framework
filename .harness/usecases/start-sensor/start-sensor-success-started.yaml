@@ -1,85 +1,76 @@
 behavior:
   business_rules:
-  - execution.blocking MUST be true.
-  - Subprocess is spawned with Setsid so it survives the runner.
-  - stdout/stderr is redirected to .harness/runtime/<id>/<run-id>/raw.log.
-  - The watcher binary is spawned to tail raw.log into signals.log.
-  - The registry entry held_by contains exactly one entry of kind=manual.
+  - The subprocess is spawned in its own session (Setsid).
+  - The registry entry's held_by contains exactly one {kind:"manual"} entry on success.
+  - run_id format is "<pid>-<uuid8>" deriving deterministically from the spawned PID.
+  - log_dir is .harness/runtime/<sensor_id>/<run_id>.
+  - Watcher PID is recorded alongside subprocess PID.
   summary: |
-    runStart resolves the sensor, validates schema, confirms blocking,
-    runs deps + preflight gate + prepare[], spawns the subprocess
-    detached (Setsid, raw.log redirect), spawns the watcher subprocess,
-    writes the registry entry under file lock, and emits a started Signal.
+    runStart resolves the sensor, validates schema, confirms blocking=true,
+    runs the dep DAG via orchestrator.RunDeps, runs target prepare[], spawns
+    detached + watcher under a file lock, writes the registry entry, and
+    emits the started Signal carrying pid + watcher_pid + log_dir.
 description: |
-  Happy-path of /start-sensor. The target sensor declares
-  execution.blocking=true, the requires[] gate passes, prepare[] succeeds,
-  the subprocess is spawned detached with its raw.log redirected, the
-  watcher subprocess is spawned to tail raw.log into signals.log, the
-  registry entry is written with held_by:[{kind:manual}], and a Signal
-  verdict=pass, metadata.kind=started is emitted on stdout.
+  Happy path for /start-sensor: the sensor declares execution.blocking=true,
+  its deps resolve and pass, requires[env|tool|context] are satisfied, prepare[]
+  succeeds, and the runner spawns the subprocess in a detached session
+  (Setsid). The runner stages raw.log, derives a composite run_id (<pid>-<uuid8>),
+  renames raw.log into <run_id>/raw.log, spawns the watcher, writes the
+  registry entry with held_by=[{kind:manual}], and emits a Signal verdict=pass
+  metadata.kind=started.
 evidence:
 - file: skills/start-sensor/scripts/start.go
-  line_start: 385
-  rationale: Builds and emits the started Signal after registry write succeeds.
-- file: skills/start-sensor/scripts/start.go
-  line_start: 189
-  rationale: registry.WithFileLock body — spawn detached + watcher + registry persist.
+  kind: implementation
+  line_end: 391
+  line_start: 50
+  rationale: runStart performs the full /start-sensor lifecycle including spawn, watcher,
+    registry, and started signal emission.
+- file: lib/registry/state.go
+  kind: contract
+  rationale: RunningSensorEntry shape that persists in the registry file.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares execution.blocking + execution.command + graceful_timeout_ms
+    consumed by /start-sensor.
 expected_outcome:
   fixture:
-    exit_code: 0
-    filesystem:
-      .harness/runtime/dev-server/42-abcd1234/raw.log: exists
-      .harness/runtime/dev-server/42-abcd1234/signals.log: exists
-      .harness/runtime/running_sensors.json: contains entry for sensor_id=dev-server,
-        pid=54321, held_by=[{kind:manual}]
-    stdout_lines:
-    - '{"sensor_id":"dev-server","verdict":"pass","severity":"info","run_id":"42-abcd1234","evidence":[],"cost_actual":{"latency_ms":80},"metadata":{"kind":"started","pid":54321,"watcher_pid":54322,"log_dir":".harness/runtime/dev-server/42-abcd1234","next_cursor":0}}'
+    metadata:
+      kind: started
+      log_dir: .harness/runtime/serve-app-blocking/42-abcd1234
+      next_cursor: 0
+      pid: 42
+      watcher_pid: 43
+    sensor_id: serve-app-blocking
+    severity: info
+    verdict: pass
   invariants:
-  - verdict is "pass".
-  - metadata.kind is "started".
-  - registry entry exists with held_by containing {kind:"manual"}.
-  - subprocess PID is alive (kill -0 succeeds).
-  - watcher PID is alive.
-  shape: One JSON line on stdout + exit code + filesystem changes
+  - verdict == "pass" and metadata.kind == "started".
+  - metadata.pid > 0.
+  - metadata.watcher_pid > 0.
+  - run_id ends with the spawned subprocess PID prefix.
+  shape: signal-jsonl
   side_effects:
-  - Creates .harness/runtime/<id>/<run-id>/{raw.log,signals.log}.
-  - Writes .harness/runtime/running_sensors.json.
-  - Spawns one detached subprocess plus one watcher subprocess.
-  summary: |
-    One Signal on stdout, verdict=pass, metadata.kind=started, with
-    metadata.pid, metadata.watcher_pid, metadata.log_dir, and
-    metadata.next_cursor=0. Exit code 0. A new entry exists in
-    .harness/runtime/running_sensors.json.
+  - <projectRoot>/.harness/runtime/running_sensors.json gains one new entry.
+  - <projectRoot>/.harness/runtime/<id>/<run_id>/raw.log + signals.log + watcher.log
+    are created.
+  summary: Signal verdict=pass, metadata.kind=started, with pid/watcher_pid/log_dir/next_cursor
+    metadata.
 id: start-sensor-success-started
 journey_id: start-sensor
-name: Blocking sensor spawned detached, watcher attached, registry entry written
+name: Start a blocking sensor and register the run
 regression_priority: critical
 tags:
 - happy-path
-- blocking
 - side-effects
+- framework-start-sensor
 trigger:
   fixture:
     argv:
     - start-sensor
-    - dev-server
+    - serve-app-blocking
     env:
-      CLAUDE_PLUGIN_ROOT: /plugin
-      HARNESS_REGISTRY_ROOT: /repo
-    sensor:
-      execution:
-        blocking: true
-        command: npm run dev
-        graceful_timeout_ms: 5000
-        output_parsing:
-          patterns:
-          - regex: ready on (.+)
-            verdict: pass
-      id: dev-server
-      output: stream
-      type: computational
-  shape: CLI invocation
-  summary: |
-    User invokes /start-sensor with the id of a sensor whose
-    execution.blocking=true and whose requires[] are satisfied.
+      CLAUDE_PLUGIN_ROOT: /path/to/harness-framework
+      HARNESS_REGISTRY_ROOT: /tmp/projectC
+  shape: cli-argv
+  summary: Invoke start-sensor with the id of a valid blocking sensor.
 version: 0.1.0

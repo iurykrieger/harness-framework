@@ -1,67 +1,76 @@
 behavior:
   business_rules:
-  - The destination is <out>/<id>.yaml.
-  - The persisted YAML is canonical (sorted keys, deterministic order).
-  - Schema validation runs before any disk write.
+  - The persisted filename is <id>.yaml (no journey grouping on this path; that is
+    /create-sensor's job for a different output dir).
+  - Comments in the draft are NOT preserved through canonical YAML write.
+  - Exit code is 0.
   summary: |
-    run() reads the draft, calls sensor.ValidateAndPersist which
-    enforces both the type and output discriminators, and writes the
-    YAML atomically. The output path is the persisted file's absolute
-    path.
+    write-sensor reads the draft, calls sensor.ValidateAndPersist with the
+    given OutDir, which validates against schemas/sensor.yaml and writes
+    canonical YAML to <OutDir>/<id>.yaml. The absolute path goes to stdout.
 description: |
-  Happy-path of /detect-sensors Phase B. The draft sensor validates
-  against schemas/sensor.yaml, sensor.ValidateAndPersist writes the
-  canonical YAML to <out>/<id>.yaml atomically. The absolute path is
-  echoed to stdout.
+  Phase B of /detect-sensors writes one sensor JSON/YAML per capability
+  inferred from stack archetypes. write-sensor delegates persistence to
+  sensor.ValidateAndPersist; on success it writes
+  <outDir>/<id>.yaml atomically and prints the absolute path on stdout.
+  Exit code 0.
 evidence:
 - file: skills/detect-sensors/scripts/write-sensor.go
-  line_start: 33
-  rationale: run() entry — argument parsing and delegation to sensor.ValidateAndPersist.
+  kind: implementation
+  line_end: 75
+  line_start: 29
+  rationale: Entry point that reads the draft and delegates to sensor.ValidateAndPersist.
+- file: lib/sensor/persist.go
+  kind: implementation
+  rationale: ValidateAndPersist that performs schema validation and atomic YAML write.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares the sensor schema each draft must satisfy.
 expected_outcome:
   fixture:
     exit_code: 0
-    filesystem:
-      /repo/.harness/sensors/lint-go-vet.yaml: canonical YAML of the validated sensor
-    stdout_line: /repo/.harness/sensors/lint-go-vet.yaml
+    stdout_substring: /lint-go-vet-computational.yaml
   invariants:
   - Exit code is 0.
-  - Destination file exists.
-  shape: stdout line + exit code + filesystem change
+  - <out>/<id>.yaml exists after the run.
+  shape: cli-exit
   side_effects:
-  - Creates or overwrites the destination atomically.
-  summary: Absolute path of the written sensor on stdout, exit code 0.
+  - <out>/<id>.yaml is created or overwritten with canonical YAML.
+  summary: stdout contains the absolute path; exit 0; the sensor file exists.
 id: detect-sensors-sensor-success
 journey_id: detect-sensors
-name: write-sensor persists a valid sensor draft atomically
+name: Persist a valid sensor draft via write-sensor
 regression_priority: critical
 tags:
 - happy-path
-- persistence
+- side-effects
+- framework-detect-sensors
 trigger:
   fixture:
     argv:
     - write-sensor
-    - --out=/repo/.harness/sensors
-    - /tmp/draft-sensor.yaml
-    draft:
+    - --out=/tmp/projectE/.harness/sensors
+    - /tmp/draft-lint.yaml
+    draft_payload:
       cost:
-        compute:
-          cpu_seconds: 5
-      description: Run go vet over the module.
+        compute: low
+        latency:
+          timeout_ms: 60000
+      description: Run `go vet ./...` over the repo.
       execution:
         command: go vet ./...
         exit_code_map:
         - exit_code: 0
+          severity: info
           verdict: pass
         - exit_code: 1
           severity: high
           verdict: fail
-      id: lint-go-vet
+      id: lint-go-vet-computational
       kind: observation
-      name: go vet
       output: single
       type: computational
       version: 0.1.0
-  shape: CLI invocation
-  summary: write-sensor invoked with a valid sensor draft.
+  shape: cli-argv
+  summary: Run write-sensor with --out=<dir> against a schema-valid sensor draft.
 version: 0.1.0

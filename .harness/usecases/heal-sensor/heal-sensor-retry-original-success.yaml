@@ -1,52 +1,58 @@
 behavior:
   business_rules:
-  - sensor.type=inferential selects the run_inferential build tag.
-  - Anything else (or absent) defaults to run_computational.
-  - CLAUDE_PLUGIN_ROOT is required.
-  - The child's stdout/stderr and exit code pass through.
+  - The retry happens exactly once per /heal-sensor invocation.
+  - The script's exit code mirrors the runner's exit code.
+  - Computational vs inferential dispatch is driven solely by sensor.type.
   summary: |
-    The script parses the sensor's type, chooses run_computational or
-    run_inferential, and forwards to the runner. The retry runs the
-    sensor exactly once — the heal loop does NOT recurse.
+    The script reads the sensor JSON, parses .type, selects the runner
+    build tag, then runs `go -C $CLAUDE_PLUGIN_ROOT run -tags=<tag>
+    ./skills/run-sensor/scripts <sensor>` with GOWORK=off appended to
+    the inherited env. Stdout/stderr are forwarded; the script returns
+    the runner's exit code.
 description: |
-  Step 4 of /heal-sensor. retry-original reads the patched sensor file,
-  picks the right runner build tag (run_computational or
-  run_inferential) based on sensor.type, spawns `go run` once on
-  ./skills/run-sensor/scripts, and forwards the child's stdout/stderr.
-  The runner's exit code becomes retry-original's exit code.
+  Step 4 of /heal-sensor. retry-original reads the failing sensor's
+  type field (computational | inferential), picks the matching build tag
+  (run_computational | run_inferential), and shells out to
+  `go -C $CLAUDE_PLUGIN_ROOT run -tags=<tag> ./skills/run-sensor/scripts
+  <sensor-path>`. The runner's stdout/stderr is piped through unchanged.
+  Exit code is the runner's exit code.
 evidence:
 - file: skills/heal-sensor/scripts/retry-original.go
+  kind: implementation
+  line_end: 78
   line_start: 30
-  rationale: run() entry — picks the build tag from sensor.type and forwards to the
-    runner exactly once.
+  rationale: Entry point that selects the runner tag and execs the runner once.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Declares the sensor.type discriminator (computational | inferential)
+    the script reads.
 expected_outcome:
   fixture:
     exit_code: 0
-    stdout_lines:
-    - '{"sensor_id":"integration-test","verdict":"pass","severity":"info","evidence":[],"cost_actual":{"latency_ms":420},"metadata":{"kind":"aggregate"}}'
+    stdout_forwarded: true
   invariants:
-  - The child's stdout/stderr is forwarded verbatim.
-  - The runner's exit code is propagated.
-  - retry-original makes EXACTLY ONE child invocation (no retry loop).
-  shape: JSONL on stdout + forwarded exit code
-  side_effects:
-  - Spawns one `go run` child process.
-  summary: Runner's JSONL on stdout, exit code mirrors the runner.
+  - Exit code matches the runner's exit code.
+  - The selected build tag is "run_computational" for type=computational, "run_inferential"
+    for type=inferential.
+  shape: cli-exit
+  side_effects: []
+  summary: Runner stdout is forwarded; exit code is 0.
 id: heal-sensor-retry-original-success
 journey_id: heal-sensor
-name: retry-original re-invokes the sensor once after fixes are applied
-regression_priority: high
+name: retry-original re-invokes the failing sensor exactly once
+regression_priority: critical
 tags:
 - happy-path
-- retry
+- framework-heal-sensor
 trigger:
   fixture:
     argv:
     - retry-original
-    - --sensor=/repo/.harness/sensors/integration-test.yaml
+    - --sensor=/tmp/projectH/.harness/sensors/lint-go-vet-computational.yaml
     env:
-      CLAUDE_PLUGIN_ROOT: /plugin
-  shape: CLI invocation
-  summary: retry-original --sensor=…/.harness/sensors/integration-test.yaml after
-    a patch persisted by apply-sensors.
+      CLAUDE_PLUGIN_ROOT: /path/to/harness-framework
+    runner_exit_code: 0
+  shape: cli-argv
+  summary: Run retry-original on a computational sensor whose runner exits 0 after
+    step 2 + step 3 fixes.
 version: 0.1.0

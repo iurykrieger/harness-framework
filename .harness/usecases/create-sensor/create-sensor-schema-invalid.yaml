@@ -1,49 +1,63 @@
 behavior:
   business_rules:
-  - Schema violations exit with code 1 (validation class).
-  - The destination file is NOT written.
+  - Exit code 1 is reserved for schema validation failures.
+  - The Signal's rationale contains the validation error text.
+  - No sensor file is written.
   summary: |
-    sensor.ValidateAndPersist surfaces the underlying
-    jsonschema.ValidationError. The script's errors.As branch matches
+    schema.Validate fires on the missing calibration block (required by the
+    allOf branch for type=inferential). The script catches the typed error
     and emits the schema_invalid Signal.
 description: |
-  When the draft violates schemas/sensor.yaml, ValidateAndPersist
-  returns a jsonschema.ValidationError. write-sensor emits
-  verdict=error, metadata.kind=schema_invalid with the violation
-  detail in rationale. Exit code 1.
+  When the draft violates schemas/sensor.yaml (e.g. an inferential sensor
+  missing the calibration block, a stream sensor missing
+  execution.output_parsing.patterns), sensor.ValidateAndPersist returns a
+  jsonschema.ValidationError. The errors.As branch in write-sensor
+  surfaces it as Signal verdict=error, metadata.kind=schema_invalid and
+  exits 1.
 evidence:
 - file: skills/create-sensor/scripts/write-sensor.go
+  kind: implementation
+  line_end: 102
   line_start: 96
-  rationale: jsonschema.ValidationError handling branch.
+  rationale: errors.As branch catching jsonschema.ValidationError and producing the
+    schema_invalid Signal.
+- file: schemas/sensor.yaml
+  kind: contract
+  rationale: Discriminator allOf blocks whose violation produces the validation error.
 expected_outcome:
   fixture:
-    exit_code: 1
-    stdout_lines:
-    - '{"sensor_id":"write-sensor","verdict":"error","severity":"high","evidence":[{"rationale":"validation:
-      missing required field type"}],"cost_actual":{"latency_ms":2},"metadata":{"kind":"schema_invalid"}}'
+    last_jsonl_signal:
+      metadata:
+        kind: schema_invalid
+      sensor_id: write-sensor
+      severity: high
+      verdict: error
   invariants:
-  - metadata.kind is "schema_invalid".
+  - metadata.kind == "schema_invalid".
   - Exit code is 1.
-  - The destination file is NOT written.
-  shape: One JSON line on stdout + exit code
+  - No file is created in <out>.
+  shape: signal-jsonl
   side_effects: []
-  summary: One error Signal verdict=error, kind=schema_invalid, exit code 1.
+  summary: Signal verdict=error, metadata.kind=schema_invalid; exit 1; no file written.
 id: create-sensor-schema-invalid
 journey_id: create-sensor
-name: create-sensor rejects a draft that fails schemas/sensor.yaml
+name: write-sensor rejects a draft that fails sensor schema validation
 regression_priority: high
 tags:
-- validation
 - error-handling
+- validation
+- framework-create-sensor
 trigger:
   fixture:
     argv:
     - write-sensor
-    - --out=/repo/.harness/sensors
-    - /tmp/draft.yaml
-    draft:
-      id: incomplete
+    - --out=/tmp/projectG/.harness/sensors
+    - /tmp/bad-draft.yaml
+    draft_payload:
+      id: incomplete-inferential
       output: single
-  shape: CLI invocation
-  summary: write-sensor with a draft missing a required field (e.g. type).
+      type: inferential
+  shape: cli-argv
+  summary: Run create-sensor's write-sensor against a draft missing a discriminator-required
+    field.
 version: 0.1.0
