@@ -90,6 +90,82 @@ For each `journey` in `stack.journeys[]`:
    - `regression_priority`: heuristic — `critical` for happy-path nuclear journeys; `high` for error variations with side-effects; `medium` for common validation; `low` for obscure edges.
    - `tags`: stable convention — `happy-path`, `error-handling`, `validation`, `authz`, `idempotent`, `side-effects`.
 
+### Phase 1.5 — Source the fixture payload
+
+For each variation drafted in Phase 1 step 5, before serializing the
+YAML, populate `trigger.fixture` and `expected_outcome.fixture` via
+the three-tier rule:
+
+1. **Build a `fixture.Hint`** with `JourneyID`, `UsecaseID`,
+   `Role` (`"trigger"` for the trigger side, `"outcome"` for the
+   expected-outcome side), `ProjectRoot`.
+2. **Compute `searchPaths`** from `stack.yaml`. For each component
+   whose `evidence[].file` participates in the journey's archetype
+   (e.g. `http-server` for `http-api` journeys, `queue-consumer-lib`
+   for `queue-consumer` journeys), take:
+   - the parent directory of every `evidence[].file`;
+   - its nearest `testdata/`, `__fixtures__/`, `__tests__/`,
+     `examples/` siblings (one hop up, one hop down).
+   For each component whose idiomatic test/fixture location pattern
+   you don't already know (older majors, project-specific wrappers,
+   unfamiliar libraries), call `WebFetch` on the component's
+   documentation URL BEFORE drafting `searchPaths` — never guess.
+3. **Tier 1 — Disk.** Run:
+
+   ```bash
+   HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+     go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=find_on_disk \
+     ./skills/detect-usecases/scripts \
+     --role=<trigger|outcome> --search-paths=<path1>,<path2>,...
+   ```
+   If a Sample is returned with `Source=="disk"`, persist it via
+   `write-fixture` at `<journey>/<usecase>/<role>.<ext>`:
+   ```bash
+   cat "$sourcePath" | \
+     HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+     go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=write_fixture \
+     ./skills/create-sensor/scripts \
+     "<journey>/<usecase>/<role>.<ext>"
+   ```
+   The draft's `trigger.fixture` becomes `{ ref: "<journey>/<usecase>/trigger.<ext>" }`.
+
+4. **Tier 2 — Contract.** When tier 1 returns no candidate AND the
+   relevant `evidence[kind: contract]` row points at one of the four
+   supported sources, derive the payload:
+   - `json-schema` — file ends with `.json` and root carries `$schema`
+     (or schema-like keywords).
+   - `openapi-component` — declPath of the form
+     `<file.yaml>#/components/schemas/<Name>`.
+   - `avro` — file ends with `.avsc`.
+   - `protobuf` — file ends with `.proto`; declPath is
+     `<file.proto>:<MessageName>`.
+   Run:
+   ```bash
+   HARNESS_REGISTRY_ROOT="$(pwd)" GOWORK=off \
+     go run -C "${CLAUDE_PLUGIN_ROOT}" -tags=derive_from_contract \
+     ./skills/detect-usecases/scripts \
+     --source=<src> --decl-path=<declPath>
+   ```
+   Persist + reference the same way; copy `Sample.BlindSpots` into the
+   draft's `blind_spots[]`.
+
+5. **Tier 3 — Block on user.** When tier 1 has no hit AND the contract
+   source is not in the supported matrix (e.g. Go struct, TS interface,
+   Pydantic model), block:
+   > No real sample fixture for `<usecase-id>.<role>`. The contract row
+   > points at `<file:line>` (kind: `<source-kind>`). Options:
+   > (a) paste a sample payload;
+   > (b) I derive the minimum from the contract (cross-language type
+   >     parsing not yet supported — deferred);
+   > (c) skip and mark the variation as a blind spot.
+   > Which do you prefer?
+
+Inline payloads survive only when the variation's
+`expected_outcome.fixture` is genuinely primitive: a JSON primitive,
+an empty object `{}`, or an object whose values are all primitives
+(e.g. `{exit_code: 0, status: "ok"}`). Any nested object or array of
+objects MUST use `fixture.ref`.
+
 ### Phase 2 — Persist each draft
 
 Write each draft to a temp file, then run the validator-and-writer:
