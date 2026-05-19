@@ -22,7 +22,7 @@ type Sensor struct {
 	Execution      Execution       `json:"execution"`
 	SelfCorrection *SelfCorrection `json:"self_correction,omitempty"`
 	UseCases       []string        `json:"use_cases"`
-	BlindSpots     []string        `json:"blind_spots,omitempty"`
+	Layer          Layer           `json:"layer,omitempty"`
 	Calibration    *Calibration    `json:"calibration,omitempty"`
 	References     []string        `json:"references,omitempty"`
 
@@ -307,6 +307,33 @@ type Output string
 const (
 	OutputSingle Output = "single"
 	OutputStream Output = "stream"
+)
+
+// Layer enumerates the validation lens a per-usecase sensor takes.
+// Mirrors schemas/sensor.yaml::properties.layer.enum and the
+// canonical Layer constants in lib/planning/layer/layer.go.
+// Optional on the schema; required programmatically for any sensor
+// persisted by /create-sensors under .harness/sensors/<usecase-id>/.
+type Layer string
+
+const (
+	LayerUnitTest         Layer = "unit-test"
+	LayerIntegrationTest  Layer = "integration-test"
+	LayerContractTest     Layer = "contract-test"
+	LayerE2E              Layer = "e2e"
+	LayerDBState          Layer = "db-state"
+	LayerLogTrace         Layer = "log-trace"
+	LayerMetric           Layer = "metric"
+	LayerEventEmission    Layer = "event-emission"
+	LayerEventConsumption Layer = "event-consumption"
+	LayerPerformance      Layer = "performance"
+	LayerResilience       Layer = "resilience"
+	LayerCodeQuality      Layer = "code-quality"
+	LayerArchitecture     Layer = "architecture"
+	LayerSecurity         Layer = "security"
+	LayerDependencyHealth Layer = "dependency-health"
+	LayerDBSchema         Layer = "db-schema"
+	LayerAccessibility    Layer = "accessibility"
 )
 
 type CostClass string
