@@ -1,0 +1,7 @@
+{
+  "argv": [
+    "tail-sensor",
+    "serve-app-blocking",
+    "-3"
+  ]
+}

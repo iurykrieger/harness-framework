@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "stop-sensor",
+    "serve-app-blocking/9999-cccc4444"
+  ],
+  "registry_state": {
+    "entries": [
+      {
+        "run_id": "9999-cccc4444",
+        "sensor_id": "postgres-blocking"
+      }
+    ]
+  }
+}

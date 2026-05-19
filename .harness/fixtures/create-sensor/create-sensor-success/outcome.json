@@ -1,0 +1,13 @@
+{
+  "last_jsonl_signal": {
+    "sensor_id": "write-sensor",
+    "verdict": "pass",
+    "severity": "info",
+    "metadata": {
+      "id": "assert-charge-201",
+      "kind": "sensor_persisted",
+      "kind_attr": "assertion",
+      "type_attr": "computational"
+    }
+  }
+}

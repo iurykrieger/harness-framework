@@ -22,11 +22,124 @@ func TestWrite_AtomicAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != `{"id":"x"}` {
-		t.Fatalf("body = %q", body)
+	const wantPretty = "{\n  \"id\": \"x\"\n}\n"
+	if string(body) != wantPretty {
+		t.Fatalf("body = %q want %q", body, wantPretty)
 	}
 	if _, err := fixture.Write(root, "order-valid.json", []byte(`{"id":"x"}`)); err != nil {
 		t.Fatalf("idempotent rewrite: %v", err)
+	}
+}
+
+func TestWrite_FormatsJSONExtension(t *testing.T) {
+	root := t.TempDir()
+	abs, err := fixture.Write(root, "nested/order.json", []byte(`{"b":2,"a":[1,2,3]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  \"b\": 2,\n  \"a\": [\n    1,\n    2,\n    3\n  ]\n}\n"
+	if string(body) != want {
+		t.Fatalf("body = %q\nwant   %q", body, want)
+	}
+}
+
+func TestWrite_FormatsJSONAlreadyPretty(t *testing.T) {
+	root := t.TempDir()
+	already := "{\n  \"id\": \"x\"\n}\n"
+	abs, err := fixture.Write(root, "already.json", []byte(already))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != already {
+		t.Fatalf("body = %q\nwant   %q", body, already)
+	}
+}
+
+func TestWrite_NonJSONExtensionUntouched(t *testing.T) {
+	root := t.TempDir()
+	raw := []byte("plain\ntext\nno-reformat")
+	abs, err := fixture.Write(root, "notes.txt", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != string(raw) {
+		t.Fatalf("body = %q want %q", body, raw)
+	}
+}
+
+func TestWrite_InvalidJSONFallsThrough(t *testing.T) {
+	root := t.TempDir()
+	raw := []byte("not really json {{{")
+	abs, err := fixture.Write(root, "broken.json", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != string(raw) {
+		t.Fatalf("body = %q want %q", body, raw)
+	}
+}
+
+func TestWrite_FormatsYAML(t *testing.T) {
+	root := t.TempDir()
+	abs, err := fixture.Write(root, "config.yaml", []byte(`{a: 1, b: [1, 2, 3]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "a: 1\nb:\n- 1\n- 2\n- 3\n"
+	if string(body) != want {
+		t.Fatalf("body = %q\nwant   %q", body, want)
+	}
+}
+
+func TestWrite_FormatsXML(t *testing.T) {
+	root := t.TempDir()
+	abs, err := fixture.Write(root, "soap-response.xml", []byte(`<root><item id="1">a</item><item id="2">b</item></root>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "<root>\n  <item id=\"1\">a</item>\n  <item id=\"2\">b</item>\n</root>\n"
+	if string(body) != want {
+		t.Fatalf("body = %q\nwant   %q", body, want)
+	}
+}
+
+func TestWrite_JSONLNotReformatted(t *testing.T) {
+	root := t.TempDir()
+	raw := []byte(`{"a":1}` + "\n" + `{"a":2}` + "\n")
+	abs, err := fixture.Write(root, "stream.jsonl", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != string(raw) {
+		t.Fatalf("body = %q want %q", body, raw)
 	}
 }
 

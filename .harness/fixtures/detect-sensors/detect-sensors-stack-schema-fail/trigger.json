@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "write-stack",
+    "--out=/tmp/projectE",
+    "/tmp/bad-stack.yaml"
+  ],
+  "draft_payload": {
+    "version": "0.2.0"
+  }
+}

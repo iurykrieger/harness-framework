@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "entries": [
+      {
+        "blocking": true,
+        "pid": 1234,
+        "pid_alive": true,
+        "run_id": "1234-aaaa1111",
+        "sensor_id": "serve-app-blocking",
+        "state": "running",
+        "watcher_alive": true,
+        "watcher_pid": 1235
+      }
+    ],
+    "kind": "list"
+  },
+  "sensor_id": "list-sensors",
+  "severity": "info",
+  "verdict": "pass"
+}

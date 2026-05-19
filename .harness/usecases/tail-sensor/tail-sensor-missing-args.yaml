@@ -26,11 +26,7 @@ evidence:
     fixture.
 expected_outcome:
   fixture:
-    metadata:
-      kind: tail_invalid_args
-    sensor_id: tail
-    severity: high
-    verdict: error
+    ref: tail-sensor/tail-sensor-missing-args/outcome.json
   invariants:
   - metadata.kind == "tail_invalid_args".
   - Exit code is 2.
@@ -46,8 +42,7 @@ tags:
 - framework-tail-sensor
 trigger:
   fixture:
-    argv:
-    - tail-sensor
+    ref: tail-sensor/tail-sensor-missing-args/trigger.json
   shape: cli-argv
   summary: Invoke tail-sensor with no arguments.
 version: 0.1.0

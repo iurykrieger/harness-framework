@@ -27,8 +27,9 @@ evidence:
     draft argv contract used by the trigger fixture.
 expected_outcome:
   fixture:
-    exit_code: 2
-    stderr_substring: stack_missing
+    inline:
+      exit_code: 2
+      stderr_substring: stack_missing
   invariants:
   - Exit code is 2.
   - stderr names "/detect-sensors" remediation.
@@ -45,13 +46,7 @@ tags:
 - framework-detect-usecases
 trigger:
   fixture:
-    argv:
-    - write-usecase
-    - --out=/tmp/projectF/.harness/usecases
-    - --project-root=/tmp/projectF
-    - /tmp/draft.yaml
-    project_state:
-      stack_yaml_exists: false
+    ref: detect-usecases/detect-usecases-stack-missing/trigger.json
   shape: cli-argv
   summary: Run write-usecase against a project whose .harness/stack.yaml is missing.
 version: 0.1.0

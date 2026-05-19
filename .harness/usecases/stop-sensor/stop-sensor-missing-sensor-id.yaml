@@ -29,11 +29,7 @@ evidence:
     sensor id argv shape.
 expected_outcome:
   fixture:
-    metadata:
-      kind: not_running
-    sensor_id: stop
-    severity: low
-    verdict: warn
+    ref: stop-sensor/stop-sensor-missing-sensor-id/outcome.json
   invariants:
   - verdict == "warn" and metadata.kind == "not_running".
   - Exit code is 2.
@@ -51,8 +47,7 @@ tags:
 - framework-stop-sensor
 trigger:
   fixture:
-    argv:
-    - stop-sensor
+    ref: stop-sensor/stop-sensor-missing-sensor-id/trigger.json
   shape: cli-argv
   summary: Invoke stop-sensor with no positional argument.
 version: 0.1.0

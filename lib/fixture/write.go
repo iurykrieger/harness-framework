@@ -24,6 +24,10 @@ func (e *PathEscapeError) Error() string {
 // write is atomic via tmp+rename. Idempotent: re-writing the same content
 // is allowed. Rejects any relPath that, after cleaning, resolves outside the
 // fixtures root or to the root itself (with *PathEscapeError).
+// Payloads landing at a known structured-data extension (.json, .yaml,
+// .yml, .xml) are canonicalized via formatPayload before persistence;
+// unparseable payloads and other extensions (.txt, .jsonl, .log, …)
+// pass through unchanged.
 // On success, returns the absolute path of the written file.
 func Write(projectRoot, relPath string, payload []byte) (string, error) {
 	if projectRoot == "" {
@@ -38,6 +42,7 @@ func Write(projectRoot, relPath string, payload []byte) (string, error) {
 	if target == root || !strings.HasPrefix(target+sep, root+sep) {
 		return "", &PathEscapeError{Rel: relPath, Root: root}
 	}
+	payload = formatPayload(payload, filepath.Ext(target))
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}

@@ -25,9 +25,10 @@ evidence:
   rationale: Declares the stack schema whose validation produces the rejected error.
 expected_outcome:
   fixture:
-    exit_code: 1
-    file_written: false
-    stderr_substring: INVALID
+    inline:
+      exit_code: 1
+      file_written: false
+      stderr_substring: INVALID
   invariants:
   - Exit code is 1.
   - <out>/.harness/stack.yaml is NOT created.
@@ -44,12 +45,7 @@ tags:
 - framework-detect-sensors
 trigger:
   fixture:
-    argv:
-    - write-stack
-    - --out=/tmp/projectE
-    - /tmp/bad-stack.yaml
-    draft_payload:
-      version: 0.2.0
+    ref: detect-sensors/detect-sensors-stack-schema-fail/trigger.json
   shape: cli-argv
   summary: Run write-stack against a draft that omits required top-level fields.
 version: 0.1.0

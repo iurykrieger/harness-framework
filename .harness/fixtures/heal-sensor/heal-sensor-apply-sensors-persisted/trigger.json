@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "apply-sensors",
+    "--plan=/tmp/plan.json",
+    "--out=/tmp/projectH/.harness/sensors"
+  ],
+  "plan_payload": {
+    "new_setup_sensors": [
+      {
+        "id": "setup-env-from-example",
+        "json": {
+          "id": "setup-env-from-example",
+          "kind": "setup",
+          "version": "0.1.0"
+        }
+      }
+    ],
+    "sensor_patches": [
+      {
+        "id": "existing-sensor",
+        "patch": {
+          "id": "existing-sensor",
+          "version": "0.1.1"
+        }
+      }
+    ]
+  }
+}

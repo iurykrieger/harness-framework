@@ -30,10 +30,7 @@ evidence:
   rationale: Declares the sensor schema each persisted entry conforms to.
 expected_outcome:
   fixture:
-    stdout_object:
-      written:
-      - /tmp/projectH/.harness/sensors/existing-sensor.yaml
-      - /tmp/projectH/.harness/sensors/setup-env-from-example.yaml
+    ref: heal-sensor/heal-sensor-apply-sensors-persisted/outcome.json
   invariants:
   - len(written) equals patches + new_setup_sensors counts.
   - Every written path exists on disk and has bytes matching the persisted body.
@@ -52,22 +49,7 @@ tags:
 - framework-heal-sensor
 trigger:
   fixture:
-    argv:
-    - apply-sensors
-    - --plan=/tmp/plan.json
-    - --out=/tmp/projectH/.harness/sensors
-    plan_payload:
-      new_setup_sensors:
-      - id: setup-env-from-example
-        json:
-          id: setup-env-from-example
-          kind: setup
-          version: 0.1.0
-      sensor_patches:
-      - id: existing-sensor
-        patch:
-          id: existing-sensor
-          version: 0.1.1
+    ref: heal-sensor/heal-sensor-apply-sensors-persisted/trigger.json
   shape: cli-argv
   summary: Run apply-sensors with a Plan containing one patch and one new setup sensor.
 version: 0.1.0

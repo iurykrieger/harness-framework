@@ -13,9 +13,7 @@ trigger:
   shape: harness skill invocation
   summary: /detect-sensors runs on a project that has at least one of (Dockerfile, helm/Chart.yaml, .github/workflows/, *.tf).
   fixture:
-    project_state:
-      Dockerfile: present
-      .github/workflows/test.yml: present
+    ref: framework/framework-detect-sensors-deploy-artifacts-detected/trigger.json
 behavior:
   summary: |
     Phase A inspects the listed deploy/CI files, persists one
@@ -31,11 +29,7 @@ expected_outcome:
   shape: stack.yaml contains one Component per detected deploy/CI artifact
   summary: For each present artifact, exactly one Component with the right role and self-containment fields.
   fixture:
-    expected_components:
-      - role: container-runtime
-        category: runtime/container
-      - role: ci-cd
-        category_prefix: ci/
+    ref: framework/framework-detect-sensors-deploy-artifacts-detected/outcome.json
   invariants:
     - .harness/stack.yaml parses against schemas/stack.yaml.
     - For every detected deploy/CI artifact, components[] contains an entry with a matching role.
@@ -46,7 +40,8 @@ evidence:
   - file: skills/detect-sensors/SKILL.md
     rationale: Phase A "Beyond code manifests" bullet enumerates the deploy/CI artifact → role mapping.
   - file: schemas/stack.yaml
-    rationale: $defs/Role enum includes container-runtime, deployment-tool, ci-cd values.
+    kind: contract
+    rationale: $defs/Role enum includes container-runtime, deployment-tool, ci-cd values; the outcome fixture keys match role and category fields.
 regression_priority: high
 tags:
   - framework-detect-sensors

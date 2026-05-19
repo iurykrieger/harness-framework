@@ -34,15 +34,7 @@ evidence:
     consumed by /start-sensor.
 expected_outcome:
   fixture:
-    metadata:
-      kind: started
-      log_dir: .harness/runtime/serve-app-blocking/42-abcd1234
-      next_cursor: 0
-      pid: 42
-      watcher_pid: 43
-    sensor_id: serve-app-blocking
-    severity: info
-    verdict: pass
+    ref: start-sensor/start-sensor-success-started/outcome.json
   invariants:
   - verdict == "pass" and metadata.kind == "started".
   - metadata.pid > 0.
@@ -65,12 +57,7 @@ tags:
 - framework-start-sensor
 trigger:
   fixture:
-    argv:
-    - start-sensor
-    - serve-app-blocking
-    env:
-      CLAUDE_PLUGIN_ROOT: /path/to/harness-framework
-      HARNESS_REGISTRY_ROOT: /tmp/projectC
+    ref: start-sensor/start-sensor-success-started/trigger.json
   shape: cli-argv
   summary: Invoke start-sensor with the id of a valid blocking sensor.
 version: 0.1.0

@@ -1,0 +1,1 @@
+{"sensor_id":"write-sensor","verdict":"error","severity":"high","evidence":[{"rationale":"usecase \"nonexistent-uc\" not found under /repo/.harness/usecases"}],"cost_actual":{"latency_ms":4},"metadata":{"kind":"usecase_not_found"}}

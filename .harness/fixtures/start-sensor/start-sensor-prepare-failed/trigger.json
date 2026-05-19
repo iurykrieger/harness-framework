@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "start-sensor",
+    "serve-app-blocking"
+  ],
+  "prepare_step_0_exit": 1,
+  "sensor": {
+    "execution": {
+      "command": "./serve.sh",
+      "prepare": [
+        {
+          "command": "cp .env.example .env"
+        },
+        {
+          "command": "docker compose up -d postgres"
+        }
+      ]
+    }
+  }
+}

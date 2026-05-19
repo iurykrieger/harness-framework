@@ -31,9 +31,10 @@ evidence:
   rationale: Stack schema whose cross-field constraints are enforced via the Go cross-checks.
 expected_outcome:
   fixture:
-    exit_code: 1
-    file_written: false
-    stderr_prefix: 'error: stack_'
+    inline:
+      exit_code: 1
+      file_written: false
+      stderr_prefix: 'error: stack_'
   invariants:
   - Exit code is 1.
   - stderr identifies the cross-check kind via the "stack_<kind>" prefix.
@@ -51,16 +52,7 @@ tags:
 - framework-detect-sensors
 trigger:
   fixture:
-    argv:
-    - write-stack
-    - --out=/tmp/projectE
-    - /tmp/orphan-archetype-stack.yaml
-    draft_payload:
-      archetypes:
-      - http-api
-      journeys:
-      - archetype: event-consumer
-        id: ingest-events
+    ref: detect-sensors/detect-sensors-stack-cross-check-fail/trigger.json
   shape: cli-argv
   summary: Run write-stack against a draft whose journey references an archetype not
     declared in stack.archetypes.

@@ -24,20 +24,7 @@ evidence:
   rationale: RunningSensorEntry contract; IsPIDAlive is the liveness primitive.
 expected_outcome:
   fixture:
-    metadata:
-      entries:
-      - blocking: true
-        pid: 9999
-        pid_alive: false
-        run_id: 9999-bbbb2222
-        sensor_id: serve-app-blocking
-        state: orphan
-        watcher_alive: false
-        watcher_pid: 10000
-      kind: list
-    sensor_id: list-sensors
-    severity: info
-    verdict: pass
+    ref: list-sensors/list-sensors-orphan/outcome.json
   invariants:
   - The orphan entry's state is "orphan" and pid_alive is false.
   - The Signal verdict is "pass".
@@ -55,17 +42,7 @@ tags:
 - framework-list-sensors
 trigger:
   fixture:
-    argv:
-    - list-sensors
-    registry_state:
-      entries:
-      - blocking: true
-        pid: 9999
-        pid_alive: false
-        run_id: 9999-bbbb2222
-        sensor_id: serve-app-blocking
-        watcher_alive: false
-        watcher_pid: 10000
+    ref: list-sensors/list-sensors-orphan/trigger.json
   shape: cli-argv
   summary: Invoke list-sensors when the registry holds an entry whose subprocess PID
     is dead.

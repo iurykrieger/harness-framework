@@ -30,14 +30,7 @@ evidence:
     satisfies.
 expected_outcome:
   fixture:
-    stdout_object:
-      results:
-      - action:
-          action: copy_template
-          dst: .env
-          src: .env.example
-        applied: true
-        needs_input: false
+    ref: heal-sensor/heal-sensor-apply-safe-copy-template/outcome.json
   invariants:
   - results[0].applied is true.
   - <root>/.env exists after the run.
@@ -58,19 +51,7 @@ tags:
 - framework-heal-sensor
 trigger:
   fixture:
-    argv:
-    - apply-safe
-    - --plan=/tmp/plan.json
-    - --sensor=/tmp/failing-sensor.yaml
-    - --root=/tmp/projectH
-    plan_payload:
-      auto_apply:
-      - action: copy_template
-        dst: .env
-        src: .env.example
-    project_state:
-      env_example_exists: true
-      env_exists: false
+    ref: heal-sensor/heal-sensor-apply-safe-copy-template/trigger.json
   shape: cli-argv
   summary: Run apply-safe with a Plan containing one copy_template action for .env.example
     → .env.

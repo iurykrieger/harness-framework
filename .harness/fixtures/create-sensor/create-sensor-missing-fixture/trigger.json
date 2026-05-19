@@ -1,0 +1,6 @@
+{
+  "argv": ["write-sensor", "--out=/repo/.harness/sensors", "/tmp/draft.yaml"],
+  "draft": {
+    "use_cases": ["nonexistent-uc"]
+  }
+}

@@ -32,12 +32,7 @@ evidence:
   rationale: Declares the UseCase schema that each loaded file is validated against.
 expected_outcome:
   fixture:
-    last_jsonl_signal:
-      metadata:
-        kind: usecase_not_found
-      sensor_id: read-usecases
-      severity: high
-      verdict: error
+    ref: create-sensor/create-sensor-read-usecases-missing/outcome.json
   invariants:
   - metadata.kind == "usecase_not_found".
   - Exit code is 1.
@@ -55,12 +50,7 @@ tags:
 - framework-create-sensor
 trigger:
   fixture:
-    argv:
-    - read-usecases
-    - --usecases=create-user-with-email,ghost-usecase
-    project_state:
-      usecases_dir_files:
-      - user-registration/create-user-with-email.yaml
+    ref: create-sensor/create-sensor-read-usecases-missing/trigger.json
   shape: cli-argv
   summary: Run read-usecases with --usecases naming a usecase id that does not exist
     on disk.

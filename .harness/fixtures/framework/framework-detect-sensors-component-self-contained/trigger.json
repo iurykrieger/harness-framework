@@ -1,0 +1,6 @@
+{
+  "project_state": {
+    "go.mod": "present",
+    ".harness/stack.yaml": "absent"
+  }
+}

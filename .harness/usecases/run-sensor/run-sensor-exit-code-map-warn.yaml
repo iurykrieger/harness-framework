@@ -25,14 +25,7 @@ evidence:
     runner consumes.
 expected_outcome:
   fixture:
-    final_aggregate:
-      metadata:
-        exit_code: 1
-        kind: aggregate
-        output_mode: stream
-        timed_out: false
-      severity: low
-      verdict: warn
+    ref: run-sensor/run-sensor-exit-code-map-warn/outcome.json
   invariants:
   - aggregate.verdict comes from the user-declared exit_code_map entry for that exit
     code.
@@ -50,9 +43,7 @@ tags:
 - framework-run-sensor
 trigger:
   fixture:
-    argv:
-    - run-computational
-    - lint-style-computational
+    ref: run-sensor/run-sensor-exit-code-map-warn/trigger.json
   shape: cli-argv
   summary: Invoke run-computational with a sensor whose exit_code_map declares "1
     → warn".

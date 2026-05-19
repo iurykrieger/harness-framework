@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "start-sensor",
+    "lint-go-vet-computational"
+  ],
+  "env": {
+    "CLAUDE_PLUGIN_ROOT": "/path/to/harness-framework"
+  }
+}

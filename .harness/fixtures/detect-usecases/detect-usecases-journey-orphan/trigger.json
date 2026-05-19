@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "write-usecase",
+    "--out=/tmp/projectF/.harness/usecases",
+    "--project-root=/tmp/projectF",
+    "/tmp/orphan-journey-draft.yaml"
+  ],
+  "draft_payload": {
+    "id": "ghost-usecase",
+    "journey_id": "deleted-journey"
+  },
+  "stack_state": {
+    "journeys": [
+      {
+        "id": "user-registration"
+      }
+    ]
+  }
+}

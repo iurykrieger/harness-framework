@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "start-sensor",
+    "serve-app-blocking"
+  ],
+  "env": {
+    "CLAUDE_PLUGIN_ROOT": "/path/to/harness-framework",
+    "HARNESS_REGISTRY_ROOT": "/tmp/projectC"
+  }
+}

@@ -36,18 +36,7 @@ evidence:
     args (the trigger fixture's argv shape).
 expected_outcome:
   fixture:
-    digests:
-    - id: lint-go-vet-computational
-      kind: observation
-      path: .harness/sensors/lint-go-vet-computational.yaml
-    - id: smoke-tests
-      kind: observation
-      path: .harness/sensors/smoke-tests.yaml
-    warn_signal:
-      metadata:
-        kind: catalog_entry_skipped
-      sensor_id: catalog-sensors
-      verdict: warn
+    ref: create-sensor/create-sensor-catalog-list/outcome.json
   invariants:
   - One JSONL line per valid sensor.
   - Warn lines precede digest lines.
@@ -64,13 +53,7 @@ tags:
 - framework-create-sensor
 trigger:
   fixture:
-    argv:
-    - catalog-sensors
-    project_state:
-      sensors_dir_entries:
-      - lint-go-vet-computational.yaml
-      - smoke-tests.yaml
-      - broken-schema.yaml
+    ref: create-sensor/create-sensor-catalog-list/trigger.json
   shape: cli-argv
   summary: Run catalog-sensors with no arguments against a project whose .harness/sensors/
     has 2 sensors and 1 malformed file.

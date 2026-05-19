@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "run-inferential",
+    "ai-review-inferential"
+  ],
+  "env": {
+    "ANTHROPIC_API_KEY": ""
+  },
+  "sensor": {
+    "requires": [
+      {
+        "kind": "env",
+        "name": "ANTHROPIC_API_KEY"
+      }
+    ]
+  }
+}

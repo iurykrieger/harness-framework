@@ -30,17 +30,7 @@ evidence:
   rationale: Declares execution.prepare[] step shape.
 expected_outcome:
   fixture:
-    metadata:
-      cause: prepare_failed
-      kind: failed
-      lifecycle:
-        prepare:
-        - command: cp .env.example .env
-          exit_code: 1
-          verdict: fail
-    sensor_id: serve-app-blocking
-    severity: high
-    verdict: error
+    ref: start-sensor/start-sensor-prepare-failed/outcome.json
   invariants:
   - metadata.cause == "prepare_failed".
   - metadata.lifecycle.prepare reflects the executed steps (fail-fast cut-off).
@@ -59,16 +49,7 @@ tags:
 - framework-start-sensor
 trigger:
   fixture:
-    argv:
-    - start-sensor
-    - serve-app-blocking
-    prepare_step_0_exit: 1
-    sensor:
-      execution:
-        command: ./serve.sh
-        prepare:
-        - command: cp .env.example .env
-        - command: docker compose up -d postgres
+    ref: start-sensor/start-sensor-prepare-failed/trigger.json
   shape: cli-argv
   summary: Invoke start-sensor on a sensor whose first prepare[] step exits non-zero.
 version: 0.1.0

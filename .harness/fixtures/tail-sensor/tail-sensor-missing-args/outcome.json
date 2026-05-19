@@ -1,0 +1,8 @@
+{
+  "metadata": {
+    "kind": "tail_invalid_args"
+  },
+  "sensor_id": "tail",
+  "severity": "high",
+  "verdict": "error"
+}

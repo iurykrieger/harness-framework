@@ -1,0 +1,8 @@
+{
+  "metadata": {
+    "kind": "not_running"
+  },
+  "sensor_id": "serve-app-blocking",
+  "severity": "low",
+  "verdict": "warn"
+}

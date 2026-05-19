@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "list-sensors"
+  ],
+  "registry_state": {
+    "entries": [
+      {
+        "blocking": true,
+        "held_by": [
+          {
+            "kind": "manual"
+          }
+        ],
+        "pid": 1234,
+        "pid_alive": true,
+        "run_id": "1234-aaaa1111",
+        "sensor_id": "serve-app-blocking",
+        "watcher_alive": true,
+        "watcher_pid": 1235
+      }
+    ]
+  }
+}

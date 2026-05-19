@@ -30,15 +30,7 @@ evidence:
   rationale: depends_on / requires[kind=sensor] contract that defines the dep DAG.
 expected_outcome:
   fixture:
-    metadata:
-      cause: dep_cascade
-      failed_dep_id: smoke-checks
-      failed_dep_severity: high
-      failed_dep_verdict: fail
-      kind: failed
-    sensor_id: serve-app-blocking
-    severity: high
-    verdict: error
+    ref: start-sensor/start-sensor-dep-cascade/outcome.json
   invariants:
   - metadata.cause == "dep_cascade".
   - metadata.failed_dep_id is a string naming the failing dep.
@@ -57,13 +49,7 @@ tags:
 - framework-start-sensor
 trigger:
   fixture:
-    argv:
-    - start-sensor
-    - serve-app-blocking
-    dep_results:
-      smoke-checks:
-        severity: high
-        verdict: fail
+    ref: start-sensor/start-sensor-dep-cascade/trigger.json
   shape: cli-argv
   summary: Invoke start-sensor where one of the requested sensor's deps produces verdict=fail.
 version: 0.1.0

@@ -40,14 +40,7 @@ evidence:
   rationale: RunningSensorEntry / HeldByEntry shapes the trigger fixture mirrors.
 expected_outcome:
   fixture:
-    metadata:
-      killed_forcefully: false
-      kind: aggregate
-      output_mode: stream
-      watcher_kill_forced: false
-    sensor_id: serve-app-blocking
-    severity: info
-    verdict: pass
+    ref: stop-sensor/stop-sensor-blocking-stopped-gracefully/outcome.json
   invariants:
   - The aggregate Signal is emitted on stdout as the last JSON line.
   - The registry entry for this sensor's run_id is gone.
@@ -67,17 +60,7 @@ tags:
 - framework-stop-sensor
 trigger:
   fixture:
-    argv:
-    - stop-sensor
-    - serve-app-blocking
-    registry_state:
-      entries:
-      - held_by:
-        - kind: manual
-        pgid: 100
-        run_id: 100-abcd1234
-        sensor_id: serve-app-blocking
-        watcher_pid: 101
+    ref: stop-sensor/stop-sensor-blocking-stopped-gracefully/trigger.json
   shape: cli-argv
   summary: Invoke stop-sensor with a sensor id whose registry entry is held only by
     the manual hold.

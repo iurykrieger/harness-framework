@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "apply-safe",
+    "--plan=/tmp/plan.json",
+    "--sensor=/tmp/failing-sensor.yaml",
+    "--root=/tmp/projectH"
+  ],
+  "plan_payload": {
+    "auto_apply": [
+      {
+        "action": "copy_template",
+        "dst": ".env",
+        "src": ".env.example"
+      }
+    ]
+  },
+  "project_state": {
+    "env_example_exists": true,
+    "env_exists": false
+  }
+}

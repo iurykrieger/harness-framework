@@ -26,8 +26,9 @@ evidence:
     by the trigger fixture.
 expected_outcome:
   fixture:
-    exit_code: 2
-    stderr_substring: CLAUDE_PLUGIN_ROOT not set
+    inline:
+      exit_code: 2
+      stderr_substring: CLAUDE_PLUGIN_ROOT not set
   invariants:
   - Exit code is 2.
   - stderr names "CLAUDE_PLUGIN_ROOT".
@@ -44,11 +45,7 @@ tags:
 - framework-heal-sensor
 trigger:
   fixture:
-    argv:
-    - retry-original
-    - --sensor=/tmp/projectH/.harness/sensors/lint-go-vet-computational.yaml
-    env:
-      CLAUDE_PLUGIN_ROOT: ""
+    ref: heal-sensor/heal-sensor-retry-original-no-plugin-root/trigger.json
   shape: cli-argv
   summary: Run retry-original with CLAUDE_PLUGIN_ROOT unset in the environment.
 version: 0.1.0

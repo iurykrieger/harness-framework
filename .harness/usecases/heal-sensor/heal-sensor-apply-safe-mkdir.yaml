@@ -29,13 +29,7 @@ evidence:
     by the trigger fixture.
 expected_outcome:
   fixture:
-    stdout_object:
-      results:
-      - action:
-          action: mkdir
-          path: tmp/uploads
-        applied: true
-        needs_input: false
+    ref: heal-sensor/heal-sensor-apply-safe-mkdir/outcome.json
   invariants:
   - results[0].applied is true.
   - <root>/tmp/uploads exists after the run.
@@ -55,17 +49,7 @@ tags:
 - framework-heal-sensor
 trigger:
   fixture:
-    argv:
-    - apply-safe
-    - --plan=/tmp/plan.json
-    - --sensor=/tmp/failing-sensor.yaml
-    - --root=/tmp/projectH
-    plan_payload:
-      auto_apply:
-      - action: mkdir
-        path: tmp/uploads
-    project_state:
-      path_exists: false
+    ref: heal-sensor/heal-sensor-apply-safe-mkdir/trigger.json
   shape: cli-argv
   summary: Run apply-safe with a Plan containing one mkdir action.
 version: 0.1.0

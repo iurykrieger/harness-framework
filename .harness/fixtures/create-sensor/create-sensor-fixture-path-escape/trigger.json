@@ -1,0 +1,7 @@
+{
+  "argv": [
+    "write-fixture",
+    "../../etc/passwd"
+  ],
+  "stdin_payload": "{}"
+}

@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "catalog-sensors"
+  ],
+  "project_state": {
+    "sensors_dir_entries": [
+      "lint-go-vet-computational.yaml",
+      "smoke-tests.yaml",
+      "broken-schema.yaml"
+    ]
+  }
+}

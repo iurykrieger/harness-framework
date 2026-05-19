@@ -1,0 +1,9 @@
+{
+  "metadata": {
+    "cause": "not_blocking",
+    "kind": "failed"
+  },
+  "sensor_id": "lint-go-vet-computational",
+  "severity": "high",
+  "verdict": "error"
+}

@@ -1,0 +1,8 @@
+{
+  "metadata": {
+    "kind": "run_id_sensor_mismatch"
+  },
+  "sensor_id": "serve-app-blocking",
+  "severity": "high",
+  "verdict": "error"
+}

@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "retry-original",
+    "--sensor=/tmp/projectH/.harness/sensors/lint-go-vet-computational.yaml"
+  ],
+  "env": {
+    "CLAUDE_PLUGIN_ROOT": "/path/to/harness-framework"
+  },
+  "runner_exit_code": 0
+}

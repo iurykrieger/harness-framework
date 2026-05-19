@@ -1,0 +1,6 @@
+{
+  "project_state": {
+    "Dockerfile": "present",
+    ".github/workflows/test.yml": "present"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "expected_components": [
+    {
+      "role": "container-runtime",
+      "category": "runtime/container"
+    },
+    {
+      "role": "ci-cd",
+      "category_prefix": "ci/"
+    }
+  ]
+}

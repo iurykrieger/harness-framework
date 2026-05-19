@@ -26,15 +26,7 @@ evidence:
     that drive the verdict mapping.
 expected_outcome:
   fixture:
-    confidence: 1
-    metadata:
-      exit_code: 0
-      kind: aggregate
-      output_mode: single
-      timed_out: false
-    sensor_id: lint-go-vet-computational
-    severity: info
-    verdict: pass
+    ref: run-sensor/run-sensor-single-output-pass/outcome.json
   invariants:
   - Exactly one JSONL line is emitted on stdout.
   - metadata.kind == "aggregate".
@@ -52,11 +44,7 @@ tags:
 - framework-run-sensor
 trigger:
   fixture:
-    argv:
-    - run-computational
-    - lint-go-vet-computational
-    env:
-      HARNESS_REGISTRY_ROOT: /tmp/projectA
+    ref: run-sensor/run-sensor-single-output-pass/trigger.json
   shape: cli-argv
   summary: |
     Invoke run-computational with the id of a computational, single-output sensor

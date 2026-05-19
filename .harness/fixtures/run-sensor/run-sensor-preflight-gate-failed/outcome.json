@@ -1,0 +1,13 @@
+{
+  "last_jsonl_signal": {
+    "metadata": {
+      "cause": "preflight_failed",
+      "kind": "failed",
+      "missing_envs": [
+        "ANTHROPIC_API_KEY"
+      ]
+    },
+    "severity": "high",
+    "verdict": "error"
+  }
+}

@@ -24,12 +24,7 @@ evidence:
     when the file is absent.
 expected_outcome:
   fixture:
-    metadata:
-      entries: []
-      kind: list
-    sensor_id: list-sensors
-    severity: info
-    verdict: warn
+    ref: list-sensors/list-sensors-empty-registry/outcome.json
   invariants:
   - verdict == "warn".
   - metadata.entries is an empty array.
@@ -46,10 +41,7 @@ tags:
 - framework-list-sensors
 trigger:
   fixture:
-    argv:
-    - list-sensors
-    registry_state:
-      file_exists: false
+    ref: list-sensors/list-sensors-empty-registry/trigger.json
   shape: cli-argv
   summary: Invoke list-sensors when no .harness/runtime/running_sensors.json file
     exists.

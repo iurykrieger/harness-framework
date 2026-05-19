@@ -1,0 +1,12 @@
+{
+  "final_aggregate": {
+    "confidence": 0.55,
+    "metadata": {
+      "calibration_downgrade": true,
+      "kind": "aggregate",
+      "output_mode": "stream"
+    },
+    "severity": "low",
+    "verdict": "warn"
+  }
+}

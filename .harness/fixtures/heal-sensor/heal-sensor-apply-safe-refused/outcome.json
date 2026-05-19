@@ -1,0 +1,15 @@
+{
+  "stdout_object": {
+    "results": [
+      {
+        "action": {
+          "action": "run_shell",
+          "command": "docker compose up -d postgres"
+        },
+        "applied": false,
+        "needs_input": true,
+        "reason": "action not in allowlist"
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "diagnose",
+    "--signal=/tmp/failing-signal.json",
+    "--sensor=/tmp/failing-sensor.yaml",
+    "--root=/tmp/projectH"
+  ],
+  "project_state": {
+    "docs": [
+      "README.md"
+    ],
+    "templates": [
+      ".env.example"
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "start-sensor",
+    "serve-app-blocking"
+  ],
+  "dep_results": {
+    "smoke-checks": {
+      "severity": "high",
+      "verdict": "fail"
+    }
+  }
+}

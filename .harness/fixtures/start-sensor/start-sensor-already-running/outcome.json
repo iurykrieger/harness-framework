@@ -1,0 +1,9 @@
+{
+  "metadata": {
+    "existing_pid": 41,
+    "kind": "rejected"
+  },
+  "sensor_id": "serve-app-blocking",
+  "severity": "high",
+  "verdict": "error"
+}

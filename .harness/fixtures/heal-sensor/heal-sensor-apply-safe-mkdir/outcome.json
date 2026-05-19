@@ -1,0 +1,14 @@
+{
+  "stdout_object": {
+    "results": [
+      {
+        "action": {
+          "action": "mkdir",
+          "path": "tmp/uploads"
+        },
+        "applied": true,
+        "needs_input": false
+      }
+    ]
+  }
+}

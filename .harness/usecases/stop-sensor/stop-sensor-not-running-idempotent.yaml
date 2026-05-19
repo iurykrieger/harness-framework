@@ -26,11 +26,7 @@ evidence:
     entry resolution.
 expected_outcome:
   fixture:
-    metadata:
-      kind: not_running
-    sensor_id: serve-app-blocking
-    severity: low
-    verdict: warn
+    ref: stop-sensor/stop-sensor-not-running-idempotent/outcome.json
   invariants:
   - Exit code is 0.
   - metadata.kind == "not_running".
@@ -47,12 +43,7 @@ tags:
 - framework-stop-sensor
 trigger:
   fixture:
-    argv:
-    - stop-sensor
-    - serve-app-blocking
-    registry_state:
-      entries: []
-      file_exists: true
+    ref: stop-sensor/stop-sensor-not-running-idempotent/trigger.json
   shape: cli-argv
   summary: Invoke stop-sensor for a sensor id that has no entry in running_sensors.json.
 version: 0.1.0

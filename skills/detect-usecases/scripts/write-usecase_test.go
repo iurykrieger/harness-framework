@@ -265,3 +265,45 @@ func TestRun_NoPositional(t *testing.T) {
 		t.Fatalf("code=%d want 2", code)
 	}
 }
+
+func TestRun_ValidateOnly(t *testing.T) {
+	projRoot := t.TempDir()
+	writeStackYAML(t, projRoot)
+	writeEvidenceFile(t, projRoot)
+	schemasDir := schematest.RepoSchemasDir(t)
+	draftPath := writeDraftAt(t, t.TempDir(), usecasetest.CanonicalBody(t))
+	args := []string{
+		"--out=" + filepath.Join(projRoot, ".harness/usecases"),
+		"--project-root=" + projRoot,
+		"--schemas-dir=" + schemasDir,
+		"--validate-only",
+		draftPath,
+	}
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(projRoot, ".harness/usecases")); err == nil {
+		t.Errorf("--validate-only must not create the out directory")
+	}
+}
+
+func TestRun_ValidateOnly_FailsOnInvalid(t *testing.T) {
+	projRoot := t.TempDir()
+	draftPath := writeDraftAt(t, t.TempDir(), []byte(`{"name":"only"}`))
+	schemasDir := schematest.RepoSchemasDir(t)
+	// Stack must exist for loadStack to succeed (used before --validate-only branch)
+	writeStackYAML(t, projRoot)
+	args := []string{
+		"--project-root=" + projRoot,
+		"--schemas-dir=" + schemasDir,
+		"--validate-only",
+		draftPath,
+	}
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 on invalid draft; stderr=%s", code, stderr.String())
+	}
+}

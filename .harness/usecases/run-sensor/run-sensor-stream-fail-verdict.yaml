@@ -28,17 +28,7 @@ evidence:
     pattern.
 expected_outcome:
   fixture:
-    final_aggregate:
-      metadata:
-        counts:
-          error: 0
-          fail: 1
-          pass: 2
-          warn: 0
-        kind: aggregate
-        output_mode: stream
-      severity: medium
-      verdict: fail
+    ref: run-sensor/run-sensor-stream-fail-verdict/outcome.json
   invariants:
   - aggregate.verdict == "fail" whenever any individual has verdict=fail.
   - aggregate is still the LAST JSONL line on stdout.
@@ -54,9 +44,7 @@ tags:
 - framework-run-sensor
 trigger:
   fixture:
-    argv:
-    - run-computational
-    - go-test-verbose-computational
+    ref: run-sensor/run-sensor-stream-fail-verdict/trigger.json
   shape: cli-argv
   summary: Invoke run-computational with a streaming sensor whose subprocess produces
     at least one fail-ranked line.

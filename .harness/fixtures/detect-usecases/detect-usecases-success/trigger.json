@@ -1,0 +1,44 @@
+{
+  "argv": [
+    "write-usecase",
+    "--out=/tmp/projectF/.harness/usecases",
+    "--project-root=/tmp/projectF",
+    "--schemas-dir=/abs/path/to/schemas",
+    "/tmp/draft.yaml"
+  ],
+  "draft_payload": {
+    "behavior": {
+      "summary": "Validate, persist, emit."
+    },
+    "description": "POST /users with a valid email creates an account.",
+    "evidence": [
+      {
+        "file": "src/users/users.controller.ts",
+        "rationale": "handler"
+      }
+    ],
+    "expected_outcome": {
+      "fixture": {
+        "body": {
+          "id": "uuid"
+        },
+        "status": 201
+      },
+      "shape": "HTTP response",
+      "summary": "201 with user object."
+    },
+    "id": "create-user-with-email",
+    "journey_id": "user-registration",
+    "name": "Create user with valid email",
+    "trigger": {
+      "fixture": {
+        "body": {
+          "email": "alice@example.com"
+        }
+      },
+      "shape": "HTTP request",
+      "summary": "POST /users with body.email."
+    },
+    "version": "0.1.0"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "tail-sensor",
+    "serve-app-blocking",
+    "0"
+  ],
+  "registry_state": {
+    "file_exists": false
+  }
+}

@@ -25,12 +25,7 @@ evidence:
     vs /run-sensor.
 expected_outcome:
   fixture:
-    metadata:
-      cause: not_blocking
-      kind: failed
-    sensor_id: lint-go-vet-computational
-    severity: high
-    verdict: error
+    ref: start-sensor/start-sensor-not-blocking-rejected/outcome.json
   invariants:
   - metadata.cause == "not_blocking".
   - Exit code is 2.
@@ -47,11 +42,7 @@ tags:
 - framework-start-sensor
 trigger:
   fixture:
-    argv:
-    - start-sensor
-    - lint-go-vet-computational
-    env:
-      CLAUDE_PLUGIN_ROOT: /path/to/harness-framework
+    ref: start-sensor/start-sensor-not-blocking-rejected/trigger.json
   shape: cli-argv
   summary: Invoke start-sensor with the id of a sensor whose execution.blocking is
     false.

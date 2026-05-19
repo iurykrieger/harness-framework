@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "write-stack",
+    "--out=/tmp/projectE",
+    "/tmp/orphan-archetype-stack.yaml"
+  ],
+  "draft_payload": {
+    "archetypes": [
+      "http-api"
+    ],
+    "journeys": [
+      {
+        "archetype": "event-consumer",
+        "id": "ingest-events"
+      }
+    ]
+  }
+}

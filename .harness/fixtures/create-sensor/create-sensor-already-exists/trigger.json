@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "write-sensor",
+    "--out=/tmp/projectG/.harness/sensors",
+    "/tmp/draft.yaml"
+  ],
+  "draft_payload": {
+    "id": "assert-charge-201",
+    "version": "0.1.0"
+  },
+  "project_state": {
+    "existing_file": ".harness/sensors/assert-charge-201.yaml"
+  }
+}

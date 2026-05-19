@@ -31,9 +31,10 @@ evidence:
     outside the JSON schema.
 expected_outcome:
   fixture:
-    exit_code: 1
-    file_written: false
-    stderr_substring: evidence_file_missing
+    inline:
+      exit_code: 1
+      file_written: false
+      stderr_substring: evidence_file_missing
   invariants:
   - Exit code is 1.
   - stderr names every missing evidence file.
@@ -50,19 +51,7 @@ tags:
 - framework-detect-usecases
 trigger:
   fixture:
-    argv:
-    - write-usecase
-    - --out=/tmp/projectF/.harness/usecases
-    - --project-root=/tmp/projectF
-    - /tmp/draft-missing-evidence.yaml
-    draft_payload:
-      evidence:
-      - file: src/does-not-exist.ts
-        rationale: ghost
-      id: x-with-bad-evidence
-      journey_id: user-registration
-    project_state:
-      file_exists: src/users/users.controller.ts
+    ref: detect-usecases/detect-usecases-evidence-missing/trigger.json
   shape: cli-argv
   summary: Run write-usecase with a draft citing an evidence file that does not exist
     under project-root.

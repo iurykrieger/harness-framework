@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "write-sensor",
+    "--out=/tmp/projectG/.harness/sensors",
+    "/tmp/draft.yaml"
+  ],
+  "draft_payload": {
+    "id": "assert-charge-201",
+    "kind": "assertion",
+    "use_cases": [
+      "never-persisted-usecase"
+    ],
+    "version": "0.1.0"
+  },
+  "project_state": {
+    "usecases_dir_empty": true
+  }
+}

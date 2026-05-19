@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "run-computational",
+    "integration-test-with-fixture-load"
+  ],
+  "prepare_step_0_exit": 1,
+  "sensor": {
+    "execution": {
+      "command": "go test ./tests/...",
+      "prepare": [
+        {
+          "command": "docker compose up -d postgres"
+        },
+        {
+          "command": "./scripts/load-fixtures.sh"
+        }
+      ]
+    }
+  }
+}

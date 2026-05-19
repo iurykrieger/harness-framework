@@ -1,0 +1,9 @@
+{
+  "metadata": {
+    "cause": "bootstrap_failed",
+    "kind": "failed"
+  },
+  "sensor_id": "unknown",
+  "severity": "high",
+  "verdict": "error"
+}

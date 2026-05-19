@@ -1,0 +1,15 @@
+{
+  "stdout_object": {
+    "results": [
+      {
+        "action": {
+          "action": "copy_template",
+          "dst": ".env",
+          "src": ".env.example"
+        },
+        "applied": true,
+        "needs_input": false
+      }
+    ]
+  }
+}

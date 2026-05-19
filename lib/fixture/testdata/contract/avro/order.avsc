@@ -1,0 +1,10 @@
+{
+  "type": "record",
+  "name": "Order",
+  "fields": [
+    {"name": "sku", "type": "string"},
+    {"name": "qty", "type": "int"},
+    {"name": "tags", "type": {"type": "array", "items": "string"}, "default": []},
+    {"name": "channel", "type": {"type": "enum", "name": "Channel", "symbols": ["WEB", "IOS", "AND"]}}
+  ]
+}

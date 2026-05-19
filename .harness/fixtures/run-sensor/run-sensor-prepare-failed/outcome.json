@@ -1,0 +1,19 @@
+{
+  "final_aggregate": {
+    "metadata": {
+      "cause": "prepare_failed",
+      "kind": "aggregate",
+      "lifecycle": {
+        "prepare": [
+          {
+            "command": "docker compose up -d postgres",
+            "exit_code": 1,
+            "verdict": "fail"
+          }
+        ]
+      }
+    },
+    "severity": "high",
+    "verdict": "fail"
+  }
+}

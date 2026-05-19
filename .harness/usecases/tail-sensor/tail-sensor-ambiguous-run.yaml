@@ -23,14 +23,7 @@ evidence:
   rationale: RunningSensorState.FindEntries contract used by the ambiguity detection.
 expected_outcome:
   fixture:
-    evidence:
-    - rationale: 'active run_id: 100-aaaa'
-    - rationale: 'active run_id: 200-bbbb'
-    metadata:
-      kind: ambiguous_run
-    sensor_id: serve-app-blocking
-    severity: high
-    verdict: error
+    ref: tail-sensor/tail-sensor-ambiguous-run/outcome.json
   invariants:
   - metadata.kind == "ambiguous_run".
   - len(evidence) == number of live entries for the sensor id.
@@ -48,16 +41,7 @@ tags:
 - framework-tail-sensor
 trigger:
   fixture:
-    argv:
-    - tail-sensor
-    - serve-app-blocking
-    - "0"
-    registry_state:
-      entries:
-      - run_id: 100-aaaa
-        sensor_id: serve-app-blocking
-      - run_id: 200-bbbb
-        sensor_id: serve-app-blocking
+    ref: tail-sensor/tail-sensor-ambiguous-run/trigger.json
   shape: cli-argv
   summary: Invoke tail-sensor with a bare id where the registry holds multiple live
     entries for it.

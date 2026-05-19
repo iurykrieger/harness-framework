@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "read-usecases",
+    "--usecases=create-user-with-email,ghost-usecase"
+  ],
+  "project_state": {
+    "usecases_dir_files": [
+      "user-registration/create-user-with-email.yaml"
+    ]
+  }
+}

@@ -22,11 +22,7 @@ evidence:
     that defines b.Res.Exists.
 expected_outcome:
   fixture:
-    metadata:
-      kind: tail_no_registry
-    sensor_id: serve-app-blocking
-    severity: high
-    verdict: error
+    ref: tail-sensor/tail-sensor-no-registry/outcome.json
   invariants:
   - metadata.kind == "tail_no_registry".
   - Exit code is 1.
@@ -43,12 +39,7 @@ tags:
 - framework-tail-sensor
 trigger:
   fixture:
-    argv:
-    - tail-sensor
-    - serve-app-blocking
-    - "0"
-    registry_state:
-      file_exists: false
+    ref: tail-sensor/tail-sensor-no-registry/trigger.json
   shape: cli-argv
   summary: Invoke tail-sensor when the registry file is absent.
 version: 0.1.0
