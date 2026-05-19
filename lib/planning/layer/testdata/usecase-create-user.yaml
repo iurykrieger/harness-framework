@@ -1,0 +1,37 @@
+id: create-user
+version: 0.1.0
+journey_id: users
+name: Create a new user
+description: POST /users with an email creates a row in users table.
+trigger:
+  summary: HTTP POST /users with valid payload
+  shape: http-request
+  fixture:
+    method: POST
+    path: /users
+    body: { email: alice@example.com }
+behavior:
+  summary: Persist a new user and return 201 Created
+  business_rules:
+    - email must be unique
+    - email must match valid format
+    - email field is required
+expected_outcome:
+  summary: 201 Created with user body, row in users, log line emitted
+  shape: http-response
+  fixture:
+    status: 201
+    body: { id: 1, email: alice@example.com }
+  invariants:
+    - exactly one row in users matches the email
+    - request log line includes "POST /users" with status 201
+  side_effects:
+    - "db write: insert into users"
+    - "log line: POST /users status 201"
+evidence:
+  - file: internal/users/handler.go
+    rationale: handler entrypoint
+    kind: implementation
+  - file: internal/users/dto.go
+    rationale: typed body
+    kind: contract
