@@ -7,14 +7,14 @@ cost:
     p50_ms: 5000
     p95_ms: 30000
     timeout_ms: 120000
-description: On pull-request, runs `go test -race -count=1 -tags=plan_sensors -v ./skills/create-sensor/scripts/...`
+description: On pull-request, runs `go test -race -count=1 -tags=plan_and_emit -v ./skills/create-sensors/scripts/...`
   and emits one Signal per test case. Auto-detected from .github/workflows/test.yml
   step "Test plan-sensors". Output is stream because the testing component emits one
   `--- PASS:` / `--- FAIL:` / `--- SKIP:` line per test (log_shape go-test-verbose).
   Regulates behaviour.
 determinism: high
 execution:
-  command: go test -race -count=1 -tags=plan_sensors -v ./skills/create-sensor/scripts/...
+  command: go test -race -count=1 -tags=plan_and_emit -v ./skills/create-sensors/scripts/...
     2>&1
   exit_code_map:
   - exit_code: 0

@@ -7,7 +7,7 @@ cost:
     p50_ms: 5000
     p95_ms: 30000
     timeout_ms: 120000
-description: On pull-request, runs `go test -race -count=1 -tags=write_sensor -v ./skills/create-sensor/scripts/...`
+description: On pull-request, runs `go test -race -count=1 -tags=write_sensor -v ./skills/create-sensors/scripts/...`
   and emits one Signal per test case. Validates create-sensor's write-sensor script
   — the entry point that translates draft YAML + ValidateAndPersist outcomes into
   the canonical schema_invalid, usecase_not_found, sensor_already_exists, and pass
@@ -15,7 +15,7 @@ description: On pull-request, runs `go test -race -count=1 -tags=write_sensor -v
   `--- FAIL:` / `--- SKIP:` line per test (log_shape go-test-verbose). Regulates behaviour.
 determinism: high
 execution:
-  command: go test -race -count=1 -tags=write_sensor -v ./skills/create-sensor/scripts/...
+  command: go test -race -count=1 -tags=write_sensor -v ./skills/create-sensors/scripts/...
     2>&1
   exit_code_map:
   - exit_code: 0

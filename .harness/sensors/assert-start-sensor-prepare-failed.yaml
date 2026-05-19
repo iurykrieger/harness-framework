@@ -95,7 +95,7 @@ execution:
       YAML
       HARNESS_REGISTRY_ROOT="$tmpdir" GOWORK=off \
         go run -C "$CLAUDE_PLUGIN_ROOT" -tags=write_sensor \
-        ./skills/create-sensor/scripts \
+        ./skills/create-sensors/scripts \
         --out "$tmpdir/.harness/sensors" \
         --schemas-dir "$CLAUDE_PLUGIN_ROOT/schemas" \
         "$draft" >/dev/null

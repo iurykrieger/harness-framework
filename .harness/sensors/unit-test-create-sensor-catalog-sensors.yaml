@@ -8,14 +8,14 @@ cost:
     p95_ms: 30000
     timeout_ms: 120000
 description: On pull-request, runs `go test -race -count=1 -tags=catalog_sensors -v
-  ./skills/create-sensor/scripts/...` and emits one Signal per test case. Validates
+  ./skills/create-sensors/scripts/...` and emits one Signal per test case. Validates
   create-sensor's catalog-sensors script — the JSONL digest stream produced by walking
   lib/sensor.Catalog and ordering by sensor id. Output is stream because the testing
   component emits one `--- PASS:` / `--- FAIL:` / `--- SKIP:` line per test (log_shape
   go-test-verbose). Regulates behaviour.
 determinism: high
 execution:
-  command: go test -race -count=1 -tags=catalog_sensors -v ./skills/create-sensor/scripts/...
+  command: go test -race -count=1 -tags=catalog_sensors -v ./skills/create-sensors/scripts/...
     2>&1
   exit_code_map:
   - exit_code: 0
