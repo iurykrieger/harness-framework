@@ -563,12 +563,6 @@ description: 'Definition of a harness sensor (feedback control). A sensor observ
   (martinfowler.com); Lopopolo, ''Harness engineering: leveraging Codex…'' (openai.com,
   2026-02-11).'
 properties:
-  blind_spots:
-    description: Explicit limits — bug classes, inputs that produce unstable verdicts,
-      sensor interactions that mask issues. Required honesty for inferential sensors.
-    items:
-      type: string
-    type: array
   calibration:
     additionalProperties: false
     description: REQUIRED when sensor.type=inferential. Captures the confidence threshold
