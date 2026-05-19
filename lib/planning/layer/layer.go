@@ -39,9 +39,14 @@ type LayerRecipe interface {
 // /create-sensors converts each Draft into a sensor.yaml via write-sensor.
 type Draft struct {
 	SensorID    string
+	Version     string
+	Name        string
 	Layer       Layer
 	Kind        sensor.Kind
 	Type        sensor.Type
+	Regulation  sensor.Regulation
+	Phase       sensor.Phase
+	Determinism sensor.Determinism
 	Output      sensor.Output
 	Description string
 	UseCases    []string
