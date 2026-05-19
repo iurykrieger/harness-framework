@@ -37,7 +37,7 @@ This design adds the missing axis. Each usecase is validated by **multiple narro
 | Class | Objective | Mechanics |
 |---|---|---|
 | **Narrow** | A single validation/observation objective | Any number of `shell`/`http`/`assert` steps in service of that one objective. No `SensorStep` required (but allowed for inline helpers). |
-| **Composite** | Multiple objectives chained | Uses `SensorStep` (`type: sensor`, `ref:`) to delegate each objective to a narrow sensor; may include inline `assert` steps for cross-cutting concerns. Always carries the `layer:` of the camada it represents. |
+| **Composite** | Multiple objectives chained | Uses `SensorStep` (`type: sensor`, `ref:`) to delegate each objective to a narrow sensor; may include inline `assert` steps for cross-cutting concerns. Always carries the `layer:` of the lens it represents. |
 
 The distinction is **scope of objective**, not step count. A narrow `observe-db-create-user` may have steps `pg_isready → psql query → assert row exists` and remain narrow because all three serve "row was persisted".
 
@@ -61,7 +61,7 @@ The 18 layers, grouped by family, each with their stack pre-condition:
 | Family | Layer | Stack pre-condition |
 |---|---|---|
 | **Test execution** | `unit-test` | role=test-runner |
-|  | `integration-test` | role=test-runner + (role=db-client OR role=queue-* OR role=external-integration) |
+|  | `integration-test` | role=test-runner + (role=db-client OR role=queue-consumer OR role=queue-producer OR role=external-integration) |
 |  | `contract-test` | role=http-server OR role=rpc + OpenAPI/proto contract in repo |
 |  | `e2e-happy` | journey has entry_points + sensor with id=run-project exists |
 |  | `e2e-error` | same as `e2e-happy` |
@@ -70,7 +70,7 @@ The 18 layers, grouped by family, each with their stack pre-condition:
 |  | `metric` | role=metrics |
 |  | `event-emission` | role=queue-producer |
 |  | `event-consumption` | role=queue-consumer |
-| **Performance/resilience** | `performance` | archetype http-api OR queue-* |
+| **Performance/resilience** | `performance` | archetype http-api OR queue-consumer OR queue-producer |
 |  | `resilience` | fault-injection tooling component on stack |
 | **Static quality (inferential)** | `code-quality` | always applicable |
 |  | `architecture` | always applicable |
@@ -78,6 +78,14 @@ The 18 layers, grouped by family, each with their stack pre-condition:
 |  | `dependency-health` | always applicable |
 | **Schema/contract** | `db-schema` | role=db-client + migrations folder |
 |  | `accessibility` | archetype http-spa OR http-ssr |
+
+**Naming choices relative to the original brief**:
+
+The 18 enum values diverge from the brief's "database, unit-test, e2e-test, logs, metrics, security, architecture, code" in three places, each deliberate:
+
+- `database` → split into `db-state` (runtime row inspection) and `db-schema` (static migration safety) — these are independent angles.
+- `e2e-test` → split into `e2e-happy` and `e2e-error` so happy and error paths contribute independently to the realized score (a usecase that passes happy but fails error reveals a genuine gap; one combined verdict would mask it).
+- `code` → renamed to `code-quality` (duplication, complexity, idioms). Structural concerns are split out into `architecture` (layering, dependency direction) and `security` (vulns, exploits). The `code-quality` slug fully subsumes the brief's "code" entry; no validation angle from the original brief was dropped.
 
 ### Layer recipe (interface)
 
@@ -129,6 +137,29 @@ Three derived ratios:
 - `confidence = realized / ceiling` — the headline score
 
 `realized` is always fresh (re-executes sensors on each `/validate-usecase` invocation). The framework does not consult cached signals from `signals.log` when computing realized confidence — this removes TTL ambiguity.
+
+**Realized counting rule**: a layer entrypoint contributes to `realized` only when its aggregate Signal has `verdict=pass`. The four non-pass verdicts behave as follows:
+
+| Aggregate verdict | Contributes to `realized`? | Notes |
+|---|---|---|
+| `pass` | yes | the layer is realized |
+| `warn` | no | layer is generated but advisory issue surfaced; counted in `pass_rate` denominator |
+| `fail` | no | layer is generated but the system-under-test failed the assertion; counted in `pass_rate` denominator |
+| `error` | no | the sensor itself could not run (preflight failed, dep crashed, malformed output); counted in `pass_rate` denominator |
+| timeout (treated as `error`) | no | the runtime emits `verdict=error metadata.kind=timeout`; same denominator treatment as other errors |
+
+Layer-level breakdowns appear in `realized.layer_verdicts[]` (one entry per executed entrypoint, with its verdict + finished_at). Layers that were generated but skipped this invocation (e.g., the operator passed `--skip <layer>`) appear in `realized.untested[]` and contribute to NEITHER numerator NOR denominator of any ratio — they are surfaced for visibility only.
+
+**Aggregate Signal verdict for `/validate-usecase`**:
+
+| Condition | Aggregate `verdict` |
+|---|---|
+| `realized == coverage` AND `coverage > 0` | `pass` (every generated layer passed) |
+| `0 < realized < coverage` | `warn` (some layers passed, some did not) |
+| `realized == 0` AND `coverage > 0` | `fail` (no layer realized) |
+| `coverage == 0` | `error` with `metadata.kind=no_coverage` (the usecase has no per-usecase folder or it is empty — run `/create-sensors <usecase>` first) |
+
+The headline ratio `confidence = realized/ceiling` is surfaced in `metadata.confidence_report` but does NOT directly drive the aggregate verdict — the verdict reflects the health of the generated bundle (`pass_rate`-based), while the ratio quantifies the bundle's coverage of the stack potential.
 
 ### Confidence report (cache)
 
@@ -221,14 +252,14 @@ lib/planning/
 │   ├── applicability.go      # shared helpers: hasRole(stack, role),
 │   │                         # hasLogShape(stack), hasCoreSensor(catalog, id),
 │   │                         # hasArchetype(stack, …)
-│   ├── unit_test.go          # 18 files, one per layer; each implements LayerRecipe
-│   ├── integration_test.go
-│   ├── contract_test.go
-│   ├── e2e_happy.go
-│   ├── e2e_error.go
-│   ├── db_state.go
-│   ├── log_trace.go
-│   ├── metric.go
+│   ├── unit.go               # 18 production files, one per layer; each
+│   ├── integration.go        # implements LayerRecipe. Production filenames
+│   ├── contract.go           # MUST NOT end in `_test.go` (Go would skip them
+│   ├── e2e_happy.go          # from the build). The three test-flavored
+│   ├── e2e_error.go          # layers (unit-test, integration-test,
+│   ├── db_state.go           # contract-test) drop the `-test` suffix on
+│   ├── log_trace.go          # the production file; the corresponding
+│   ├── metric.go             # `_test.go` siblings hold their tests.
 │   ├── event_emission.go
 │   ├── event_consumption.go
 │   ├── performance.go
@@ -239,13 +270,18 @@ lib/planning/
 │   ├── dependency_health.go
 │   ├── db_schema.go
 │   ├── accessibility.go
-│   ├── layer_test.go         # registry + ordering tests
-│   ├── applicability_test.go # shared helpers tests
-│   └── <name>_test.go        # 18 per-layer test files
+│   ├── layer_test.go         # tests for layer.go (registry + ordering)
+│   ├── applicability_test.go # tests for applicability.go
+│   ├── <name>_test.go        # 18 per-layer test files (one per recipe)
+│   └── testdata/             # static fixtures consumed by _test.go files:
+│       ├── stack-http-api-postgres.yaml         # sample stacks
+│       ├── stack-queue-consumer.yaml
+│       ├── usecase-create-user.yaml             # sample usecases
+│       └── catalog-with-run-project.json        # sample catalogs
 └── (deleted: group.go, infer.go, shape.go, plan.go)
 ```
 
-Rule 9 ("organize by context, not by type"): each layer is its own file with its own test sibling; shared helpers in `applicability.go`; registry/interface in `layer.go`.
+Rule 9 ("organize by context, not by type"): each layer is its own file with its own test sibling; shared helpers in `applicability.go`; registry/interface in `layer.go`. Rule 11 (testdata layout): per-package `testdata/` holds the JSON/YAML fixtures the `_test.go` files load via relative path.
 
 ## Skill: `/create-sensors`
 
@@ -356,6 +392,16 @@ Phase 4  Per usecase:
         └── create-user.yaml
 ```
 
+**Sensor id naming convention** (enforced by `/create-sensors` when synthesizing drafts):
+
+| Sensor class | Pattern | Example |
+|---|---|---|
+| Composite (layer entrypoint) | `<layer>-<usecase-id>` | `e2e-happy-create-user`, `e2e-error-create-user` |
+| Narrow that IS the layer's entrypoint (no composite) | `<observe-or-action>-<lens>-<usecase-id>` — `<lens>` collapses to the resource being observed | `observe-db-create-user` (db-state), `observe-log-create-user` (log-trace), `unit-test-create-user`, `architecture-create-user` |
+| Narrow that is reused by a composite (not a layer entrypoint of its own) | `<action>-<flavor>-<usecase-id>` — `<flavor>` matches the calling composite's layer | `http-replay-happy-create-user` (used by `e2e-happy-create-user`), `http-replay-error-create-user` (used by `e2e-error-create-user`) |
+
+The rule of thumb: when a sensor is BOTH the layer's entrypoint AND atomically observes one resource, its id starts with the action verb (`observe-`, `unit-test-`, `architecture-`). When it is a sub-narrow that exists only to support a composite, its id starts with the action and embeds the composite's distinguishing flavor.
+
 ## Sample composite sensor
 
 ```yaml
@@ -400,6 +446,8 @@ execution:
         equals: "alice@example.com"
 ```
 
+**Multi-dep `requires` semantics**: the existing orchestrator already supports an array of `requires[kind=sensor]` entries. For the composite above, `lib/orchestrator` topologically sorts both `run-project` and `setup-postgres`, brings each up via its own watcher (per the registry-discovery flow described in `CLAUDE.md`'s "Dependencies and lifecycle" section), runs the composite once both deps are live, and tears them down at teardown when no other dependent holds the lease. No new capability is required — the spec relies on the orchestrator's current contract for multi-blocking-dep coordination.
+
 ## Sample narrow sensor
 
 ```yaml
@@ -437,30 +485,34 @@ execution:
 
 ## Migration
 
-Tudo é deleção + recriação (zero backfill):
+Everything is delete + recreate (zero backfill):
 
-| Action | Path |
-|---|---|
-| DELETE | `skills/create-sensor/` (entire skill) |
-| CREATE | `skills/create-sensors/` (new skill, scripts moved + adapted) |
-| CREATE | `skills/validate-usecase/` (new skill) |
-| DELETE | `lib/planning/{group,infer,shape,plan}.go` |
-| CREATE | `lib/planning/layer/` (18 layer files + shared helpers + tests) |
-| DELETE | `blind_spots` property from `schemas/sensor.yaml` |
-| ADD | `layer` property to `schemas/sensor.yaml` |
-| DELETE | `BlindSpots []string` from `lib/sensor.Sensor` struct |
-| DELETE | All 62 sensors in `.harness/sensors/*.yaml` (PR #70 output) |
-| RE-RUN | `/detect-sensors` to repopulate core platform primitives at root |
-| RE-RUN | `/create-sensors <usecase>` for each of the 62 usecases (or journey-by-journey) |
+| Action | Path | Notes |
+|---|---|---|
+| DELETE | `skills/create-sensor/` | entire skill |
+| CREATE | `skills/create-sensors/` | new skill; scripts moved + adapted from `create-sensor/` |
+| CREATE | `skills/validate-usecase/` | new skill |
+| DELETE | `lib/planning/{group,infer,shape,plan}.go` | the old inter-usecase grouper |
+| CREATE | `lib/planning/layer/` | 18 layer files + `layer.go` + `applicability.go` + tests + `testdata/` |
+| DELETE | `blind_spots` property in `schemas/sensor.yaml` | |
+| ADD | `layer` property to `schemas/sensor.yaml` | |
+| DELETE | `BlindSpots []string` from `lib/sensor.Sensor` struct | |
+| AUDIT | All consumers of the deleted `BlindSpots` field | Search `BlindSpots` across `lib/`, `skills/`, and runtime envelope construction; delete every read/write reference to keep the build green. |
+| DELETE | All sensors in `.harness/sensors/*.yaml` from the previous schema | run `rm .harness/sensors/*.yaml` (top-level + every `<usecase-id>/` subfolder created by the old `/create-sensor`) |
+| **KEEP** | `.harness/usecases/**` | usecase YAMLs are NOT touched by the migration; they remain authoritative inputs for `/create-sensors` |
+| RE-RUN | `/detect-sensors` (FIRST) | repopulates core platform primitives at root — MUST complete before any `/create-sensors` invocation, because layer recipes like `e2e-happy`/`e2e-error` declare `hasCoreSensor(catalog, "run-project")` as a precondition |
+| RE-RUN | `/create-sensors <usecase>` (per usecase, journey-by-journey) | only AFTER the previous step has populated the platform primitives |
 
-`/detect-sensors` updates (out of scope for this design, but flagged): ensure it emits the full set of platform primitives (build, lint, type-check, run-all-tests, seed-db) even when not explicitly used by the stack, so per-usecase sensors can rely on their availability via `requires[kind=sensor]`.
+**Ordering invariant**: `/detect-sensors` → `/create-sensors`. Running `/create-sensors` against an empty catalog causes every e2e/integration layer to skip with `reason: core sensor <id> missing from catalog`. The skill surfaces this clearly in its Phase 3 plan report; the operator re-runs after `/detect-sensors` completes.
+
+**`/detect-sensors` updates** (out of scope for this design but flagged): ensure it emits the full set of platform primitives (`build`, `lint`, `type-check`, `run-all-tests`, `seed-db`) even when not explicitly used by the stack, so per-usecase sensors can rely on their availability via `requires[kind=sensor]`.
 
 ## Open questions / future work
 
 - **Core sensor capability gap**: when a layer's `Applicable` requires a core sensor that doesn't exist (e.g., `e2e-happy` needs `run-project`), the layer is skipped. A future enhancement could auto-invoke `/detect-sensors` to fill the gap. YAGNI for phase 1.
 - **`/iterate-sensor` skill**: a future skill to formalize the "bump version, refine recipe" flow when a blind spot is detected operationally. YAGNI for phase 1.
 - **Confidence weighting**: today every layer counts equally. A future enhancement could weight layers (e.g., e2e > unit > code-quality) per project preference. YAGNI for phase 1.
-- **Cross-layer signal reuse**: if `e2e-happy` reuses `observe-db-<usecase>` (layer=db-state) via `SensorStep`, and `observe-db-<usecase>` fails, `e2e-happy` also fails. Both contribute to `realized` as separate layers. This double counting is intentional (cross-validation strengthens the realized score correctly) but worth monitoring once data accumulates.
+- **Cross-layer signal reuse (no double counting)**: a narrow sensor labelled `layer=X` may be invoked twice during `/validate-usecase` — once as the standalone entrypoint for layer X, and once inline as a `SensorStep` inside a composite whose own layer is Y ≠ X. The standalone invocation determines layer X's verdict; the inline invocation's signal flows into composite Y's aggregate but does NOT count separately for X. Each layer in `realized` is determined by the verdict of ITS entrypoint only — `coverage` and `realized` always count unique `sensor.layer` values, not unique sensor invocations. This means `observe-db-<usecase>` (layer=db-state) failing standalone counts once toward db-state's realized score, AND the same failure propagates to e2e-happy's aggregate when e2e-happy includes it as a SensorStep — but db-state still contributes only one increment to `realized` regardless of the composite outcome.
 - **Inferential calibration**: layers `security`, `architecture`, `code-quality` are inferential. Their sensors require model id + calibration set as today. The /create-sensors phase 5 calibration gate blocks until the user supplies these. No change from current `/create-sensor` behavior.
 
 ## References
