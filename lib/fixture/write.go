@@ -1,8 +1,6 @@
 package fixture
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,9 +24,10 @@ func (e *PathEscapeError) Error() string {
 // write is atomic via tmp+rename. Idempotent: re-writing the same content
 // is allowed. Rejects any relPath that, after cleaning, resolves outside the
 // fixtures root or to the root itself (with *PathEscapeError).
-// Payloads landing at a `.json` extension are pretty-printed (2-space
-// indent, trailing newline, original key order preserved); invalid JSON
-// is written unchanged.
+// Payloads landing at a known structured-data extension (.json, .yaml,
+// .yml, .xml) are canonicalized via formatPayload before persistence;
+// unparseable payloads and other extensions (.txt, .jsonl, .log, …)
+// pass through unchanged.
 // On success, returns the absolute path of the written file.
 func Write(projectRoot, relPath string, payload []byte) (string, error) {
 	if projectRoot == "" {
@@ -71,23 +70,4 @@ func Write(projectRoot, relPath string, payload []byte) (string, error) {
 		return "", fmt.Errorf("rename: %w", err)
 	}
 	return target, nil
-}
-
-// formatPayload pretty-prints JSON payloads with 2-space indent and a
-// trailing newline so fixtures land readable on disk and produce small,
-// reviewable diffs. Only `.json` extensions are considered; original
-// byte order is preserved (json.Indent, not json.MarshalIndent). Invalid
-// JSON falls through unchanged — Write does not validate payload shape.
-func formatPayload(payload []byte, ext string) []byte {
-	if ext != ".json" {
-		return payload
-	}
-	var buf bytes.Buffer
-	if err := json.Indent(&buf, payload, "", "  "); err != nil {
-		return payload
-	}
-	if !bytes.HasSuffix(buf.Bytes(), []byte{'\n'}) {
-		buf.WriteByte('\n')
-	}
-	return buf.Bytes()
 }
