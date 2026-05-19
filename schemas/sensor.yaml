@@ -851,6 +851,31 @@ properties:
     - assertion
     - setup
     type: string
+  layer:
+    description: |
+      Validation angle this sensor takes. /create-sensors emits every per-usecase
+      sensor with this field set. /detect-sensors emits root-level core sensors
+      with this field omitted. The schema marks it optional; the producing skills
+      enforce presence/absence based on file location.
+    enum:
+      - unit-test
+      - integration-test
+      - contract-test
+      - e2e
+      - db-state
+      - log-trace
+      - metric
+      - event-emission
+      - event-consumption
+      - performance
+      - resilience
+      - code-quality
+      - architecture
+      - security
+      - dependency-health
+      - db-schema
+      - accessibility
+    type: string
   name:
     description: Human-readable name.
     type: string
