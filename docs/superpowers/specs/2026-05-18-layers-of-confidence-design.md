@@ -130,10 +130,11 @@ Three integer counts per usecase, all derived (no authorial fields):
 | `coverage` | `count(unique sensor.layer values in .harness/sensors/<usecase-id>/)` | `/create-sensors` runs; manual edits |
 | `realized` | `count(layer entrypoints with verdict=pass at latest /validate-usecase run)` | Each `/validate-usecase` invocation |
 
-Three derived ratios:
+Four derived ratios:
 
 - `completeness = coverage / ceiling` — how much of the stack's potential is generated
-- `pass_rate = realized / coverage` — health of what is generated
+- `pass_rate = realized / coverage` — health of the generated bundle (untested layers count against this)
+- `executed_pass_rate = realized / (coverage − len(untested))` — health of the subset actually executed in this invocation
 - `confidence = realized / ceiling` — the headline score
 
 `realized` is always fresh (re-executes sensors on each `/validate-usecase` invocation). The framework does not consult cached signals from `signals.log` when computing realized confidence — this removes TTL ambiguity.
@@ -148,7 +149,7 @@ Three derived ratios:
 | `error` | no | the sensor itself could not run (preflight failed, dep crashed, malformed output); counted in `pass_rate` denominator |
 | timeout (treated as `error`) | no | the runtime emits `verdict=error metadata.kind=timeout`; same denominator treatment as other errors |
 
-Layer-level breakdowns appear in `realized.layer_verdicts[]` (one entry per executed entrypoint, with its verdict + finished_at). Layers that were generated but skipped this invocation (e.g., the operator passed `--skip <layer>`) appear in `realized.untested[]` and contribute to NEITHER numerator NOR denominator of any ratio — they are surfaced for visibility only.
+Layer-level breakdowns appear in `realized.layer_verdicts[]` (one entry per executed entrypoint, with its verdict + finished_at). Layers that were generated but skipped this invocation (e.g., the operator passed `--skip <layer>`) appear in `realized.untested[]`. **Untested layers still count toward `coverage`** (which is a static folder-scan count, not a runtime count), so they DO appear in the denominator of `pass_rate`; not running them effectively penalizes the ratio. This is intentional — `pass_rate` measures health of the GENERATED bundle, not just of the SUBSET that happened to run. To compute a "pass rate among layers actually executed", use the auxiliary ratio `executed_pass_rate = realized / (coverage − len(untested))` which the report surfaces alongside the headline ratios.
 
 **Aggregate Signal verdict for `/validate-usecase`**:
 
@@ -194,9 +195,10 @@ realized:
     # ... one entry per layer entrypoint executed in this invocation
   untested: []   # generated but skipped this run
 ratios:
-  completeness: 0.83
-  pass_rate:    0.80
-  confidence:   0.67
+  completeness:        0.83   # 10/12
+  pass_rate:           0.80   # 8/10
+  executed_pass_rate:  0.80   # 8/(10-0)  — all generated layers ran in this invocation
+  confidence:          0.67   # 8/12
 ```
 
 The cache is regenerable; deleting it loses no data.
@@ -510,6 +512,7 @@ Everything is delete + recreate (zero backfill):
 ## Open questions / future work
 
 - **Core sensor capability gap**: when a layer's `Applicable` requires a core sensor that doesn't exist (e.g., `e2e-happy` needs `run-project`), the layer is skipped. A future enhancement could auto-invoke `/detect-sensors` to fill the gap. YAGNI for phase 1.
+- **Stack drift after a bundle exists**: when a new component is added to `stack.yaml` after `/create-sensors` already produced a bundle, the existing bundle is now under-covering the stack's potential. The incremental policy in Phase 5 will only generate layers absent from the folder, so the new layer (now applicable) is picked up on the next `/create-sensors` invocation. But layers whose `Applicable` flipped from true → false (e.g., a removed component) remain in the folder as stale. A future enhancement could prune stale layers; for phase 1 the operator handles this manually with `--regenerate`.
 - **`/iterate-sensor` skill**: a future skill to formalize the "bump version, refine recipe" flow when a blind spot is detected operationally. YAGNI for phase 1.
 - **Confidence weighting**: today every layer counts equally. A future enhancement could weight layers (e.g., e2e > unit > code-quality) per project preference. YAGNI for phase 1.
 - **Cross-layer signal reuse (no double counting)**: a narrow sensor labelled `layer=X` may be invoked twice during `/validate-usecase` — once as the standalone entrypoint for layer X, and once inline as a `SensorStep` inside a composite whose own layer is Y ≠ X. The standalone invocation determines layer X's verdict; the inline invocation's signal flows into composite Y's aggregate but does NOT count separately for X. Each layer in `realized` is determined by the verdict of ITS entrypoint only — `coverage` and `realized` always count unique `sensor.layer` values, not unique sensor invocations. This means `observe-db-<usecase>` (layer=db-state) failing standalone counts once toward db-state's realized score, AND the same failure propagates to e2e-happy's aggregate when e2e-happy includes it as a SensorStep — but db-state still contributes only one increment to `realized` regardless of the composite outcome.
