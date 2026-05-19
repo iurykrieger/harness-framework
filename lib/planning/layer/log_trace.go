@@ -42,7 +42,7 @@ func (logTrace) Plan(s stack.Stack, uc usecase.UseCase, cat []sensor.Sensor) []D
 			Compute: &sensor.Compute{CPU: sensor.CPULow, MemoryMB: 64},
 		},
 		Execution: sensor.Execution{
-			Command: "echo 'TODO: grep the project log_shape sample for the usecase entry-point pattern' && false",
+			Command: observationLogCommand(uc.ID),
 			ExitCodeMap: []sensor.ExitCodeMapEntry{
 				{ExitCode: 0, Verdict: "pass", Severity: "info"},
 				{ExitCode: "*", Verdict: "fail", Severity: "high"},

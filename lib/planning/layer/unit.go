@@ -21,7 +21,10 @@ func (unitTest) Applicable(s stack.Stack, uc usecase.UseCase, cat []sensor.Senso
 
 func (unitTest) Plan(s stack.Stack, uc usecase.UseCase, cat []sensor.Sensor) []Draft {
 	id := fmt.Sprintf("unit-test-%s", uc.ID)
-	timeoutMS := 60000
+	// 300s default: `go test ./...` scans every package and compiles
+	// each one even when no test matches the filter, so the budget
+	// must accommodate cold-cache scans of large modules.
+	timeoutMS := 300000
 	return []Draft{{
 		SensorID:    id,
 		Version:     "0.1.0",
@@ -42,38 +45,13 @@ func (unitTest) Plan(s stack.Stack, uc usecase.UseCase, cat []sensor.Sensor) []D
 			Compute: &sensor.Compute{CPU: sensor.CPULow, MemoryMB: 64},
 		},
 		Execution: sensor.Execution{
-			Command: fmt.Sprintf("go test -run '%s' ./...", testRunPattern(uc)),
+			Command: fmt.Sprintf("go test -run '%s' ./...", unitTestPattern(uc)),
 			ExitCodeMap: []sensor.ExitCodeMapEntry{
 				{ExitCode: 0, Verdict: "pass", Severity: "info"},
 				{ExitCode: "*", Verdict: "fail", Severity: "high"},
 			},
 		},
 	}}
-}
-
-// testRunPattern derives a Go test -run regex from the usecase id. For
-// non-Go stacks this would be replaced with the language-appropriate
-// invocation; phase 1 covers Go only via the test-runner role check.
-func testRunPattern(uc usecase.UseCase) string {
-	return "Test.*" + camelize(uc.ID)
-}
-
-func camelize(s string) string {
-	out := []byte{}
-	upper := true
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '-' || c == '_' {
-			upper = true
-			continue
-		}
-		if upper && c >= 'a' && c <= 'z' {
-			c = c - 32
-		}
-		out = append(out, c)
-		upper = false
-	}
-	return string(out)
 }
 
 func init() { Register(sensor.LayerUnitTest, unitTest{}) }

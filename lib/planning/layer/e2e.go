@@ -55,7 +55,7 @@ func (e2eRecipe) Plan(s stack.Stack, uc usecase.UseCase, cat []sensor.Sensor) []
 				Steps: []sensor.StepConfig{{
 					ID:          "replay",
 					Type:        "shell",
-					Run:         fmt.Sprintf("echo 'TODO: replay %s against %s and assert %s'; false", sc.Slug, uc.ID, sc.ExpectedAssertion),
+					Run:         e2eReplayCommand(s, uc, sc.AssertJQ),
 					ExitCodeMap: map[string]sensor.Verdict{"0": "pass", "*": "fail"},
 				}},
 			},
@@ -101,28 +101,36 @@ func (e2eRecipe) Plan(s stack.Stack, uc usecase.UseCase, cat []sensor.Sensor) []
 }
 
 // e2eScenario is the internal planner-level representation of one e2e
-// scenario to materialize. Slug feeds the sensor id; Description and
-// ExpectedAssertion seed the shell step placeholder body the operator
-// fills in via /update-sensor.
+// scenario to materialize. Slug feeds the sensor id; Description seeds
+// the sensor's description; AssertJQ is the jq predicate executed against
+// the LAST aggregate Signal line after the replay.
+//
+// AssertJQ defaults to ".verdict != null" — a structural check that
+// proves the replay produced a parseable Signal. Stronger per-rule
+// assertions can be added by enriching deriveScenarios; the recipe
+// currently leaves that conservative default because translating
+// free-form business_rules to jq predicates is not deterministic.
 type e2eScenario struct {
-	Slug              string
-	Description       string
-	ExpectedAssertion string
+	Slug        string
+	Description string
+	AssertJQ    string
 }
 
 // deriveScenarios extracts one happy-path scenario + one per business
-// rule. Rules are slugged via Slugify.
+// rule. Rules are slugged via Slugify. The happy-path scenario uses a
+// stronger assertion (verdict + sensor_id present); rule narrows use the
+// minimal structural check.
 func deriveScenarios(uc usecase.UseCase) []e2eScenario {
 	out := []e2eScenario{{
-		Slug:              "happy-path",
-		Description:       fmt.Sprintf("Replays the canonical fixture for %s and asserts the canonical response.", uc.ID),
-		ExpectedAssertion: "canonical expected_outcome.fixture",
+		Slug:        "happy-path",
+		Description: fmt.Sprintf("Replays the canonical fixture for %s and asserts the canonical response.", uc.ID),
+		AssertJQ:    `.verdict != null and .sensor_id != null`,
 	}}
 	for _, rule := range uc.Behavior.BusinessRules {
 		out = append(out, e2eScenario{
-			Slug:              Slugify(rule),
-			Description:       fmt.Sprintf("Exercises violation of rule %q on %s.", rule, uc.ID),
-			ExpectedAssertion: fmt.Sprintf("the API rejects with the documented error for %q", rule),
+			Slug:        Slugify(rule),
+			Description: fmt.Sprintf("Exercises rule %q on %s.", rule, uc.ID),
+			AssertJQ:    `.verdict != null`,
 		})
 	}
 	return out

@@ -26,21 +26,27 @@ type ScaffoldFunc func(s stack.Stack) *Draft
 // Draft mirrors lib/planning/layer.Draft; redeclared here to keep the
 // coredetect package independent of the layer package (which would
 // otherwise pull recipe init() side-effects into coredetect tests).
+// JSON tags mirror schemas/sensor.yaml so /create-sensors can pipe the
+// emitted scaffold straight into lib/sensor.ValidateAndPersist.
+// use_cases is omitted intentionally — core scaffolds are root-tier
+// platform primitives and the write-sensor wrapper sets the field on
+// emit (see [skills/create-sensors/scripts/plan-and-emit.go]).
 type Draft struct {
-	SensorID    string
-	Version     string
-	Name        string
-	Kind        sensor.Kind
-	Type        sensor.Type
-	Regulation  sensor.Regulation
-	Phase       sensor.Phase
-	Determinism sensor.Determinism
-	Output      sensor.Output
-	Description string
-	Requires    []sensor.Requirement
-	Cost        sensor.Cost
-	Triggers    []sensor.Trigger
-	Execution   sensor.Execution
+	SensorID    string               `json:"id"`
+	Version     string               `json:"version"`
+	Name        string               `json:"name"`
+	Kind        sensor.Kind          `json:"kind"`
+	Type        sensor.Type          `json:"type"`
+	Regulation  sensor.Regulation    `json:"regulation"`
+	Phase       sensor.Phase         `json:"phase"`
+	Determinism sensor.Determinism   `json:"determinism"`
+	Output      sensor.Output        `json:"output"`
+	Description string               `json:"description"`
+	UseCases    []string             `json:"use_cases"`
+	Requires    []sensor.Requirement `json:"requires,omitempty"`
+	Cost        sensor.Cost          `json:"cost"`
+	Triggers    []sensor.Trigger     `json:"triggers"`
+	Execution   sensor.Execution     `json:"execution"`
 }
 
 var (

@@ -49,7 +49,7 @@ func (dependencyHealth) Plan(_ stack.Stack, uc usecase.UseCase, _ []sensor.Senso
 			SystemPrompt:       "You audit dependencies: outdated versions, known vulnerabilities, license incompatibilities.",
 			UserPromptTemplate: fmt.Sprintf("Audit dependency health relevant to usecase %s. Emit a Signal JSON object.", uc.ID),
 			Decoding:           &sensor.Decoding{Temperature: 0.2, MaxTokens: 4096},
-			Command:            "echo 'TODO: route to the inferential runner (run-inferential)' && false",
+			Command:            inferentialCommand(),
 			ExitCodeMap: []sensor.ExitCodeMapEntry{
 				{ExitCode: 0, Verdict: "pass", Severity: "info"},
 				{ExitCode: "*", Verdict: "error", Severity: "high"},

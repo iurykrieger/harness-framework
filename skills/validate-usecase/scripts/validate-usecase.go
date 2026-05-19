@@ -140,7 +140,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	for _, l := range entrypointLayers {
 		ep := layerToEntrypoint[l]
 		var runStdout, runStderr bytes.Buffer
-		_ = orchestrator.RunWithDeps(context.Background(), ep.path, "", &runStdout, &runStderr)
+		_ = orchestrator.RunWithDepsAtRoot(context.Background(), ep.path, projectRoot, "", &runStdout, &runStderr)
 		verdict, finishedAt := lastAggregateVerdict(runStdout.Bytes())
 		verdicts = append(verdicts, verdictRow{
 			Layer:      l,

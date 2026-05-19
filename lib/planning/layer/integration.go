@@ -46,7 +46,7 @@ func (integrationTest) Plan(s stack.Stack, uc usecase.UseCase, cat []sensor.Sens
 			Compute: &sensor.Compute{CPU: sensor.CPULow, MemoryMB: 256},
 		},
 		Execution: sensor.Execution{
-			Command: fmt.Sprintf("go test -tags=integration -run '%s' ./...", testRunPattern(uc)),
+			Command: fmt.Sprintf("go test -tags=integration -run '%s' ./...", unitTestPattern(uc)),
 			ExitCodeMap: []sensor.ExitCodeMapEntry{
 				{ExitCode: 0, Verdict: "pass", Severity: "info"},
 				{ExitCode: "*", Verdict: "fail", Severity: "high"},

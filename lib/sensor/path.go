@@ -34,18 +34,37 @@ func Resolve(idOrPath, baseDir string) (string, error) {
 	return resolveInDir(idOrPath, filepath.Join(baseDir, ".harness", "sensors"))
 }
 
-// resolveInDir is the internal helper used by the orchestrator: assumes that
-// sensorRoot is already the directory containing <id>.yaml (does not append
-// ".harness/sensors/" automatically).
+// resolveInDir is the internal helper used by the orchestrator: assumes
+// that sensorRoot is already the directory containing <id>.yaml (does
+// not append ".harness/sensors/" automatically).
+//
+// Lookup order:
+//  1. Root tier: <sensorRoot>/<id>.yaml — the canonical platform-primitive
+//     location populated by /detect-sensors.
+//  2. Per-usecase tier: <sensorRoot>/*/<id>.yaml — the layer-bundle
+//     location populated by /create-sensors. The walk is one directory
+//     deep on purpose; sensors do not nest further. Exactly one match is
+//     required: zero matches surfaces a clear not-found error;
+//     two-or-more surfaces an ambiguous-id error so the operator
+//     renames the colliding sensor.
 func resolveInDir(id, sensorRoot string) (string, error) {
 	if strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") {
 		return "", fmt.Errorf("invalid sensor id %q (no path separators)", id)
 	}
-	path := filepath.Join(sensorRoot, id+".yaml")
-	if _, err := os.Stat(path); err != nil {
-		return "", fmt.Errorf("sensor %q not found at %s: %w", id, path, err)
+	rootPath := filepath.Join(sensorRoot, id+".yaml")
+	if _, err := os.Stat(rootPath); err == nil {
+		return rootPath, nil
 	}
-	return path, nil
+	// Fall back to per-usecase bundles.
+	matches, _ := filepath.Glob(filepath.Join(sensorRoot, "*", id+".yaml"))
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("sensor %q not found at %s (and no match in %s/*/%s.yaml)", id, rootPath, sensorRoot, id)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("sensor id %q is ambiguous: %d candidates under %s/*/%s.yaml", id, len(matches), sensorRoot, id)
+	}
 }
 
 func resolvePath(arg, baseDir string) (string, error) {

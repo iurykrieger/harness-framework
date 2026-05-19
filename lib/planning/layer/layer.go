@@ -37,24 +37,26 @@ type LayerRecipe interface {
 
 // Draft is the planner's neutral representation of one sensor to emit.
 // /create-sensors converts each Draft into a sensor.yaml via write-sensor.
+// JSON tags mirror schemas/sensor.yaml so write-sensor.go can pipe the
+// emitted draft straight into lib/sensor.ValidateAndPersist.
 type Draft struct {
-	SensorID    string
-	Version     string
-	Name        string
-	Layer       Layer
-	Kind        sensor.Kind
-	Type        sensor.Type
-	Regulation  sensor.Regulation
-	Phase       sensor.Phase
-	Determinism sensor.Determinism
-	Output      sensor.Output
-	Description string
-	UseCases    []string
-	Requires    []sensor.Requirement
-	Execution   sensor.Execution
-	Cost        sensor.Cost
-	Triggers    []sensor.Trigger
-	Calibration *sensor.Calibration
+	SensorID    string               `json:"id"`
+	Version     string               `json:"version"`
+	Name        string               `json:"name"`
+	Layer       Layer                `json:"layer,omitempty"`
+	Kind        sensor.Kind          `json:"kind"`
+	Type        sensor.Type          `json:"type"`
+	Regulation  sensor.Regulation    `json:"regulation"`
+	Phase       sensor.Phase         `json:"phase"`
+	Determinism sensor.Determinism   `json:"determinism"`
+	Output      sensor.Output        `json:"output"`
+	Description string               `json:"description"`
+	UseCases    []string             `json:"use_cases"`
+	Requires    []sensor.Requirement `json:"requires,omitempty"`
+	Execution   sensor.Execution     `json:"execution"`
+	Cost        sensor.Cost          `json:"cost"`
+	Triggers    []sensor.Trigger     `json:"triggers"`
+	Calibration *sensor.Calibration  `json:"calibration,omitempty"`
 }
 
 var (

@@ -49,7 +49,7 @@ func (architecture) Plan(_ stack.Stack, uc usecase.UseCase, _ []sensor.Sensor) [
 			SystemPrompt:       "You audit architecture: layering, dependency direction, boundary discipline.",
 			UserPromptTemplate: fmt.Sprintf("Audit the architectural shape of usecase %s. Emit a Signal JSON object.", uc.ID),
 			Decoding:           &sensor.Decoding{Temperature: 0.2, MaxTokens: 4096},
-			Command:            "echo 'TODO: route to the inferential runner (run-inferential)' && false",
+			Command:            inferentialCommand(),
 			ExitCodeMap: []sensor.ExitCodeMapEntry{
 				{ExitCode: 0, Verdict: "pass", Severity: "info"},
 				{ExitCode: "*", Verdict: "error", Severity: "high"},

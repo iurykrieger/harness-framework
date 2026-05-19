@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 
 	"github.com/iurykrieger/harness-framework/lib/planning/coredetect"
 	"github.com/iurykrieger/harness-framework/lib/planning/layer"
@@ -23,6 +24,8 @@ import (
 	"github.com/iurykrieger/harness-framework/lib/stack"
 	"github.com/iurykrieger/harness-framework/lib/usecase"
 )
+
+func sortStrings(s []string) { sort.Strings(s) }
 
 type ledger struct {
 	Usecases []usecase.UseCase `json:"usecases"`
@@ -60,23 +63,28 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 
 	st := decodeStack(lg.Stack)
 
-	// Pass 1: figure out which core sensors are needed by any applicable layer.
-	missingCore := map[string]struct{}{}
+	// Pass 1: figure out which core sensors are needed by any applicable layer,
+	// and track which usecases triggered each so the scaffold's use_cases[] is
+	// non-empty (the sensor.yaml schema requires minItems: 1).
+	triggeredBy := map[string]map[string]struct{}{}
 	for _, uc := range lg.Usecases {
 		for _, l := range layer.AllLayers() {
 			r := layer.Get(l)
 			ok, reason := r.Applicable(st, uc, lg.Catalog)
 			if !ok && reasonNamesMissingCore(reason) {
 				if id := extractCoreID(reason); id != "" {
-					missingCore[id] = struct{}{}
+					if triggeredBy[id] == nil {
+						triggeredBy[id] = map[string]struct{}{}
+					}
+					triggeredBy[id][uc.ID] = struct{}{}
 				}
 			}
 		}
 	}
 
 	// Auto-create missing core scaffolds (emit them first).
-	coreIDs := make([]string, 0, len(missingCore))
-	for id := range missingCore {
+	coreIDs := make([]string, 0, len(triggeredBy))
+	for id := range triggeredBy {
 		coreIDs = append(coreIDs, id)
 	}
 	scaffolds, err := coredetect.EnsureMissing(st, coreIDs)
@@ -87,6 +95,12 @@ func run(stdin io.Reader, stdout, stderr io.Writer) int {
 	syntheticCatalog := append([]sensor.Sensor{}, lg.Catalog...)
 	for _, sc := range scaffolds {
 		scCopy := sc
+		ucIDs := make([]string, 0, len(triggeredBy[sc.SensorID]))
+		for id := range triggeredBy[sc.SensorID] {
+			ucIDs = append(ucIDs, id)
+		}
+		sortStrings(ucIDs)
+		scCopy.UseCases = ucIDs
 		emit(stdout, wirePlan{Type: "core_scaffold", CoreScaf: &scCopy})
 		// Add to in-memory catalog so layer.Applicable now sees the primitive.
 		syntheticCatalog = append(syntheticCatalog, sensor.Sensor{ID: sc.SensorID})
