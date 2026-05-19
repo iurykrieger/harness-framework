@@ -1,0 +1,10 @@
+[
+  {
+    "id": "run-project",
+    "kind": "setup",
+    "type": "computational",
+    "output": "stream",
+    "blocking": true,
+    "path": ".harness/sensors/run-project.yaml"
+  }
+]

@@ -38,6 +38,17 @@ func RunWithDeps(ctx context.Context, sensorPath, schemasDir string, stdout, std
 	return runWithDepsImpl(ctx, sensorPath, schemasDir, nil, "", stdout, stderr)
 }
 
+// RunWithDepsAtRoot is RunWithDeps with an explicit projectRoot. Use when
+// sensorPath lives outside the canonical <projectRoot>/.harness/sensors/
+// layout — e.g. per-usecase bundles at
+// <projectRoot>/.harness/sensors/<usecase-id>/<id>.yaml, where the default
+// "three Dir() calls above" heuristic would resolve projectRoot to
+// <root>/.harness/ instead of <root>. validate-usecase relies on this
+// to spawn layer entrypoints with the correct subprocess cwd.
+func RunWithDepsAtRoot(ctx context.Context, sensorPath, projectRoot, schemasDir string, stdout, stderr io.Writer) int {
+	return runWithDepsImpl(ctx, sensorPath, schemasDir, nil, projectRoot, stdout, stderr)
+}
+
 // runWithDepsImpl is the shared implementation for RunWithDeps and the
 // Root-aware paths. When root is non-nil, the target sensor is run via
 // RunOneWithRoot so the run is registered under .harness/runtime/<id>/<run-id>/.

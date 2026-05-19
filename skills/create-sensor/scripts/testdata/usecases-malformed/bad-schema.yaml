@@ -1,3 +1,0 @@
-id: bad
-# missing version, name, journey_id, trigger, behavior, expected_outcome, evidence
-# schema validation must reject this.

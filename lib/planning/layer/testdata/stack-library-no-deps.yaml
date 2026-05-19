@@ -1,0 +1,15 @@
+version: 0.1.0
+detected_at: 2026-05-18T10:00:00Z
+detected_by: manual
+purpose: pure Go library
+archetypes: [library]
+languages: [{ name: go, version: "1.25" }]
+components:
+  - role: test-runner
+    name: go test
+    evidence: [{ file: go.mod, rationale: "stdlib testing" }]
+log_shapes:
+  - id: none
+    produced_by: [stdlib]
+    format: plain
+    sample: ""

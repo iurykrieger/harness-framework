@@ -54,3 +54,14 @@ func TestSensorShape_RoundTrip_Inferential(t *testing.T) {
 func TestSensorShape_RoundTrip_Setup(t *testing.T) {
 	roundTripSensor(t, sensortest.LoadSetup(t).AsMap())
 }
+
+func TestSensorLayerRoundTrip(t *testing.T) {
+	s := &sensor.Sensor{ID: "x", Version: "0.1.0", Layer: sensor.LayerE2E}
+	m := s.AsMap()
+	if m["layer"] != "e2e" {
+		t.Fatalf("layer not in AsMap: %#v", m["layer"])
+	}
+	if s.Layer != "e2e" {
+		t.Fatalf("layer constant: %q", s.Layer)
+	}
+}

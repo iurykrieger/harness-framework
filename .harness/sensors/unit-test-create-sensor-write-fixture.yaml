@@ -8,7 +8,7 @@ cost:
     p95_ms: 30000
     timeout_ms: 120000
 description: On pull-request, runs `go test -race -count=1 -tags=write_fixture -v
-  ./skills/create-sensor/scripts/...` and emits one Signal per test case. Validates
+  ./skills/create-sensors/scripts/...` and emits one Signal per test case. Validates
   create-sensor's write-fixture script — the atomic tmp+rename writer that persists
   fixture payloads under <projectRoot>/.harness/fixtures/ while rejecting path-escape
   traversal. Output is stream because the testing component emits one `--- PASS:`
@@ -16,7 +16,7 @@ description: On pull-request, runs `go test -race -count=1 -tags=write_fixture -
   behaviour.
 determinism: high
 execution:
-  command: go test -race -count=1 -tags=write_fixture -v ./skills/create-sensor/scripts/...
+  command: go test -race -count=1 -tags=write_fixture -v ./skills/create-sensors/scripts/...
     2>&1
   exit_code_map:
   - exit_code: 0

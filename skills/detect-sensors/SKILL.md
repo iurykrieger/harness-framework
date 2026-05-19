@@ -103,7 +103,7 @@ components:
 log_shapes: []
 ```
 
-If after the thorough search NO components and NO deploy artifacts are found at all, persist the truly minimal degenerate stack (empty `components`, empty `log_shapes`) — Phase B will note this in `blind_spots[]` of every drafted sensor and the user iterates manually after observing real output.
+If after the thorough search NO components and NO deploy artifacts are found at all, persist the truly minimal degenerate stack (empty `components`, empty `log_shapes`) — Phase B will document this limitation in each drafted sensor's `description` and the user iterates manually after observing real output.
 
 ### Phase A.5: Usecase ledger check
 
@@ -163,7 +163,7 @@ Use Read, Glob, Bash to build a picture of the project. At minimum:
 - Source layout signals: `pages/` or `app/` (Next.js), `cmd/` + `internal/` (Go service), `src/handlers/` (Lambda), `consumer.go`/`*Consumer.cs` (event consumer), `*Publisher.*` / `*Producer.*` (event producer), `infrastructure/` or `iac/` (IaC), `migrations/` (DB-bound service).
 - Observability hints: `Dockerfile`, `*.deployment.yaml`, `terraform/.../monitoring/`, `datadog.yaml`, `otel-collector-config.yaml`, `prometheus.yml`, `grafana/dashboards/`, `serverless.yml` events, log driver configs.
 
-You are looking for *both* the archetype and the concrete commands. A `package.json` script is a literal command; a CI workflow step is a literal command; a Dockerfile `CMD` is a literal command — but a command written down in `CLAUDE.md` / `README.md` / `AGENTS.md` is the **most authoritative** literal command, because the maintainers wrote it down on purpose. When the literal command is unclear, propose a reasonable one and flag it in the sensor's `description`/`blind_spots`.
+You are looking for *both* the archetype and the concrete commands. A `package.json` script is a literal command; a CI workflow step is a literal command; a Dockerfile `CMD` is a literal command — but a command written down in `CLAUDE.md` / `README.md` / `AGENTS.md` is the **most authoritative** literal command, because the maintainers wrote it down on purpose. When the literal command is unclear, propose a reasonable one and flag it in the sensor's `description`.
 
 **Command-source precedence when sources disagree:**
 
@@ -228,7 +228,7 @@ The table is a starter heuristic, not a closed list. Real Components yield real 
 
 **Mandate: never skip a sensor.** Emit one for every capability the project plausibly has, even when:
 
-- The exact command isn't 100% determined — pick the closest production-shaped invocation (Dockerfile `CMD`, CI step, README "Run locally" recipe), put it in `execution.command`, and document the assumption in `blind_spots[]`.
+- The exact command isn't 100% determined — pick the closest production-shaped invocation (Dockerfile `CMD`, CI step, README "Run locally" recipe), put it in `execution.command`, and document the assumption in `description`.
 - Required config files are gitignored (`.env*`, `config/*.local.*`, RSA keys) — they exist on the developer's machine; reference them in the command, declare the env names you need under `requires[kind=env]`, and let the runner abort with a clear remediation if the user runs it without them.
 - The capability needs auth tokens, project ids, or other secrets — declare them under `requires[kind=env]`, NEVER hardcode. Sensor existence is independent of credential availability *right now*: the user (or a future agent turn) provides the value out of band when they invoke `/run-sensor`.
 - The command runs continuously (watchers, dev servers, log tailers) — set `execution.blocking: true` and use the `/start-sensor` workflow and pair with `output: "stream"` patterns; do not downgrade to a proxy command just to keep things one-shot. See §1's lifecycle guidance.
@@ -275,16 +275,16 @@ Use these defaults unless the project tells you otherwise:
        Anchor every regex on the shape's actual encoding so it cannot drift from reality. Common templates:
        - For `format: combined-log-format` (Apache/Nginx access log): `'^\S+ \S+ \S+ \[[^\]]+\] "(\S+) (\S+)[^"]*" (2\d{2}) '` and class variants for `(3\d{2})`/`(4\d{2})`/`(5\d{2})`. Use `captures.{excerpt: 2, rationale: 3}` so the Signal carries path and status.
        - For `format: json` / `logfmt` with a structured outcome field, use the **literal key** from `fields[].key`: e.g. `'"status_code"\s*:\s*(2\d{2})\b'` (HTTP), `'"grpc.code"\s*:\s*"OK"'` (RPC), `'"outcome"\s*:\s*"committed"'` (Kafka consumer with structured outcome), `'"event"\s*:\s*"message_published"'` (queue producer marker style), `'"sqlstate"\s*:\s*"00000"'` (DB client). Read the literal key off the shape; do not guess. When a topic/partition/offset/path field is present in the shape, fold its `key` into the regex so the captured `excerpt`/`rationale` carries the per-event identifier.
-       - For shapes where the outcome is embedded in a free-form `msg` string (e.g. a Zap+chi middleware msg literally containing `"GET /foo HTTP/1.1\" from 127.0.0.1 - 200 12B in 3ms"`, or a Sarama consumer msg literally containing `"consumed topic=orders partition=2 offset=12345 outcome=committed"`), anchor on that substring shape — typically `'"msg":"[^"]*?\\"(\S+) (\S+) HTTP[^\\\"]*\\" [^"]*? (2\d{2}) '` (HTTP) or `'"msg":"[^"]*?topic=(\S+) [^"]*?outcome=(committed|acked)"'` (queue). When this is the only viable anchor, note it in `blind_spots[]` because the regex is sensitive to the framework's logging format string.
-  4. Anchor every drafted regex on the shape's `sample`: the regex MUST match the sample. If it doesn't, the regex is wrong. For per-event patterns, either the shape's `sample` already contains a successful event line (in which case the "success" variant must match it), or the discovery step persisted only a degenerate sample (boot banner, error line, etc.) — in that case capture or synthesize a representative success line and either widen the shape's `sample` (re-running `/detect-sensors --refresh-stack`) or accept that only one of the outcome-class regexes can be sample-anchored. Never ship a regex whose sample-anchor was waived silently — call it out in `blind_spots[]`.
+       - For shapes where the outcome is embedded in a free-form `msg` string (e.g. a Zap+chi middleware msg literally containing `"GET /foo HTTP/1.1\" from 127.0.0.1 - 200 12B in 3ms"`, or a Sarama consumer msg literally containing `"consumed topic=orders partition=2 offset=12345 outcome=committed"`), anchor on that substring shape — typically `'"msg":"[^"]*?\\"(\S+) (\S+) HTTP[^\\\"]*\\" [^"]*? (2\d{2}) '` (HTTP) or `'"msg":"[^"]*?topic=(\S+) [^"]*?outcome=(committed|acked)"'` (queue). When this is the only viable anchor, note it in the sensor `description` because the regex is sensitive to the framework's logging format string.
+  4. Anchor every drafted regex on the shape's `sample`: the regex MUST match the sample. If it doesn't, the regex is wrong. For per-event patterns, either the shape's `sample` already contains a successful event line (in which case the "success" variant must match it), or the discovery step persisted only a degenerate sample (boot banner, error line, etc.) — in that case capture or synthesize a representative success line and either widen the shape's `sample` (re-running `/detect-sensors --refresh-stack`) or accept that only one of the outcome-class regexes can be sample-anchored. Never ship a regex whose sample-anchor was waived silently — call it out in the sensor `description`.
   5. In the sensor's `description`, cite the source: e.g. *"output_parsing derived from log_shape 'zap-prod-json' in .harness/stack.yaml"* or *"derived from log_shapes 'sarama-consumer-jsonl' (per-event observation) and 'logback-stderr' (severity tiers)"*. This is the audit trail when patterns later fail to match real stdout.
-- **Degraded path:** if `.harness/stack.yaml` is missing OR `log_shapes[]` is empty (Phase A failed to identify a logger), emit generic patterns matching `panic\s*:`, `^\s*(ERROR|FATAL)`, and similar keyword markers, AND add a `blind_spots[]` entry: *"Patterns are generic keyword markers because stack discovery did not identify a structured logger; refine after observing real stdout."*
+- **Degraded path:** if `.harness/stack.yaml` is missing OR `log_shapes[]` is empty (Phase A failed to identify a logger), emit generic patterns matching `panic\s*:`, `^\s*(ERROR|FATAL)`, and similar keyword markers, AND note in the sensor `description`: *"Patterns are generic keyword markers because stack discovery did not identify a structured logger; refine after observing real stdout."*
 - `execution.output_parsing.patterns` (only when `output: "stream"`) — at least one regex per actionable verdict. For Go test, three patterns suffice: `^\s*--- PASS: (\S+)`, `^\s*--- FAIL: (\S+)`, `^\s*--- SKIP: (\S+)` with `captures.excerpt = 1`. For compilers/linters, one pattern: `^\s*(\S+\.go):(\d+):(\d+):\s+(.+)$` with `captures.{file:1,line_start:2,excerpt:4}`. RE2 syntax — when authoring in YAML, prefer single-quoted scalars or block scalars (`|`) so backslashes pass through literally; in double-quoted YAML, `\\s` is needed for a literal `\s`.
 - `use_cases` MUST have at least one entry. Every entry is the `id` of a usecase YAML that already exists under `<project>/.harness/usecases/<journey>/<id>.yaml`. The schema enforces `minItems: 1`, and the persister cross-checks that each referenced file is on disk before writing the sensor. No placeholder ids — wire the sensor to the usecases it actually validates. See Phase A.5 for how to enumerate them and step 5 for how to choose the right ids per sensor.
 - `description` should be one sentence: trigger condition + what is observed + regulation dimension. Mention how you detected the capability (`Auto-detected via /detect-sensors from <evidence>`) and why you chose `output: <single|stream>`. When the command came from project docs, name the file *and* the heading — e.g. *"Auto-detected from CLAUDE.md '## Build, validate, test'"* or *"Auto-detected from README.md '## Run locally'"* — so the source is one click away.
-- For inferential sensors, add `calibration` (`confidence_threshold`, `calibration_set`, `calibration_size`, `calibration_date: 2026-05-08`) and `blind_spots`.
+- For inferential sensors, add `calibration` (`confidence_threshold`, `calibration_set`, `calibration_size`, `calibration_date: 2026-05-08`).
 
-When the literal command is uncertain (common for `fetch-logs`, `fetch-metrics`, `trace-request`), still emit the sensor: put your best-guess command in `execution.command` and add a `blind_spots[]` entry stating what you assumed (auth profile, project id, region, log filter, etc.). The user reviews and tightens.
+When the literal command is uncertain (common for `fetch-logs`, `fetch-metrics`, `trace-request`), still emit the sensor: put your best-guess command in `execution.command` and document what you assumed (auth profile, project id, region, log filter, etc.) in `description`. The user reviews and tightens.
 
 **Continuous-sensor template** (`run-project`-style — same shape works for `tail-logs-local`, `watch-build`, `replay-events`):
 
@@ -349,9 +349,6 @@ execution:
 use_cases:
   - run-project-nest-clean-boot
   - run-project-nest-port-collision
-blind_spots:
-  - Boots the production binary (matches Dockerfile CMD), so a successful boot does not exercise the live-reload path that nest start --watch covers.
-  - 30s window is heuristic — slow CI machines may need more; tighten or relax cost.latency.timeout_ms after first real runs.
 ```
 
 Things to copy from this template into other continuous sensors: `output: "stream"` + `blocking: true`, `graceful_timeout_ms` sized to the process's expected shutdown time, success-marker patterns (boot lines, ready probes) AND failure-marker patterns (crashes, port conflicts, dependency errors), `requires[kind=env]` entries for any value that lives outside the repo, `use_cases[]` listing the usecase ids the sensor regulates. The template above shows only the boot-phase patterns — for any sensor whose target service has components with role in `{http-server, http-router, http-middleware, queue-consumer, queue-producer, rpc, db-client}`, the per-event observation patterns derived from the relevant `log_shape` (per the rules in §4 above) MUST also be emitted, so the sensor produces one Signal per discrete unit of work the service processes (request, consumed message, produced message, call, query) once it is past boot. A sensor that ships boot patterns only blinds the harness to the dense per-event observability surface — requests for http-api, messages for event-driven services, calls for RPC, queries for db-bound — which is the entire reason a running-service project deserves a `kind=observation` sensor in the first place.
@@ -429,9 +426,8 @@ Cite the source in the sensor `description` using the exact form *"Auto-detected
 
 1. **Pre-steps go to `requires[kind=step]`.** Every wrapper command BEFORE the observed one becomes a `requires[]` entry of `kind: step`, in the order the wrapper executes them, with the literal shell command verbatim. The §4.5 fail-fast semantics apply: any pre-step failing aborts before the main command runs.
 2. **The foreground equivalent goes to `execution.command`.** Translate the daemonized/multi-service final step into its foreground, mono-service form: e.g. `docker compose --profile dev up -d` → `docker compose --profile dev up --build api 2>&1` (drop `-d`, scope to one service, redirect stderr).
-3. **Annotate the divergence in `description` and `blind_spots[]`.** This is the load-bearing part of unrolling — without it, the next reader cannot tell why the sensor command differs from `make dev`.
-   - `description` MUST cite the wrapper *and* state it was decomposed. Example: *"Auto-detected from charge-api/Makefile#dev. Decomposed because the target daemonizes (-d) and builds multiple services — pre-steps preserved as requires[kind=step], final step rewritten as foreground mono-service."*
-   - `blind_spots[]` MUST include an entry: *"Decomposed from `<path>#<target>`. Changes to the wrapper body do not propagate — re-run /detect-sensors after editing the wrapper to recompute pre-steps and the foreground command."*
+3. **Annotate the divergence in `description`.** This is the load-bearing part of unrolling — without it, the next reader cannot tell why the sensor command differs from `make dev`.
+   - `description` MUST cite the wrapper *and* state it was decomposed, and MUST include a note about propagation risk. Example: *"Auto-detected from charge-api/Makefile#dev. Decomposed because the target daemonizes (-d) and builds multiple services — pre-steps preserved as requires[kind=step], final step rewritten as foreground mono-service. Changes to the wrapper body do not propagate — re-run /detect-sensors after editing the wrapper to recompute pre-steps and the foreground command."*
 
 **Example — unrolling `make dev` for an API service:**
 
@@ -456,8 +452,6 @@ execution:
   command: cd charge-api && docker compose --profile dev up --build api 2>&1
   blocking: true
   ...
-blind_spots:
-  - "Decomposed from charge-api/Makefile#dev. Changes to the wrapper body do not propagate — re-run /detect-sensors after editing the Makefile target to recompute pre-steps and the foreground command."
 ```
 
 **The same rule applies to non-Makefile wrappers:**
@@ -466,7 +460,7 @@ blind_spots:
 - `Taskfile.yml` targets with `deps:` — the declared deps become `requires[kind=step]` entries; the recipe body either wraps (Strategy A) or unrolls (Strategy B).
 - Nested wrappers (`make deploy` → invokes `scripts/deploy.sh` → invokes `terraform apply`) — unroll recursively until you reach a single shell command per step. The deepest foreground command is `execution.command`; every command above it on the path is either a `requires[kind=step]` (when its side effects are needed) or dropped (when it is purely a dispatcher with no side effects of its own).
 
-**Why this matters.** A sensor whose `execution.command` no longer resembles the project's documented workflow is a bug magnet: it skips setup the maintainers consider mandatory, it diverges from what `dev local roda make dev` produces, and when the Makefile changes the sensor lies silently. Strategy A keeps the sensor and the wrapper in lockstep. Strategy B makes the unrolling explicit and citable — when the wrapper changes, the `blind_spots[]` entry tells the reader the sensor must be regenerated.
+**Why this matters.** A sensor whose `execution.command` no longer resembles the project's documented workflow is a bug magnet: it skips setup the maintainers consider mandatory, it diverges from what `dev local roda make dev` produces, and when the Makefile changes the sensor lies silently. Strategy A keeps the sensor and the wrapper in lockstep. Strategy B makes the unrolling explicit and citable — when the wrapper changes, the propagation note in `description` tells the reader the sensor must be regenerated.
 
 ### 5. Wire `use_cases[]` to the right usecase ids
 

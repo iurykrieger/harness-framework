@@ -1,0 +1,36 @@
+version: 0.1.0
+detected_at: 2026-05-18T10:00:00Z
+detected_by: manual
+purpose: HTTP CRUD over users
+archetypes: [http-api]
+languages:
+  - name: go
+    version: "1.25"
+components:
+  - role: http-server
+    name: github.com/go-chi/chi
+    evidence: [{ file: cmd/api/main.go, rationale: "chi.NewRouter" }]
+  - role: db-client
+    name: github.com/jackc/pgx/v5
+    evidence: [{ file: internal/users/repo.go, rationale: "pgx.Connect" }]
+  - role: logger
+    name: go.uber.org/zap
+    evidence: [{ file: cmd/api/main.go, rationale: "zap.NewProduction" }]
+  - role: test-runner
+    name: go test
+    evidence: [{ file: go.mod, rationale: "stdlib testing" }]
+log_shapes:
+  - id: zap-prod-json
+    produced_by: [go.uber.org/zap]
+    format: json
+    sample: '{"level":"info","ts":1700000000,"msg":"POST /users","status":201}'
+journeys:
+  - id: users
+    name: User management
+    summary: CRUD over users resource
+    archetype: http-api
+    entry_points:
+      - kind: http-route
+        method: POST
+        path: /users
+        evidence: { file: cmd/api/main.go, rationale: "router.Post" }
